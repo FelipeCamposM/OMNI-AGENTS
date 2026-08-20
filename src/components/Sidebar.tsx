@@ -53,7 +53,7 @@ export function Sidebar({
             className="neon-glow w-7 h-7 rounded-lg shrink-0 object-contain"
           />
           <div className="min-w-0">
-            <p className="text-text-primary text-xs font-semibold leading-tight truncate">CAMPS-UTILS</p>
+            <p className="text-text-primary text-xs font-semibold leading-tight truncate">OMNI AGENTS</p>
             <p className="text-text-muted text-[10px] leading-tight truncate">Utilitários locais</p>
           </div>
         </button>

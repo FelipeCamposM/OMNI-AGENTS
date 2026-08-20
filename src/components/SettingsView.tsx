@@ -618,7 +618,7 @@ function SobreSection() {
 
   return (
     <>
-      <Card title="CAMPS-UTILS">
+      <Card title="OMNI AGENTS">
         <dl className="text-xs space-y-1.5">
           <Info label="Versão" value={version ?? "—"} />
           <Info label="Ferramentas" value={`${TOOLS.length} ativas`} />

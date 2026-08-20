@@ -1,12 +1,12 @@
 [package]
-name = "pdf-to-markdown"
-version = "1.2.0"
-description = "PDF to Markdown desktop application"
+name = "omni-agents"
+version = "0.1.0"
+description = "OMNI AGENTS desktop workspace"
 authors = []
 edition = "2021"
 
 [lib]
-name = "pdf_to_markdown_lib"
+name = "omni_agents_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

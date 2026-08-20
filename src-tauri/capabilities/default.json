@@ -1,6 +1,6 @@
 {
   "identifier": "default",
-  "description": "Default capability for PDF to Markdown",
+  "description": "Default capability for OMNI AGENTS",
   "windows": ["main"],
   "permissions": [
     "core:default",

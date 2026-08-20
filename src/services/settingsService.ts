@@ -1,7 +1,7 @@
 import type { AppSettings } from "../types/settings";
 import { DEFAULT_SETTINGS } from "../types/settings";
 
-const STORAGE_KEY = "camps-utils-settings";
+const STORAGE_KEY = "omni-agents-settings";
 const LEGACY_KEY = "pdf-to-markdown-settings";
 
 export function loadSettings(): AppSettings {

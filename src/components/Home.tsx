@@ -17,7 +17,7 @@ export function Home({ onSelect, ultimaVersaoVista, onNovidadesVistas }: HomePro
   return (
     <div ref={gridRef} className="space-y-8">
       <div>
-        <h1 className="text-text-primary text-xl font-semibold">CAMPS-UTILS</h1>
+        <h1 className="text-text-primary text-xl font-semibold">OMNI AGENTS</h1>
         <p className="text-text-muted text-sm">
           Ferramentas de conversão locais. Escolha uma ferramenta para começar.
         </p>

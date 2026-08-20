@@ -1,7 +1,7 @@
 {
-  "productName": "CAMPS-UTILS",
-  "version": "1.2.0",
-  "identifier": "com.camps.utils",
+  "productName": "OMNI AGENTS",
+  "version": "0.1.0",
+  "identifier": "com.omni.agents",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "CAMPS-UTILS",
+        "title": "OMNI AGENTS",
         "width": 1000,
         "height": 720,
         "minWidth": 720,

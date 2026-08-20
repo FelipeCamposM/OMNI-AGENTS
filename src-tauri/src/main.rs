@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    pdf_to_markdown_lib::run()
+    omni_agents_lib::run()
 }

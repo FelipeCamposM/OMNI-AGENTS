@@ -1,7 +1,7 @@
 {
-  "name": "camps-utils",
+  "name": "omni-agents",
   "private": true,
-  "version": "1.2.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "setup": "powershell -ExecutionPolicy Bypass -File scripts\\setup.ps1",
