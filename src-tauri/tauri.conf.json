@@ -42,13 +42,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": [
-      "binaries/converter"
-    ],
-    "createUpdaterArtifacts": true,
-    "resources": {
-      "../assets/fonts": "fonts"
-    }
+    "createUpdaterArtifacts": true
   },
   "plugins": {
     "updater": {

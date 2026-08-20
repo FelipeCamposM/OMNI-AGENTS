@@ -12,7 +12,3 @@ export type { ColorPickerProps } from "./ColorPicker";
 export { Select } from "./Select";
 export type { SelectProps, SelectOption } from "./Select";
 export type { InputProps, TextareaProps, FieldSize } from "./Input";
-export { FilePicker } from "./FilePicker";
-export type { FilePickerProps } from "./FilePicker";
-export { ResultPanel } from "./ResultPanel";
-export type { ResultPanelProps } from "./ResultPanel";

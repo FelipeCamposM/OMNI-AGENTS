@@ -10,8 +10,6 @@
     "dev:vite": "vite",
     "build": "node scripts/sync-version.mjs && tauri build && node scripts/collect-installers.mjs",
     "build:vite": "tsc && vite build",
-    "build:python": "python python/build.py",
-    "build:all": "npm run build:python && npm run build",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -19,8 +17,7 @@
     "installers": "node scripts/collect-installers.mjs",
     "release": "node scripts/make-latest-json.mjs",
     "version:sync": "node scripts/sync-version.mjs",
-    "version:check": "node scripts/sync-version.mjs --check",
-    "fonts": "node scripts/fetch-fonts.mjs"
+    "version:check": "node scripts/sync-version.mjs --check"
   },
   "dependencies": {
     "@gsap/react": "^2.1.2",

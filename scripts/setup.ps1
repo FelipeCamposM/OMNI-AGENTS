@@ -1,11 +1,11 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Setup completo e build do PDF to Markdown para Windows.
+    Setup completo e build do OMNI AGENTS para Windows.
 
 .DESCRIPTION
-    Instala automaticamente: Rust, dependencias Node, ambiente Python,
-    icones, sidecar PyInstaller e gera o instalador .exe final.
+    Instala automaticamente: Rust, dependencias Node, icones, e gera o
+    instalador .exe final.
 
 .PARAMETER DevOnly
     Inicia o servidor de desenvolvimento em vez de gerar o instalador.
@@ -75,14 +75,14 @@ function New-AppIcon {
     $gp.CloseFigure()
     $g.FillPath($accentBrush, $gp)
 
-    # Letra "C" (CAMPS) centralizada
+    # Letra "O" (OMNI) centralizada
     $font   = New-Object System.Drawing.Font("Segoe UI", 300, [System.Drawing.FontStyle]::Bold, [System.Drawing.GraphicsUnit]::Pixel)
     $white  = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::White)
     $sf     = New-Object System.Drawing.StringFormat
     $sf.Alignment     = [System.Drawing.StringAlignment]::Center
     $sf.LineAlignment = [System.Drawing.StringAlignment]::Center
     $rect   = New-Object System.Drawing.RectangleF($x, $x, $s, $s)
-    $g.DrawString("C", $font, $white, $rect, $sf)
+    $g.DrawString("O", $font, $white, $rect, $sf)
 
     $bmp.Save($OutputPath, [System.Drawing.Imaging.ImageFormat]::Png)
 
@@ -93,7 +93,7 @@ function New-AppIcon {
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "  ============================================" -ForegroundColor Magenta
-Write-Host "   PDF to Markdown - Setup e Build Completo  " -ForegroundColor Magenta
+Write-Host "   OMNI AGENTS - Setup e Build Completo       " -ForegroundColor Magenta
 Write-Host "  ============================================" -ForegroundColor Magenta
 Write-Host ""
 
@@ -106,16 +106,7 @@ if (-not $nodeBin) {
 $nodeVer = node --version
 Write-OK "Node.js $nodeVer"
 
-# ─── 2. Python ────────────────────────────────────────────────────────────────
-Write-Step "Verificando Python..."
-$pyBin = Get-Command python -ErrorAction SilentlyContinue
-if (-not $pyBin) {
-    Write-Fail "Python nao encontrado. Instale em https://python.org (versao 3.11+) e tente novamente."
-}
-$pyVer = python --version 2>&1
-Write-OK $pyVer
-
-# ─── 3. Rust ──────────────────────────────────────────────────────────────────
+# ─── 2. Rust ──────────────────────────────────────────────────────────────────
 if (-not $SkipRust) {
     Write-Step "Verificando Rust..."
     $rustBin = Get-Command rustc -ErrorAction SilentlyContinue
@@ -161,7 +152,7 @@ if (-not $SkipRust) {
     Write-OK $rustVer
 }
 
-# ─── 4. Visual Studio Build Tools (aviso) ─────────────────────────────────────
+# ─── 3. Visual Studio Build Tools (aviso) ─────────────────────────────────────
 Write-Step "Verificando MSVC linker..."
 $clBin = Get-Command cl -ErrorAction SilentlyContinue
 if (-not $clBin) {
@@ -174,31 +165,13 @@ if (-not $clBin) {
     Write-OK "MSVC linker disponivel"
 }
 
-# ─── 5. npm install ───────────────────────────────────────────────────────────
+# ─── 4. npm install ───────────────────────────────────────────────────────────
 Write-Step "Instalando dependencias Node.js (npm install)..."
 npm install
 if ($LASTEXITCODE -ne 0) { Write-Fail "npm install falhou." }
 Write-OK "Dependencias Node instaladas"
 
-# ─── 6. Ambiente virtual Python ───────────────────────────────────────────────
-Write-Step "Configurando ambiente virtual Python..."
-if (-not (Test-Path ".venv")) {
-    python -m venv .venv
-    Write-OK "Ambiente virtual .venv criado"
-} else {
-    Write-OK "Ambiente virtual .venv ja existe"
-}
-
-& ".venv\Scripts\Activate.ps1"
-
-Write-Step "Instalando dependencias Python..."
-Write-Warn "O Docling instala ~500 MB de dependencias. Isso pode levar varios minutos na primeira vez."
-
-pip install -r python\requirements.txt
-if ($LASTEXITCODE -ne 0) { Write-Fail "pip install falhou. Verifique logs acima e sua conexao com a internet." }
-Write-OK "Dependencias Python instaladas (docling, pyinstaller, pytest)"
-
-# ─── 7. Icones ────────────────────────────────────────────────────────────────
+# ─── 5. Icones ────────────────────────────────────────────────────────────────
 if (-not $SkipIcons) {
     $iconsDir = "src-tauri\icons"
     $icoFile  = "$iconsDir\icon.ico"
@@ -207,7 +180,7 @@ if (-not $SkipIcons) {
         Write-Step "Gerando icones do aplicativo..."
 
         # Arte oficial na raiz do repo. New-AppIcon so entra como plano B, em
-        # clone incompleto: o placeholder "C" nao e a marca do app.
+        # clone incompleto: o placeholder "O" nao e a marca final do app.
         # Sem travessao neste arquivo: ele nao tem BOM, o PS 5.1 le como ANSI e
         # o "-" vira aspa curva, que FECHA a string e quebra o parser.
         $artIcon  = "$Root\app-icon.png"
@@ -238,14 +211,7 @@ if (-not $SkipIcons) {
     }
 }
 
-# ─── 8. Sidecar Python ────────────────────────────────────────────────────────
-Write-Step "Compilando sidecar Python com PyInstaller..."
-Write-Warn "Isso pode levar 2-5 minutos na primeira vez."
-python python\build.py
-if ($LASTEXITCODE -ne 0) { Write-Fail "Build do sidecar Python falhou. Veja os erros acima." }
-Write-OK "Sidecar compilado em src-tauri\binaries\"
-
-# ─── 9. Build final ───────────────────────────────────────────────────────────
+# ─── 6. Build final ───────────────────────────────────────────────────────────
 if ($DevOnly) {
     Write-Step "Iniciando modo de desenvolvimento..."
     Write-OK "O aplicativo Tauri sera aberto em uma janela nativa."
@@ -253,8 +219,8 @@ if ($DevOnly) {
     npx tauri dev
 } else {
     Write-Step "Compilando aplicativo Tauri..."
-    Write-Warn "PRIMEIRA compilacao Rust: pode levar 10-20 minutos (compilando ~300 crates)."
-    Write-Warn "Compilacoes seguintes sao muito mais rapidas (~1-2 min)."
+    Write-Warn "PRIMEIRA compilacao Rust: pode levar alguns minutos (compilando os crates)."
+    Write-Warn "Compilacoes seguintes sao muito mais rapidas."
     Write-Host ""
 
     npx tauri build
@@ -282,8 +248,8 @@ if ($DevOnly) {
         Write-Host ""
     }
 
-    Write-Host "  Execute o instalador para instalar o PDF to Markdown." -ForegroundColor White
-    Write-Host "  O usuario final nao precisa de Python, Node ou Rust." -ForegroundColor Cyan
+    Write-Host "  Execute o instalador para instalar o OMNI AGENTS." -ForegroundColor White
+    Write-Host "  O usuario final nao precisa de Python ou Rust." -ForegroundColor Cyan
     Write-Host ""
 
     # Abre a pasta do bundle no Explorer automaticamente

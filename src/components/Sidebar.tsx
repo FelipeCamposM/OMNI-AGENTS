@@ -1,7 +1,6 @@
-import { Clock, House, Settings } from "lucide-react";
+import { FolderPlus, Settings } from "lucide-react";
 import { useEffect, useRef } from "react";
 import gsap from "gsap";
-import { CATEGORY_ORDER, CATEGORY_LABELS, toolsByCategory } from "../tools/registry";
 import { useGlassSheen, useStagger } from "../lib/motion";
 import { NotificationBell } from "./NotificationBell";
 import type { SettingsSection } from "../hooks/useNotifications";
@@ -10,34 +9,32 @@ import type { SettingsSection } from "../hooks/useNotifications";
    dessincronizaria do ícone real na próxima troca de marca. */
 import appIcon from "../../src-tauri/icons/128x128.png";
 
+/** Seções do spec 7.3. Vazias por enquanto — Workspace/Project/Pane/Session
+ * (Fase 1) é quem vai preencher cada uma com dados de verdade. */
+const SECTIONS = ["AGENTS", "TERMINALS", "COMMANDS", "DOCKER", "FILES", "GIT"] as const;
+
 interface SidebarProps {
-  activeToolId: string | null;
-  showHistory: boolean;
+  projects: string[];
   showSettings: boolean;
   onHome: () => void;
-  onSelectTool: (id: string) => void;
-  onOpenHistory: () => void;
-  /** Sem argumento = seção padrão. O sino manda a seção da pendência. */
+  onAddProject: (path: string) => void;
   onOpenSettings: (secao?: SettingsSection) => void;
 }
 
-export function Sidebar({
-  activeToolId,
-  showHistory,
-  showSettings,
-  onHome,
-  onSelectTool,
-  onOpenHistory,
-  onOpenSettings,
-}: SidebarProps) {
-  const atHome = activeToolId === null && !showHistory && !showSettings;
+export function Sidebar({ projects, showSettings, onHome, onAddProject, onOpenSettings }: SidebarProps) {
   const sheenRef = useGlassSheen<HTMLElement>();
   const navRef = useStagger<HTMLElement>("[data-nav-item]");
+
+  async function pickProject() {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const result = await open({ directory: true, multiple: false });
+    if (typeof result === "string") onAddProject(result);
+  }
 
   return (
     <aside
       ref={sheenRef}
-      className="glass glass-strong glass-sheen w-56 shrink-0 flex flex-col h-screen sticky top-0 rounded-none border-y-0 border-l-0"
+      className="glass glass-strong glass-sheen w-64 shrink-0 flex flex-col h-screen sticky top-0 rounded-none border-y-0 border-l-0"
     >
       {/* Logo + sino. O sino é irmão do botão, não filho: <button> dentro de
           <button> é HTML inválido e o clique de um engole o do outro. */}
@@ -54,7 +51,7 @@ export function Sidebar({
           />
           <div className="min-w-0">
             <p className="text-text-primary text-xs font-semibold leading-tight truncate">OMNI AGENTS</p>
-            <p className="text-text-muted text-[10px] leading-tight truncate">Utilitários locais</p>
+            <p className="text-text-muted text-[10px] leading-tight truncate">Workspace</p>
           </div>
         </button>
 
@@ -63,37 +60,47 @@ export function Sidebar({
 
       {/* Nav */}
       <nav ref={navRef} className="px-2 py-3 flex-1 min-h-0 overflow-y-auto space-y-3">
-        <NavItem active={atHome} onClick={onHome} icon={<House className="w-4 h-4" aria-hidden="true" />} label="Início" />
+        <div className="space-y-0.5">
+          <div className="flex items-center justify-between px-3 pt-1">
+            <p className="text-text-muted text-[10px] font-medium uppercase tracking-wider">Projects</p>
+            <button
+              data-nav-item
+              onClick={pickProject}
+              aria-label="Adicionar projeto"
+              className="text-text-muted hover:text-text-primary !rounded-md p-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <FolderPlus className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          </div>
+          {projects.length === 0 ? (
+            <p data-nav-item className="text-text-muted text-xs px-3 py-1.5">
+              Nenhum projeto ainda.
+            </p>
+          ) : (
+            projects.map((path) => (
+              <div key={path} data-nav-item className="px-3 py-1.5 text-text-secondary text-xs truncate" title={path}>
+                {path.split(/[\\/]/).filter(Boolean).pop() ?? path}
+              </div>
+            ))
+          )}
+        </div>
 
-        {CATEGORY_ORDER.map((category) => {
-          const tools = toolsByCategory(category);
-          if (tools.length === 0) return null;
-          return (
-            <div key={category} className="space-y-0.5">
-              <p className="text-text-muted text-[10px] font-medium uppercase tracking-wider px-3 pt-1">
-                {CATEGORY_LABELS[category]}
-              </p>
-              {tools.map((tool) => (
-                <NavItem
-                  key={tool.id}
-                  active={activeToolId === tool.id}
-                  onClick={() => onSelectTool(tool.id)}
-                  icon={<span className="w-4 h-4 block">{tool.icon}</span>}
-                  label={tool.name}
-                />
-              ))}
-            </div>
-          );
-        })}
+        {SECTIONS.map((section) => (
+          <div key={section} className="space-y-0.5">
+            <p className="text-text-muted text-[10px] font-medium uppercase tracking-wider px-3 pt-1">
+              {section}
+            </p>
+            <p data-nav-item className="text-text-muted text-xs px-3 py-1.5">
+              Vazio
+            </p>
+          </div>
+        ))}
       </nav>
 
       {/* Footer */}
       <div className="px-2 py-3 border-t border-border-subtle/60 space-y-0.5">
-        <NavItem active={showHistory} onClick={onOpenHistory} icon={<Clock className="w-4 h-4" aria-hidden="true" />} label="Histórico" />
         <NavItem
           active={showSettings}
-          /* Seta explícita: passar `onOpenSettings` direto entregaria o
-             MouseEvent como se fosse a seção de destino. */
           onClick={() => onOpenSettings()}
           icon={<Settings className="w-4 h-4" aria-hidden="true" />}
           label="Configurações"
@@ -152,7 +159,3 @@ function NavItem({
     </button>
   );
 }
-
-
-
-
