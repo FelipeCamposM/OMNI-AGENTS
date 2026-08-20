@@ -1,6 +1,7 @@
 import { FolderPlus, Settings } from "lucide-react";
 import { useEffect, useRef } from "react";
 import gsap from "gsap";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useGlassSheen, useStagger } from "../lib/motion";
 import { NotificationBell } from "./NotificationBell";
 import type { SettingsSection } from "../hooks/useNotifications";
@@ -26,7 +27,6 @@ export function Sidebar({ projects, showSettings, onHome, onAddProject, onOpenSe
   const navRef = useStagger<HTMLElement>("[data-nav-item]");
 
   async function pickProject() {
-    const { open } = await import("@tauri-apps/plugin-dialog");
     const result = await open({ directory: true, multiple: false });
     if (typeof result === "string") onAddProject(result);
   }

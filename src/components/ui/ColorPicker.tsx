@@ -1,6 +1,6 @@
 import { useId } from "react";
 
-/** Atalhos para as cores que aparecem em quase toda legenda. */
+/** Atalhos para as cores mais comuns. */
 const RAPIDAS = [
   "#FFFFFF",
   "#000000",
@@ -29,8 +29,7 @@ export interface ColorPickerProps {
  * diálogo de cor é modal e esperado. Construir um HSV próprio seria muito
  * código para pouco ganho.
  *
- * O valor circula sempre como `#RRGGBB`; a conversão para o formato do ASS
- * (`&HAABBGGRR`, BGR e alfa invertido) mora no Python, num lugar só.
+ * O valor circula sempre como `#RRGGBB`.
  */
 export function ColorPicker({ id, value, onChange, onReset, disabled }: ColorPickerProps) {
   const autoId = useId();

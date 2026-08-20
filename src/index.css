@@ -1,34 +1,3 @@
-/* Fontes das legendas — as mesmas que o libass usa ao queimar (assets/fonts/,
-   baixadas por `npm run fonts`). Servem só à PRÉVIA; o vídeo final é
-   renderizado pelo ffmpeg com `fontsdir`.
-
-   `font-family` aqui tem de ser o nome da FAMÍLIA, igual ao que vai no `.ass`
-   — se divergir, a prévia mostra uma fonte e o vídeo sai com outra.
-
-   Vêm por caminho relativo (mesma origem, empacotadas pelo Vite): o CSP não
-   tem `font-src asset:`, então carregar da pasta de recursos não funcionaria.
-   Se o arquivo não existir, o navegador cai no fallback sem quebrar nada. */
-@font-face {
-  font-family: "Bebas Neue";
-  src: url("../assets/fonts/BebasNeue-Regular.ttf") format("truetype");
-  font-display: swap;
-}
-@font-face {
-  font-family: "Anton";
-  src: url("../assets/fonts/Anton-Regular.ttf") format("truetype");
-  font-display: swap;
-}
-@font-face {
-  font-family: "Montserrat";
-  src: url("../assets/fonts/Montserrat-Bold.ttf") format("truetype");
-  font-display: swap;
-}
-@font-face {
-  font-family: "Inter";
-  src: url("../assets/fonts/Inter-Regular.ttf") format("truetype");
-  font-display: swap;
-}
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -613,47 +582,6 @@
     --range-h: 4px;
     --range-t: 13px;
   }
-
-  /* ── Entrada da legenda na prévia ─────────────────────────────────────────
-     Espelho de `ENTRADAS` em python/subtitles.py — mexeu num, mexa no outro,
-     senão a prévia anima diferente do vídeo gerado.
-
-     O overshoot (passar do alvo e voltar) é o que separa "pop" de "cresceu":
-     no ASS são dois `\t` encadeados; aqui é o keyframe do meio.
-
-     ⚠️ Todo keyframe 100% é o estado de repouso. Com movimento desligado o
-     bloco de reduced-motion congela no ÚLTIMO keyframe — assim a legenda para
-     legível em vez de encolhida. */
-  @keyframes sub-assenta {
-    0% { opacity: 0; transform: scale(0.94); }
-    50% { opacity: 1; transform: scale(1.02); }
-    100% { opacity: 1; transform: scale(1); }
-  }
-  @keyframes sub-cresce {
-    0% { opacity: 0; transform: scale(0.92); }
-    55% { opacity: 1; transform: scale(1.01); }
-    100% { opacity: 1; transform: scale(1); }
-  }
-  @keyframes sub-pop {
-    0% { opacity: 0; transform: scale(0.62); }
-    57% { opacity: 1; transform: scale(1.08); }
-    100% { opacity: 1; transform: scale(1); }
-  }
-  @keyframes sub-desfoca {
-    0% { opacity: 0; filter: blur(4px); }
-    100% { opacity: 1; filter: blur(0); }
-  }
-  @keyframes sub-brilha {
-    0% { opacity: 0; filter: blur(10px); transform: scale(0.9); }
-    60% { opacity: 1; filter: blur(1.6px); transform: scale(1.04); }
-    100% { opacity: 1; filter: blur(0); transform: scale(1); }
-  }
-
-  .sub-assenta { animation: sub-assenta 280ms cubic-bezier(0.22, 1, 0.36, 1) both; }
-  .sub-cresce { animation: sub-cresce 280ms cubic-bezier(0.22, 1, 0.36, 1) both; }
-  .sub-pop { animation: sub-pop 300ms cubic-bezier(0.22, 1, 0.36, 1) both; }
-  .sub-desfoca { animation: sub-desfoca 320ms ease-out both; }
-  .sub-brilha { animation: sub-brilha 360ms cubic-bezier(0.22, 1, 0.36, 1) both; }
 
   /* Xadrez atrás de miniaturas — sem ele, PNG transparente vira bloco de cor. */
   .checker {
