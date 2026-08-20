@@ -52,9 +52,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM4NzgxMUIyMjBGN0FDMEMKUldRTXJQY2dzaEY0T0o5ZE1CWVpwcW8vQ3BXTVpaMGFpVC9XcktYKzZZcFFSRytZUTYvSzBOUW8K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU1RTI4QzUyMkQ3MjYyN0IKUldSN1luSXRVb3ppVmI0YmhoSlFRSHRXN3RBaGw5dmdtVUw3N242UGJ4L2hsVjFoWmx3ZS9Lb2sK",
       "endpoints": [
-        "https://github.com/FelipeCamposM/CAMPS-UTILS/releases/latest/download/latest.json"
+        "https://github.com/FelipeCamposM/OMNI-AGENTS/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"
