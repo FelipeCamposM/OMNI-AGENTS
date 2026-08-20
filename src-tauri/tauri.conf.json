@@ -1,0 +1,64 @@
+{
+  "productName": "CAMPS-UTILS",
+  "version": "1.2.0",
+  "identifier": "com.camps.utils",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev:vite",
+    "beforeBuildCommand": "npm run build:vite"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "CAMPS-UTILS",
+        "width": 1000,
+        "height": 720,
+        "minWidth": 720,
+        "minHeight": 560,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: asset: http://asset.localhost https://asset.localhost https://*.ytimg.com https://img.youtube.com https://*.ggpht.com; connect-src 'self' data: blob: asset: http://asset.localhost https://asset.localhost ipc: http://ipc.localhost; media-src 'self' data: blob: asset: http://asset.localhost https://asset.localhost; worker-src 'self' blob:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "**"
+        ]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/converter"
+    ],
+    "createUpdaterArtifacts": true,
+    "resources": {
+      "../assets/fonts": "fonts"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM4NzgxMUIyMjBGN0FDMEMKUldRTXJQY2dzaEY0T0o5ZE1CWVpwcW8vQ3BXTVpaMGFpVC9XcktYKzZZcFFSRytZUTYvSzBOUW8K",
+      "endpoints": [
+        "https://github.com/FelipeCamposM/CAMPS-UTILS/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

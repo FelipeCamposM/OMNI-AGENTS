@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "description": "Default capability for PDF to Markdown",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save"
+  ]
+}

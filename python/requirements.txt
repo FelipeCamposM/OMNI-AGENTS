@@ -1,0 +1,34 @@
+docling>=2.0.0
+markdown>=3.5
+pymdown-extensions>=10.7
+Pygments>=2.17
+xhtml2pdf>=0.2.16
+mammoth>=1.8
+PyMuPDF>=1.24
+pikepdf>=8.0
+yt-dlp>=2024.0
+# Legenda automática. Vai no bundle `whisper` (~90 MB), não no light — mas
+# precisa estar na .venv porque em dev o Rust roda o converter.py direto daqui.
+faster-whisper>=1.2
+# Mapa de profundidade (Depth Anything V2). Vai no bundle `depth`, não no light.
+# Os três já chegavam transitivamente pelo Docling; declarados aqui porque agora
+# são dependência direta — se um dia o Docling sair, isto não pode sair junto.
+onnxruntime>=1.17
+numpy>=1.24
+Pillow>=10.0
+# Remoção de fundo (u2net). Vai no bundle `rembg` (130 MB medidos), não no
+# light. Instalar com `--no-deps` na .venv: os extras dele puxariam outra versão
+# de numpy/onnxruntime por cima das que o Docling e o Depth já usam.
+# As dependências que o rembg realmente precisa vêm nas linhas seguintes.
+rembg>=2.0.78
+pymatting>=1.1
+pooch>=1.8
+jsonschema>=4.0
+scikit-image>=0.22
+# Captura de site: dirige o Edge do Windows já instalado (channel="msedge"),
+# sem baixar Chromium — medido a ~46 MB de bundle.
+playwright>=1.40
+beautifulsoup4>=4.12
+markdownify>=0.13
+pyinstaller>=6.0.0
+pytest>=8.0.0

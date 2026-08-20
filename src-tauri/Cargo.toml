@@ -1,0 +1,54 @@
+[package]
+name = "pdf-to-markdown"
+version = "1.2.0"
+description = "PDF to Markdown desktop application"
+authors = []
+edition = "2021"
+
+[lib]
+name = "pdf_to_markdown_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+image = "0.25"
+webp = "0.3"
+qrcode = "0.14"
+sha2 = "0.10"
+sha1 = "0.10"
+md5 = "0.7"
+hex = "0.4"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+futures-util = "0.3"
+zip = "2"
+tauri-plugin-process = "2"
+vtracer = "0.6"
+
+# Lista as fontes instaladas lendo o registro. Enumerar C:\Windows\Fonts pelo
+# nome de arquivo daria nomes errados (seguibl.ttf não é "Segoe UI Black") e o
+# libass casa por NOME DE FAMÍLIA.
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
+[profile.dev]
+incremental = true
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
