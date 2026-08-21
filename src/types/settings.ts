@@ -41,10 +41,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "escuro",
 
   accent: PALETA_PADRAO,
-  background: "mesh-1",
+  background: "pixel-grid",
   backgroundPath: "",
   backgroundOpacity: 35,
-  backgroundBlur: 12,
+  backgroundBlur: 0,
   glass: "medio",
   animations: "completas",
 };

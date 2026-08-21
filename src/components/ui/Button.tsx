@@ -1,4 +1,4 @@
-import { LoaderCircle } from "lucide-react";
+import { LoaderIcon as Loader } from "./PixelIcon";
 import { forwardRef } from "react";
 import type { ButtonHTMLAttributes } from "react";
 
@@ -57,7 +57,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       className={["btn", VARIANT[variant], SIZE[size], className].filter(Boolean).join(" ")}
       {...rest}
     >
-      {loading && <LoaderCircle aria-hidden="true" className="w-4 h-4 animate-spin" />}
+      {loading && <Loader aria-hidden="true" className="w-4 h-4 animate-spin" />}
       {children}
     </button>
   );

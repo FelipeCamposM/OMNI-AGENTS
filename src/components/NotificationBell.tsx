@@ -1,4 +1,4 @@
-import { Bell } from "lucide-react";
+import { NotificationIcon as Notification } from "./ui/PixelIcon";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNotifications } from "../hooks/useNotifications";
@@ -90,18 +90,18 @@ export function NotificationBell({
         aria-expanded={aberto}
         aria-haspopup="dialog"
         className={[
-          "relative p-1.5 !rounded-lg transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
+          "relative p-1.5 rounded-none transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
           temPendencia
             ? "text-accent hover:bg-overlay/[0.07]"
             : "text-text-muted hover:text-text-secondary hover:bg-overlay/[0.07]",
         ].join(" ")}
       >
-        <Bell className={`w-4 h-4 ${temPendencia ? "bell-ring" : ""}`} aria-hidden="true" />
+        <Notification className={`w-4 h-4 ${temPendencia ? "bell-ring" : ""}`} aria-hidden="true" />
 
         {temPendencia && (
           <span
             aria-hidden="true"
-            className="badge-pulse absolute -top-0.5 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-danger text-white text-[9px] font-bold leading-[15px] text-center"
+            className="badge-pulse absolute -top-0.5 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-none bg-danger text-white text-[9px] font-bold leading-[15px] text-center"
           >
             {total > 9 ? "9+" : total}
           </span>
@@ -128,7 +128,7 @@ export function NotificationBell({
                   setAberto(false);
                   onOpenSettings(n.secao);
                 }}
-                className="glass-hover w-full text-left px-2.5 py-2 !rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                className="glass-hover w-full text-left px-2.5 py-2 rounded-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
               >
                 <span className="block text-text-primary text-xs font-medium">{n.titulo}</span>
                 <span className="block text-text-muted text-[10px] leading-snug">{n.detalhe}</span>

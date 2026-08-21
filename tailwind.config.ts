@@ -42,12 +42,7 @@ export default {
         sans: ["Segoe UI", "system-ui", "-apple-system", "sans-serif"],
         mono: ["Cascadia Code", "Consolas", "monospace"],
       },
-      borderRadius: {
-        glass: "1rem",
-      },
       boxShadow: {
-        glass: "var(--glass-shadow)",
-        "glass-lg": "var(--glass-shadow-lg)",
         glow: "0 0 0 1px rgb(var(--c-accent) / 0.35), 0 8px 28px rgb(var(--c-accent) / 0.28)",
       },
       keyframes: {

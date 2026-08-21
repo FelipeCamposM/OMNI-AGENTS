@@ -21,6 +21,7 @@ const THEMES: { value: Theme; label: string }[] = [
 
 /** Gradientes CSS + efeitos animados do registry + imagem do usuário. */
 const BACKGROUNDS: { value: Background; label: string }[] = [
+  { value: "pixel-grid", label: "Pixels" },
   { value: "mesh-1", label: "Aurora" },
   { value: "mesh-2", label: "Poente" },
   { value: "mesh-3", label: "Maré" },
@@ -61,7 +62,7 @@ export function SettingsView({ settings, onChange, onReset, initialSection }: Se
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-text-primary text-lg font-semibold">Configurações</h1>
+        <h1 className="pixel-text text-text-primary text-lg">Configurações</h1>
         <p className="text-text-muted text-xs">Preferências do workspace. Salvam na hora.</p>
       </div>
 
@@ -73,7 +74,7 @@ export function SettingsView({ settings, onChange, onReset, initialSection }: Se
               onClick={() => setSection(s.id)}
               aria-current={section === s.id ? "page" : undefined}
               className={[
-                "w-full text-left px-3 py-2 !rounded-lg text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
+                "w-full text-left px-3 py-2 rounded-none text-xs transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
                 section === s.id
                   ? "glass text-text-primary font-medium"
                   : "text-text-secondary hover:text-text-primary hover:bg-overlay/[0.07]",
@@ -144,7 +145,7 @@ function AparenciaSection({ settings, onChange }: SectionProps) {
                   title={p.label}
                   onClick={() => onChange({ accent: p.id })}
                   className={[
-                    "w-8 h-8 !rounded-full transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
+                    "w-8 h-8 rounded-none transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
                     ativa
                       ? "ring-2 ring-offset-2 ring-offset-bg-surface ring-text-primary scale-110"
                       : "hover:scale-110",
@@ -161,8 +162,8 @@ function AparenciaSection({ settings, onChange }: SectionProps) {
         <Divider />
 
         <Segmented
-          label="Vidro"
-          description="Quanto o fundo aparece através das superfícies. Menos vidro = menos GPU."
+          label="Relevo"
+          description="Espessura da borda e da sombra dos painéis — o quão 'chunky' o app fica."
           options={GLASS_LEVELS}
           value={settings.glass}
           onChange={(v) => onChange({ glass: v })}
@@ -172,7 +173,7 @@ function AparenciaSection({ settings, onChange }: SectionProps) {
       <Card title="Fundo">
         <Segmented
           label="Imagem de fundo"
-          description="Aurora, Poente e Maré são gradientes gerados (custo zero). Ondas é um efeito animado em WebGL — mais bonito, mais GPU."
+          description="Pixels é a grade padrão do app. Aurora, Poente e Maré são gradientes suaves. Ondas é um efeito animado em WebGL — mais bonito, mais GPU."
           options={BACKGROUNDS}
           value={settings.background}
           onChange={(v) => onChange({ background: v })}
@@ -283,8 +284,8 @@ function Info({ label, value }: { label: string; value: string }) {
 
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="glass glass-sheen !rounded-2xl p-5 space-y-4">
-      <h2 className="text-text-primary text-sm font-semibold">{title}</h2>
+    <section className="glass rounded-none p-5 space-y-4">
+      <h2 className="pixel-text text-text-primary text-sm">{title}</h2>
       {children}
     </section>
   );

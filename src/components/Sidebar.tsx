@@ -1,8 +1,8 @@
-import { FolderPlus, Settings } from "lucide-react";
+import { FolderPlusIcon as FolderPlus, SlidersIcon as Sliders } from "./ui/PixelIcon";
 import { useEffect, useRef } from "react";
 import gsap from "gsap";
 import { open } from "@tauri-apps/plugin-dialog";
-import { useGlassSheen, useStagger } from "../lib/motion";
+import { useStagger } from "../lib/motion";
 import { NotificationBell } from "./NotificationBell";
 import type { SettingsSection } from "../hooks/useNotifications";
 /* O mesmo arquivo que o Tauri usa como ícone do app (tauri.conf.json →
@@ -23,7 +23,6 @@ interface SidebarProps {
 }
 
 export function Sidebar({ projects, showSettings, onHome, onAddProject, onOpenSettings }: SidebarProps) {
-  const sheenRef = useGlassSheen<HTMLElement>();
   const navRef = useStagger<HTMLElement>("[data-nav-item]");
 
   async function pickProject() {
@@ -32,25 +31,22 @@ export function Sidebar({ projects, showSettings, onHome, onAddProject, onOpenSe
   }
 
   return (
-    <aside
-      ref={sheenRef}
-      className="glass glass-strong glass-sheen w-64 shrink-0 flex flex-col h-screen sticky top-0 rounded-none border-y-0 border-l-0"
-    >
+    <aside className="glass glass-strong w-64 shrink-0 flex flex-col h-screen sticky top-0 rounded-none border-y-0 border-l-0">
       {/* Logo + sino. O sino é irmão do botão, não filho: <button> dentro de
           <button> é HTML inválido e o clique de um engole o do outro. */}
       <div className="px-4 py-5 border-b border-border-subtle/60 flex items-center gap-2">
         <button
           onClick={onHome}
-          className="flex items-center gap-2.5 text-left min-w-0 flex-1 !rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          className="flex items-center gap-2.5 text-left min-w-0 flex-1 rounded-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         >
           <img
             src={appIcon}
             alt=""
             aria-hidden="true"
-            className="neon-glow w-7 h-7 rounded-lg shrink-0 object-contain"
+            className="neon-glow w-7 h-7 rounded-none shrink-0 object-contain"
           />
           <div className="min-w-0">
-            <p className="text-text-primary text-xs font-semibold leading-tight truncate">OMNI AGENTS</p>
+            <p className="pixel-text text-text-primary text-xs leading-tight truncate">OMNI AGENTS</p>
             <p className="text-text-muted text-[10px] leading-tight truncate">Workspace</p>
           </div>
         </button>
@@ -67,7 +63,7 @@ export function Sidebar({ projects, showSettings, onHome, onAddProject, onOpenSe
               data-nav-item
               onClick={pickProject}
               aria-label="Adicionar projeto"
-              className="text-text-muted hover:text-text-primary !rounded-md p-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="text-text-muted hover:text-text-primary rounded-none p-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <FolderPlus className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
@@ -102,7 +98,7 @@ export function Sidebar({ projects, showSettings, onHome, onAddProject, onOpenSe
         <NavItem
           active={showSettings}
           onClick={() => onOpenSettings()}
-          icon={<Settings className="w-4 h-4" aria-hidden="true" />}
+          icon={<Sliders className="w-4 h-4" aria-hidden="true" />}
           label="Configurações"
         />
       </div>
@@ -140,9 +136,9 @@ function NavItem({
       data-nav-item
       onClick={onClick}
       className={[
-        "relative w-full flex items-center gap-2.5 px-3 py-2 !rounded-lg text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
+        "relative w-full flex items-center gap-2.5 px-3 py-2 rounded-none text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
         active
-          ? "glass glass-sheen text-text-primary font-medium"
+          ? "glass text-text-primary font-medium"
           : "text-text-secondary hover:text-text-primary hover:bg-overlay/[0.07]",
       ].join(" ")}
     >
@@ -150,7 +146,7 @@ function NavItem({
         ref={barRef}
         aria-hidden="true"
         className={[
-          "absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full origin-center opacity-0 scale-y-0",
+          "absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-none origin-center opacity-0 scale-y-0",
           active ? "neon-bar" : "bg-border",
         ].join(" ")}
       />

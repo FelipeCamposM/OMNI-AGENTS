@@ -42,7 +42,7 @@ export function ColorPicker({ id, value, onChange, onReset, disabled }: ColorPic
       <label
         htmlFor={inputId}
         className={[
-          "glass-inset relative w-8 h-8 shrink-0 rounded-lg overflow-hidden",
+          "glass-inset relative w-8 h-8 shrink-0 rounded-none overflow-hidden",
           disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
         ].join(" ")}
         style={{ backgroundColor: value }}
@@ -69,7 +69,7 @@ export function ColorPicker({ id, value, onChange, onReset, disabled }: ColorPic
             aria-label={`Usar ${c}`}
             onClick={() => onChange(c)}
             className={[
-              "w-5 h-5 rounded-md border transition-transform",
+              "w-5 h-5 rounded-none border transition-transform",
               value.toUpperCase() === c ? "border-selected scale-110" : "border-border-subtle",
               disabled ? "opacity-50" : "hover:scale-110",
             ].join(" ")}

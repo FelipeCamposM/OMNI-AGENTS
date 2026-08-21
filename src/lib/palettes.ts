@@ -29,6 +29,14 @@ export interface Paleta {
 
 export const PALETAS: Paleta[] = [
   {
+    id: "laranja",
+    label: "Laranja",
+    // Sampleada do anel do app-icon.webp (o polvo pixel-art).
+    base: "#F97316",
+    deep: "#C2410C",
+    claro: { base: "#C2410C", deep: "#9A3412" },
+  },
+  {
     id: "roxo",
     label: "Roxo",
     base: "#A855F7",
@@ -87,7 +95,7 @@ export const PALETAS: Paleta[] = [
   },
 ];
 
-export const PALETA_PADRAO = "roxo";
+export const PALETA_PADRAO = "laranja";
 
 export function getPaleta(id: string | undefined): Paleta {
   return PALETAS.find((p) => p.id === id) ?? PALETAS[0];

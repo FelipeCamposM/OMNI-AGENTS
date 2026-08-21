@@ -108,7 +108,7 @@ export function UpdateCard() {
       {fase === "baixando" && (
         <>
           <p className="text-text-primary text-sm font-medium">Baixando atualização…</p>
-          <div className="glass-inset h-2 rounded-full overflow-hidden">
+          <div className="glass-inset h-2 rounded-none overflow-hidden">
             <div
               className="shimmer h-full bg-accent transition-all duration-300"
               style={{ width: `${progresso}%` }}
@@ -159,5 +159,5 @@ export function UpdateCard() {
 
 /** Mesma casca dos cards de Configurações, sem título próprio. */
 function Card({ children }: { children: React.ReactNode }) {
-  return <div className="glass glass-sheen !rounded-2xl p-5 space-y-3">{children}</div>;
+  return <div className="glass rounded-none p-5 space-y-3">{children}</div>;
 }

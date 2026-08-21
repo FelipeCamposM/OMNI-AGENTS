@@ -11,8 +11,8 @@
     --c-bg-elevated: 30 30 40;
     --c-border-subtle: 42 42 54;
     --c-border: 54 54 74;
-    --c-accent: 168 85 247;
-    --c-accent-hover: 131 0 255;
+    --c-accent: 249 115 22;
+    --c-accent-hover: 194 65 12;
     --c-text-primary: 226 226 236;
     --c-text-secondary: 136 136 168;
     --c-text-muted: 85 85 106;
@@ -21,12 +21,13 @@
        ⚠️ Estes quatro valores — accent, accent-hover, selected, selected-deep —
        são SOBRESCRITOS no <html> pelo `useSettings` a partir da paleta
        escolhida (`src/lib/palettes.ts`). O que está aqui é o fallback de quem
-       renderiza antes do primeiro efeito, e a paleta "roxo" repete estes
-       valores de propósito. Mudar a cor do app se faz LÁ, não aqui. */
-    --c-selected: 168 85 247;
-    --c-selected-deep: 131 0 255;
+       renderiza antes do primeiro efeito, e a paleta "laranja" repete estes
+       valores de propósito (sampleada do app-icon.webp). Mudar a cor do app
+       se faz LÁ, não aqui. */
+    --c-selected: 249 115 22;
+    --c-selected-deep: 194 65 12;
 
-    /* Cores de estado (tokenizadas p/ funcionar nos dois temas sobre vidro) */
+    /* Cores de estado (tokenizadas p/ funcionar nos dois temas) */
     --c-success: 74 222 128;
     --c-danger: 248 113 113;
     --c-warning: 251 191 36;
@@ -34,15 +35,17 @@
     /* Overlay de hover/realce: clareia no escuro, escurece no claro */
     --c-overlay: 255 255 255;
 
-    /* Vidro: overlay branco sobre fundo escuro */
-    --glass-rgb: 255 255 255;
-    --glass-a: 0.06;
-    --glass-a-hover: 0.1;
-    --glass-border-a: 0.12;
-    --glass-hi-a: 0.16;
-    --glass-sheen-a: 0.1;
-    --glass-shadow: 0 8px 32px rgb(0 0 0 / 0.38), 0 2px 8px rgb(0 0 0 / 0.24);
-    --glass-shadow-lg: 0 24px 64px rgb(0 0 0 / 0.5), 0 8px 24px rgb(0 0 0 / 0.3);
+    /* Contorno grosso dos painéis "pixel" — quase-preto, igual ao traço do
+       app-icon.webp. Mesmo valor nos dois temas: é borda, não texto sobre
+       fundo, então não precisa da inversão clara/escura. */
+    --c-outline: 15 8 4;
+
+    /* Painel pixel: opaco (sem backdrop-filter). --glass-rgb/--glass-a
+       continuam existindo pra .glass-success poder tingir o painel trocando
+       só a variável — mecanismo intacto, só a base virou sólida. */
+    --glass-rgb: 30 30 40;
+    --glass-a: 0.96;
+    --glass-a-hover: 1;
     /* Veil sobre a imagem de fundo — garante contraste do texto */
     --app-bg-veil: 14 14 20;
     --app-bg-veil-a: 0.42;
@@ -54,13 +57,13 @@
     --c-bg-elevated: 240 240 245;
     --c-border-subtle: 224 224 232;
     --c-border: 198 198 212;
-    /* Roxo mais fechado: texto branco sobre violet-500 não passa contraste
-       num fundo claro. violet-600 → violet-700. É a variante `claro` da
-       paleta "roxo" — os quatro valores são sobrescritos pelo useSettings. */
-    --c-accent: 124 58 237;
-    --c-accent-hover: 109 40 217;
-    --c-selected: 124 58 237;
-    --c-selected-deep: 109 40 217;
+    /* Laranja mais fechado: texto branco sobre orange-500 não passa contraste
+       num fundo claro. É a variante `claro` da paleta "laranja" — os quatro
+       valores são sobrescritos pelo useSettings. */
+    --c-accent: 194 65 12;
+    --c-accent-hover: 154 52 18;
+    --c-selected: 194 65 12;
+    --c-selected-deep: 154 52 18;
     --c-text-primary: 24 24 32;
     --c-text-secondary: 82 82 104;
     --c-text-muted: 128 128 150;
@@ -70,35 +73,42 @@
     --c-warning: 202 138 4;
 
     --c-overlay: 24 24 40;
+    --c-outline: 15 8 4;
 
-    /* No claro o vidro é branco leitoso, não uma película translúcida */
-    --glass-a: 0.6;
-    --glass-a-hover: 0.72;
-    --glass-border-a: 0.85;
-    --glass-hi-a: 0.95;
-    --glass-sheen-a: 0.5;
-    --glass-shadow: 0 8px 32px rgb(20 20 45 / 0.08), 0 2px 8px rgb(20 20 45 / 0.05);
-    --glass-shadow-lg: 0 24px 64px rgb(20 20 45 / 0.14), 0 8px 24px rgb(20 20 45 / 0.08);
+    /* No claro o painel é branco quase opaco em vez de cinza-escuro. */
+    --glass-rgb: 255 255 255;
+    --glass-a: 0.98;
+    --glass-a-hover: 1;
     --app-bg-veil: 249 249 251;
     --app-bg-veil-a: 0.62;
   }
 
-  /* Intensidade do vidro (setting "glass"). Blur é o custo de GPU real.
-     --glass-blur-base existe porque uma custom property não pode se
-     auto-referenciar: .glass-strong precisa multiplicar a base, não a si mesma. */
+  /* Intensidade do "relevo" (setting "glass"): espessura da borda e offset da
+     sombra dura dos painéis pixel — não blur, não existe mais backdrop-filter
+     aqui. Mesma ideia de antes (sutil/médio/forte), variável renomeada de
+     função: menos GPU nunca foi o custo real de um border+box-shadow sólidos,
+     então "forte" aqui só significa mais chunky, não mais pesado. */
   :root {
-    --glass-blur-base: 18px;
-    --glass-blur: var(--glass-blur-base);
-    --glass-sat: 165%;
-    --glass-radius: 1rem;
+    --pixel-border: 3px;
+    --pixel-shadow: 4px;
+    --glass-radius: 0px;
   }
-  :root[data-glass="sutil"] { --glass-blur-base: 8px; --glass-sat: 130%; }
-  :root[data-glass="forte"] { --glass-blur-base: 30px; --glass-sat: 190%; }
+  :root[data-glass="sutil"] { --pixel-border: 2px; --pixel-shadow: 2px; }
+  :root[data-glass="forte"] { --pixel-border: 4px; --pixel-shadow: 6px; }
 
   /* Fundo da aplicação. useSettings escreve --app-bg-image p/ "custom". */
-  :root { --app-bg-image: none; --app-bg-opacity: 0.35; --app-bg-blur: 12px; }
+  :root { --app-bg-image: none; --app-bg-opacity: 0.35; --app-bg-blur: 0px; }
 
   :root[data-bg="nenhum"] { --app-bg-image: none; }
+
+  /* Grade de pixels — fundo padrão do app. Bordas duras de propósito: é o
+     único fundo que "quebra" se desfocado (setting Desfoque some com ele),
+     os outros (mesh/efeito) continuam bonitos com blur. */
+  :root[data-bg="pixel-grid"] {
+    --app-bg-image:
+      repeating-linear-gradient(0deg, rgb(var(--c-accent) / 0.16) 0px, rgb(var(--c-accent) / 0.16) 2px, transparent 2px, transparent 24px),
+      repeating-linear-gradient(90deg, rgb(var(--c-accent) / 0.16) 0px, rgb(var(--c-accent) / 0.16) 2px, transparent 2px, transparent 24px);
+  }
 
   /* Mesh gradients — zero asset, funcionam sobre claro e escuro. */
   :root[data-bg="mesh-1"] {
@@ -132,7 +142,7 @@
 
   body {
     @apply bg-bg-primary text-text-primary;
-    font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Cascadia Code', Consolas, ui-monospace, monospace;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     user-select: none;
@@ -193,103 +203,72 @@
 }
 
 @layer components {
-  /* ── Vidro líquido ────────────────────────────────────────────────────────
-     ponytail: backdrop-filter custa GPU no WebView2. Usar em SUPERFÍCIES
-     (shell, sidebar, cards, modais), nunca em cada botão de lista. Se travar
-     em máquina fraca, o usuário baixa p/ data-glass="sutil" (blur 8px). */
+  /* ── Painel pixel ─────────────────────────────────────────────────────────
+     Chapado, sem backdrop-filter: borda grossa + sombra dura com offset (sem
+     blur/spread), cantos retos. --glass-rgb/--glass-a continuam existindo só
+     pra .glass-success poder tingir o painel trocando a variável — mesmo
+     mecanismo de antes, a base é que virou sólida em vez de translúcida. */
   .glass {
     position: relative;
     border-radius: var(--glass-radius);
     background-color: rgb(var(--glass-rgb) / var(--glass-a));
-    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
-    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-sat));
-    border: 1px solid rgb(var(--glass-rgb) / var(--glass-border-a));
-    box-shadow: var(--glass-shadow), inset 0 1px 0 rgb(var(--glass-rgb) / var(--glass-hi-a));
+    border: var(--pixel-border) solid rgb(var(--c-outline));
+    box-shadow: var(--pixel-shadow) var(--pixel-shadow) 0 rgb(var(--c-outline));
   }
 
-  /* Chrome do layout: mais blur, menos preenchimento. */
+  /* Chrome do layout: tom mais escuro/neutro, borda um pouco mais grossa. */
   .glass-strong {
-    --glass-blur: calc(var(--glass-blur-base) * 1.6);
-    background-color: rgb(var(--glass-rgb) / calc(var(--glass-a) * 0.7));
+    background-color: rgb(var(--c-bg-primary) / var(--glass-a));
+    border-width: calc(var(--pixel-border) + 1px);
   }
 
-  /* Camada flutuante: modais, popovers. */
+  /* Camada flutuante: modais, popovers. Sombra maior — lê como "mais alto". */
   .glass-float {
-    --glass-blur: calc(var(--glass-blur-base) * 2);
-    background-color: rgb(var(--glass-rgb) / calc(var(--glass-a) * 1.6));
-    border-color: rgb(var(--glass-rgb) / calc(var(--glass-border-a) * 1.5));
-    box-shadow: var(--glass-shadow-lg), inset 0 1px 0 rgb(var(--glass-rgb) / var(--glass-hi-a));
+    background-color: rgb(var(--glass-rgb) / var(--glass-a));
+    box-shadow: calc(var(--pixel-shadow) * 1.5) calc(var(--pixel-shadow) * 1.5) 0 rgb(var(--c-outline));
   }
 
-  /* Popover / menu flutuante: fundo OPACO, não vidro.
-     `.glass-float` preenche só ~10% no tema escuro e depende do backdrop-filter
-     para se destacar — o que basta numa superfície grande sobre o fundo do app,
-     mas não numa caixinha por cima de texto: o conteúdo de trás atravessa e
-     nada fica legível. Camada flutuante sobre conteúdo arbitrário é opaca. */
+  /* Popover / menu flutuante: fundo opaco da superfície elevada. */
   .popover {
     border-radius: var(--glass-radius);
     background-color: rgb(var(--c-bg-elevated));
-    border: 1px solid rgb(var(--c-border));
-    box-shadow: var(--glass-shadow-lg);
+    border: var(--pixel-border) solid rgb(var(--c-outline));
+    box-shadow: calc(var(--pixel-shadow) * 1.5) calc(var(--pixel-shadow) * 1.5) 0 rgb(var(--c-outline));
   }
 
-  /* Controles recessados: sombra pra dentro, sem elevação. */
+  /* Controles recessados: bisel invertido (topo/esquerda escurecem, em vez de
+     sombra pra dentro com blur) — o truque clássico de UI 8-bit "afundada". */
   .glass-inset {
     position: relative;
-    border-radius: 0.75rem;
-    background-color: rgb(var(--glass-rgb) / calc(var(--glass-a) * 0.55));
-    backdrop-filter: blur(calc(var(--glass-blur) * 0.5));
-    -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 0.5));
-    border: 1px solid rgb(var(--glass-rgb) / calc(var(--glass-border-a) * 0.8));
-    box-shadow: inset 0 2px 6px rgb(0 0 0 / 0.12);
+    border-radius: var(--glass-radius);
+    background-color: rgb(var(--c-bg-primary) / var(--glass-a));
+    border-style: solid;
+    border-width: var(--pixel-border);
+    border-color: rgb(var(--c-outline) / 0.7) rgb(var(--c-outline) / 0.35) rgb(var(--c-outline) / 0.35)
+      rgb(var(--c-outline) / 0.7);
   }
 
-  /* Vidro tingido de sucesso. Só troca a cor-base do sistema de vidro, então
-     .glass/.glass-inset/.glass-sheen dentro dele já saem verdes de graça. */
+  /* Painel tingido de sucesso. Só troca a cor-base do sistema, então
+     .glass/.glass-inset dentro dele já saem verdes de graça. */
   .glass-success {
     --glass-rgb: var(--c-success);
-    --glass-a: 0.1;
-    --glass-a-hover: 0.16;
-    --glass-border-a: 0.32;
-    --glass-hi-a: 0.28;
-    --glass-sheen-a: 0.14;
-    box-shadow: var(--glass-shadow), inset 0 1px 0 rgb(var(--glass-rgb) / var(--glass-hi-a)),
-      0 0 28px -6px rgb(var(--c-success) / 0.28);
+    --glass-a: 0.12;
+    --glass-a-hover: 0.18;
+    box-shadow: var(--pixel-shadow) var(--pixel-shadow) 0 rgb(var(--c-outline)),
+      0 0 0 1px rgb(var(--c-success) / 0.4) inset;
   }
 
   .glass-hover {
-    transition: background-color 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
+    transition: background-color 160ms steps(3), border-color 160ms steps(3);
   }
   .glass-hover:hover {
     background-color: rgb(var(--glass-rgb) / var(--glass-a-hover));
-    border-color: rgb(var(--glass-rgb) / calc(var(--glass-border-a) * 1.4));
   }
 
-  /* Brilho que segue o cursor — é o que faz o vidro parecer líquido.
-     --mx/--my são escritos por useGlassSheen (src/lib/motion.ts). */
-  .glass-sheen::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 260ms ease;
-    background: radial-gradient(
-      220px circle at var(--mx, 50%) var(--my, 50%),
-      rgb(var(--glass-rgb) / var(--glass-sheen-a)),
-      transparent 65%
-    );
-  }
-  .glass-sheen:hover::after {
-    opacity: 1;
-  }
-
-  /* ── Botões de vidro líquido ──────────────────────────────────────────────
-     ponytail: SEM backdrop-filter, de propósito. São até ~10 botões por tela;
-     cada um viraria uma camada de composição no WebView2 (ver aviso em .glass
-     acima). O preenchimento é gradiente + borda + highlight interno: sobre o
-     fundo já borrado do app lê igual, custo de GPU zero.
+  /* ── Botões pixel ─────────────────────────────────────────────────────────
+     Fill chapado + borda grossa + sombra dura. Ao clicar, o botão desloca
+     pelo tamanho da sombra e a sombra some — o "afundar" clássico de botão
+     8-bit — em vez de levitar/escalar como um botão de vidro.
 
      A base mora aqui no @layer components — e não como string de classes no
      componente React — porque o Tailwind emite @layer utilities DEPOIS: assim
@@ -301,19 +280,15 @@
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    border-radius: 0.75rem;
-    font-weight: 500;
+    border-radius: var(--glass-radius);
+    border: var(--pixel-border) solid rgb(var(--c-outline));
+    font-weight: 700;
     white-space: nowrap;
     user-select: none;
-    /* Levitação e clique passam por custom properties porque `transform` é uma
-       propriedade só: se :hover e :active setassem `transform` direto, um
-       sobrescreveria o outro e a ordem viraria disputa de especificidade. */
-    transform: translateY(var(--btn-lift, 0)) scale(var(--btn-scale, 1));
-    transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease,
-      box-shadow 200ms ease, opacity 200ms ease,
-      transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+    box-shadow: var(--pixel-shadow) var(--pixel-shadow) 0 rgb(var(--c-outline));
+    transition: transform 90ms steps(2), box-shadow 90ms steps(2), background-color 140ms ease,
+      color 140ms ease, opacity 140ms ease;
   }
-  /* O :focus-visible global força border-radius 4px — aqui herda o da pílula. */
   .btn:focus-visible {
     border-radius: inherit;
   }
@@ -321,139 +296,69 @@
   .btn:not(:disabled) {
     cursor: pointer;
   }
-  .btn:hover:not(:disabled) {
-    --btn-lift: -1px;
-  }
+  /* Afunda: desloca exatamente o offset da sombra e ela some — o botão "senta"
+     no lugar onde a sombra estava. */
   .btn:active:not(:disabled) {
-    --btn-scale: 0.97;
-    --btn-lift: 0px;
+    transform: translate(var(--pixel-shadow), var(--pixel-shadow));
+    box-shadow: 0 0 0 rgb(var(--c-outline));
   }
   .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
   }
 
-  /* Não-selecionado: vidro neutro. O gradiente do topo é a "lente". */
+  /* Não-selecionado: painel neutro chapado. */
   .btn-glass {
     color: rgb(var(--c-text-secondary));
     background-color: rgb(var(--glass-rgb) / var(--glass-a));
-    background-image: linear-gradient(
-      180deg,
-      rgb(var(--glass-rgb) / var(--glass-hi-a)) 0%,
-      transparent 48%
-    );
-    border: 1px solid rgb(var(--glass-rgb) / var(--glass-border-a));
-    box-shadow: 0 1px 2px rgb(0 0 0 / 0.1),
-      inset 0 1px 0 rgb(var(--glass-rgb) / var(--glass-hi-a));
   }
   .btn-glass:hover:not(:disabled) {
     color: rgb(var(--c-text-primary));
     background-color: rgb(var(--glass-rgb) / var(--glass-a-hover));
-    border-color: rgb(var(--glass-rgb) / calc(var(--glass-border-a) * 1.4));
   }
 
-  /* Selecionado (segmentado): mesma pílula, tinta ROXA do gradiente de ondas.
-     É aria-pressed que dispara — perdê-lo apaga o estado visual.
-     O gradiente vai do roxo claro ao fechado (mesma direção das ondas), com
-     highlight branco por cima — é o que dá o volume de vidro. */
+  /* Selecionado (segmentado): mesmo botão, tinta cheia da cor ativa da
+     paleta. É aria-pressed que dispara — perdê-lo apaga o estado visual. */
   .btn-glass[aria-pressed="true"] {
     color: #fff;
     background-color: rgb(var(--c-selected));
-    background-image: linear-gradient(180deg, rgb(255 255 255 / 0.26) 0%, transparent 46%),
-      linear-gradient(180deg, rgb(var(--c-selected)) 0%, rgb(var(--c-selected-deep)) 100%);
-    border-color: rgb(var(--c-selected) / 0.6);
-    box-shadow: 0 4px 16px rgb(var(--c-selected-deep) / 0.38),
-      inset 0 1px 0 rgb(255 255 255 / 0.32);
+    border-color: rgb(var(--c-outline));
   }
   .btn-glass[aria-pressed="true"]:hover:not(:disabled) {
     color: #fff;
-    border-color: rgb(var(--c-selected) / 0.85);
-    box-shadow: 0 6px 22px rgb(var(--c-selected-deep) / 0.52),
-      inset 0 1px 0 rgb(255 255 255 / 0.4);
+    background-color: rgb(var(--c-selected-deep));
   }
 
-  /* CTA primária ("Converter e salvar…", "Salvar .md", …) — mesmo roxo das
-     ondas do segmentado selecionado. */
+  /* CTA primária ("Adicionar projeto", "Restaurar padrão", …) — mesma cor
+     ativa do segmentado selecionado. */
   .btn-primary {
     color: #fff;
     background-color: rgb(var(--c-selected));
-    background-image: linear-gradient(180deg, rgb(255 255 255 / 0.2) 0%, transparent 50%),
-      linear-gradient(180deg, rgb(var(--c-selected)) 0%, rgb(var(--c-selected-deep)) 100%);
-    border: 1px solid rgb(var(--c-selected) / 0.6);
-    box-shadow: 0 6px 20px rgb(var(--c-selected-deep) / 0.36),
-      inset 0 1px 0 rgb(255 255 255 / 0.32);
   }
   .btn-primary:hover:not(:disabled) {
-    border-color: rgb(var(--c-selected) / 0.95);
-    background-image: linear-gradient(180deg, rgb(255 255 255 / 0.3) 0%, transparent 52%),
-      linear-gradient(180deg, rgb(var(--c-selected)) 0%, rgb(var(--c-selected-deep)) 100%);
-    box-shadow: 0 10px 30px rgb(var(--c-selected-deep) / 0.55),
-      inset 0 1px 0 rgb(255 255 255 / 0.45);
+    background-color: rgb(var(--c-selected-deep));
   }
 
-  /* Brilho que varre a pílula no hover — o "premium" da CTA. Só opacidade e
-     background-position: não força layout nem cria camada nova. */
-  .btn-primary::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 200ms ease;
-    background: linear-gradient(
-      100deg,
-      transparent 34%,
-      rgb(255 255 255 / 0.3) 50%,
-      transparent 66%
-    );
-    background-size: 220% 100%;
-    background-position: 130% 0;
-  }
-  .btn-primary:hover:not(:disabled)::after {
-    opacity: 1;
-    animation: btn-sweep 850ms cubic-bezier(0.22, 1, 0.36, 1);
-  }
-
-  @keyframes btn-sweep {
-    from { background-position: 130% 0; }
-    to { background-position: -70% 0; }
-  }
-
-  /* Desativada: some o roxo em vez de escurecê-lo — com `opacity: .5` a CTA
-     virava um borrão que lia como "quebrado", não como "ainda não".
-
-     ⚠️ As cores aqui saem de --c-overlay / --c-border, NÃO dos tokens de vidro.
-     `calc(var(--glass-a) * 0.8)` dá 0.048 no tema escuro (--glass-a: 0.06):
-     a CTA vira branco a 5% e some. E como toda CTA de salvar nasce disabled
-     até escolher arquivo, ela sumia logo ao abrir a tela. --c-border já é
-     tokenizado por tema e não depende de multiplicação. */
+  /* Desativada: some a cor em vez de escurecê-la — um retângulo cinza sobre
+     fundo quase preto lia como "quebrado", não como "ainda não". */
   .btn-primary:disabled {
     opacity: 1;
     color: rgb(255 255 255 / 0.62);
-    /* Roxo apagado, não cinza: continua legível como "a CTA desta tela, ainda
-       não disponível". Cinza sobre o fundo quase preto do app virava um
-       retângulo fantasma — foi o que quebrou duas vezes aqui. */
     background-color: rgb(var(--c-selected) / 0.26);
-    background-image: linear-gradient(180deg, rgb(255 255 255 / 0.08) 0%, transparent 50%);
-    border-color: rgb(var(--c-selected) / 0.4);
-    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.1);
+    border-color: rgb(var(--c-outline) / 0.5);
+    box-shadow: var(--pixel-shadow) var(--pixel-shadow) 0 rgb(var(--c-outline) / 0.5);
   }
   /* No tema claro o fundo é branco: texto branco sumiria. */
   :root[data-theme="claro"] .btn-primary:disabled {
     color: rgb(var(--c-selected-deep) / 0.75);
     background-color: rgb(var(--c-selected) / 0.16);
-    border-color: rgb(var(--c-selected) / 0.35);
-  }
-  .btn-primary:disabled::after {
-    display: none;
   }
 
-  /* Seletor de arquivo: pílula tracejada larga, convida a clicar. */
+  /* Seletor de arquivo/pasta: borda tracejada grossa, convida a clicar. */
   .btn-picker {
     color: rgb(var(--c-text-muted));
-    background-color: rgb(var(--glass-rgb) / calc(var(--glass-a) * 0.6));
-    border: 1px dashed rgb(var(--glass-rgb) / calc(var(--glass-border-a) * 1.6));
+    background-color: rgb(var(--glass-rgb) / calc(var(--glass-a) * 0.7));
+    border-style: dashed;
   }
   /* Arrastando um arquivo por cima: mesmo destaque da dropzone. */
   .btn-picker[data-dragging] {
@@ -464,7 +369,6 @@
   .btn-picker:hover:not(:disabled) {
     color: rgb(var(--c-text-secondary));
     background-color: rgb(var(--glass-rgb) / var(--glass-a-hover));
-    border-color: rgb(var(--c-accent) / 0.5);
   }
 
   .btn-ghost {
@@ -477,47 +381,37 @@
 
   .btn-danger {
     color: rgb(var(--c-danger));
-    background-color: rgb(var(--c-danger) / 0.1);
-    background-image: linear-gradient(180deg, rgb(255 255 255 / 0.1) 0%, transparent 48%);
-    border: 1px solid rgb(var(--c-danger) / 0.35);
+    background-color: rgb(var(--c-danger) / 0.14);
+    border-color: rgb(var(--c-danger));
   }
   .btn-danger:hover:not(:disabled) {
-    background-color: rgb(var(--c-danger) / 0.18);
-    border-color: rgb(var(--c-danger) / 0.55);
+    color: #fff;
+    background-color: rgb(var(--c-danger));
   }
 
   /* ── Campos de texto ──────────────────────────────────────────────────────
      input / textarea / select. Mesma ideia do .btn: base aqui, o componente
      React (src/components/ui/Input.tsx) só escolhe tamanho e estado.
 
-     O foco é o roxo neon do resto do app — glow ESTÁTICO, não a pulsação do
-     .neon: um campo piscando enquanto se digita cansa. O anel entra na
-     transição e fica. */
+     Painel chapado + borda grossa, igual ao resto do sistema pixel. O foco é
+     um anel sólido na cor ativa — sem glow difuso, sem pulso: acende e fica. */
   .field {
     width: 100%;
-    border-radius: 0.75rem;
+    border-radius: var(--glass-radius);
     color: rgb(var(--c-text-primary));
-    background-color: rgb(var(--glass-rgb) / calc(var(--glass-a) * 0.55));
-    border: 1px solid rgb(var(--glass-rgb) / calc(var(--glass-border-a) * 0.8));
-    box-shadow: inset 0 2px 6px rgb(0 0 0 / 0.12);
-    transition: border-color 180ms ease, box-shadow 180ms ease,
-      background-color 180ms ease;
+    background-color: rgb(var(--c-bg-elevated));
+    border: var(--pixel-border) solid rgb(var(--c-outline));
+    transition: border-color 120ms steps(2), box-shadow 120ms steps(2);
   }
   .field::placeholder {
     color: rgb(var(--c-text-muted));
   }
-  .field:hover:not(:disabled):not(:focus) {
-    border-color: rgb(var(--glass-rgb) / calc(var(--glass-border-a) * 1.35));
-  }
   /* `outline: none` explícito: o :focus-visible global desenharia um anel
-     índigo de 2px por cima do glow roxo. */
+     por cima do próprio anel de foco daqui. */
   .field:focus,
   .field:focus-visible {
     outline: none;
-    border-color: rgb(var(--c-selected));
-    background-color: rgb(var(--glass-rgb) / calc(var(--glass-a) * 0.8));
-    box-shadow: inset 0 2px 6px rgb(0 0 0 / 0.12),
-      0 0 0 3px rgb(var(--c-selected) / 0.22), 0 0 14px rgb(var(--c-selected) / 0.35);
+    box-shadow: 0 0 0 3px rgb(var(--c-selected) / 0.4);
   }
   .field:disabled {
     opacity: 0.5;
@@ -525,18 +419,16 @@
   }
   /* Campo em erro: mesma gramática, cor de perigo. */
   .field[aria-invalid="true"] {
-    border-color: rgb(var(--c-danger) / 0.7);
+    border-color: rgb(var(--c-danger));
   }
   .field[aria-invalid="true"]:focus {
-    border-color: rgb(var(--c-danger));
-    box-shadow: inset 0 2px 6px rgb(0 0 0 / 0.12),
-      0 0 0 3px rgb(var(--c-danger) / 0.22), 0 0 14px rgb(var(--c-danger) / 0.3);
+    box-shadow: 0 0 0 3px rgb(var(--c-danger) / 0.35);
   }
 
   /* ── Slider ───────────────────────────────────────────────────────────────
      ponytail: só regras -webkit-*. O app roda em WebView2 (Chromium) e nada
      mais; ::-moz-range-* seria CSS morto. --range-fill é escrito inline pelo
-     componente Slider (% do valor). */
+     componente Slider (% do valor). Cursor quadrado, sem raio: pixel, não pílula. */
   .range {
     -webkit-appearance: none;
     appearance: none;
@@ -549,28 +441,26 @@
     cursor: not-allowed;
   }
   .range::-webkit-slider-runnable-track {
-    height: var(--range-h, 6px);
-    border-radius: 999px;
-    /* Mesmo roxo do segmentado: o trecho preenchido é "o valor escolhido",
+    height: var(--range-h, 8px);
+    border: 2px solid rgb(var(--c-outline));
+    /* Mesma cor do segmentado: o trecho preenchido é "o valor escolhido",
        mesma semântica de aria-pressed. Os dois vivem no mesmo card. */
     background: linear-gradient(
       90deg,
       rgb(var(--c-selected)) 0%,
       rgb(var(--c-selected-deep)) var(--range-fill, 0%),
-      rgb(var(--glass-rgb) / var(--glass-border-a)) var(--range-fill, 0%)
+      rgb(var(--c-bg-elevated)) var(--range-fill, 0%)
     );
-    box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.18);
   }
   .range::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: var(--range-t, 16px);
-    height: var(--range-t, 16px);
-    margin-top: calc((var(--range-h, 6px) - var(--range-t, 16px)) / 2);
-    border-radius: 999px;
+    width: var(--range-t, 18px);
+    height: var(--range-t, 18px);
+    margin-top: calc((var(--range-h, 8px) - var(--range-t, 18px)) / 2 - 2px);
     background: #fff;
-    border: 1px solid rgb(var(--c-selected) / 0.6);
-    box-shadow: 0 1px 3px rgb(0 0 0 / 0.3), 0 0 0 3px rgb(var(--c-selected) / 0.14);
-    transition: transform 140ms ease;
+    border: 2px solid rgb(var(--c-outline));
+    box-shadow: 2px 2px 0 rgb(var(--c-outline));
+    transition: transform 100ms steps(2);
   }
   .range:hover::-webkit-slider-thumb {
     transform: scale(1.08);
@@ -591,13 +481,6 @@
       linear-gradient(-45deg, transparent 75%, rgb(var(--c-overlay) / 0.08) 75%);
     background-size: 12px 12px;
     background-position: 0 0, 0 6px, 6px -6px, -6px 0px;
-  }
-
-  /* Sem suporte a backdrop-filter: cai p/ superfície opaca legível. */
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .glass, .glass-strong, .glass-float, .glass-inset {
-      @apply bg-bg-surface;
-    }
   }
 }
 
@@ -626,12 +509,12 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    /* borda transparente + background-clip = pílula de 4px numa área de clique
-       de 10px. Antes eram 6px "cheios": difíceis de pegar com o mouse. */
+    /* borda transparente + background-clip = barra de 4px numa área de clique
+       de 10px. Antes eram 6px "cheios": difíceis de pegar com o mouse. Sem
+       raio: pixel, não pílula. */
     background-color: rgb(var(--c-selected) / 0.4);
     border: 3px solid transparent;
     background-clip: padding-box;
-    border-radius: 999px;
     transition: background-color 160ms ease, box-shadow 160ms ease;
   }
 
@@ -651,7 +534,17 @@
   :focus-visible {
     outline: 2px solid rgb(var(--c-accent));
     outline-offset: 2px;
-    border-radius: 4px;
+    border-radius: 0;
+  }
+
+  /* Título blocky sem fonte bitmap: camadas de text-shadow duras simulam um
+     contorno pixelado só com CSS. Usar em wordmark/títulos, não em corpo de
+     texto — várias camadas de sombra por caractere custa render a mais. */
+  .pixel-text {
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-shadow: 1px 1px 0 rgb(var(--c-outline)), 2px 2px 0 rgb(var(--c-outline));
   }
 
   /* Sino com pendência: balança em intervalos, não sem parar — um ícone em

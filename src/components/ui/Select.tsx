@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Search } from "lucide-react";
+import { CheckIcon as Check, ChevronDownIcon as ChevronDown, SearchIcon as Search } from "./PixelIcon";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { FieldSize } from "./Input";
 
@@ -268,7 +268,7 @@ export function Select<T extends string | number>({
                 onPointerEnter={() => !o.disabled && setAtivo(i)}
                 onClick={() => escolher(i)}
                 className={[
-                  "flex items-start gap-2 px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors",
+                  "flex items-start gap-2 px-2.5 py-1.5 rounded-none cursor-pointer transition-colors",
                   o.disabled ? "opacity-50 cursor-not-allowed" : "",
                   i === ativo && !o.disabled ? "bg-selected/20" : "",
                   marcado ? "text-text-primary" : "text-text-secondary",
@@ -276,7 +276,6 @@ export function Select<T extends string | number>({
               >
                 <Check
                   aria-hidden="true"
-                  strokeWidth={3}
                   className={[
                     "w-3.5 h-3.5 mt-0.5 shrink-0 text-selected",
                     marcado ? "" : "invisible",

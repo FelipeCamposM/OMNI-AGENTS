@@ -150,30 +150,6 @@ export function useViewTransition<T extends HTMLElement = HTMLDivElement>(key: s
   return ref;
 }
 
-/**
- * Escreve --mx/--my na superfície pra .glass-sheen desenhar o brilho radial
- * onde o cursor está. Barato: só custom properties, sem tween.
- */
-export function useGlassSheen<T extends HTMLElement = HTMLDivElement>() {
-  const ref = useRef<T>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || !motionOn()) return;
-
-    function onMove(e: PointerEvent) {
-      const r = el!.getBoundingClientRect();
-      el!.style.setProperty("--mx", `${e.clientX - r.left}px`);
-      el!.style.setProperty("--my", `${e.clientY - r.top}px`);
-    }
-
-    el.addEventListener("pointermove", onMove);
-    return () => el.removeEventListener("pointermove", onMove);
-  }, []);
-
-  return ref;
-}
-
 /** Número que corre até o valor novo. Escreve textContent direto. */
 export function useCountUp<T extends HTMLElement = HTMLSpanElement>(
   value: number,
