@@ -3,7 +3,7 @@
  * Copia os artefatos do `tauri build` para `installers/` na raiz.
  *
  * Existe porque o caminho real é fundo demais para achar à mão:
- *   src-tauri/target/release/bundle/{nsis,msi}/…
+ *   target/release/bundle/{nsis,msi}/…
  *
  * Só copia — não apaga o original nem limpa a pasta de destino. Manter a versão
  * anterior por perto é útil para testar uma atualização de N-1 para N.
@@ -13,7 +13,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const BUNDLE = join(RAIZ, "src-tauri", "target", "release", "bundle");
+// `src-tauri` virou membro de um Cargo workspace (crates/omni-engine, omni-protocol) — o target/
+// compartilhado do workspace fica na raiz do repo, não mais em src-tauri/target/.
+const BUNDLE = join(RAIZ, "target", "release", "bundle");
 const DESTINO = join(RAIZ, "installers");
 
 /** Instaladores + os artefatos que o updater do Tauri publica no Release. */
