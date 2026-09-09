@@ -568,6 +568,43 @@ Kitty/iTerm2/WezTerm/Windows Terminal já mandam isso nativo; VS Code precisa de
 terminal, é código de controle ASCII puro, não precisa de protocolo nenhum): **Ctrl+J** insere
 quebra de linha sem confirmar — se o CSI-u não pegar pra alguma CLI específica, esse sempre funciona.
 
+## v0.2.0 — primeiro release público (2026-09-09)
+
+Publicado: https://github.com/FelipeCamposM/OMNI-AGENTS/releases/tag/v0.2.0
+
+- [x] Todo o trabalho acumulado (nunca commitado até aqui — Fases 0-3 completas + tudo desta
+  sessão) commitado e pushado em 2 commits (`e4cb4db` código, `177d980`+`b3a6e01` fixes de
+  release).
+- [x] **Chave de assinatura corrigida antes de publicar**: a pubkey em `tauri.conf.json` não
+  batia com nenhuma chave privada existente na máquina (só havia `camps-utils.key`, de outro par
+  — key ID diferente, confirmado por hash). Build teria assinado com uma chave e o app embutido a
+  pubkey de outra, quebrando o updater **pra sempre** (toda assinatura futura falharia contra o
+  binário publicado). Como nenhum release do OMNI AGENTS tinha saído ainda, gerado um par novo
+  dedicado (`~/.tauri/omni-agents.key`, decisão do usuário: não reaproveitar a chave do
+  CAMPS-UTILS) — sem risco de órfão porque não existe usuário instalado ainda.
+  **Senha da chave nova**: mostrada uma única vez pro usuário no chat desta sessão — não gravada
+  aqui de propósito (repo público). Sem ela e sem o arquivo `.key`, ninguém que instalar o v0.2.0
+  recebe atualização de novo — guardar num cofre. Pra persistir no ambiente (PowerShell, precisa
+  de terminal novo depois):
+  ```powershell
+  [Environment]::SetEnvironmentVariable("TAURI_SIGNING_PRIVATE_KEY", (Get-Content "$env:USERPROFILE\.tauri\omni-agents.key" -Raw), "User")
+  [Environment]::SetEnvironmentVariable("TAURI_SIGNING_PRIVATE_KEY_PASSWORD", "<senha, ver histórico da sessão ou o cofre onde foi salva>", "User")
+  ```
+- [x] **`collect-installers.mjs` apontava pro caminho errado** — `src-tauri/target/release/bundle`
+  não existe mais desde que `src-tauri` virou membro de um Cargo workspace (`crates/omni-engine`,
+  `omni-protocol`); o `target/` compartilhado do workspace fica na raiz do repo. Corrigido.
+- [x] **`make-latest-json.mjs` apontava pro repo antigo** (`FelipeCamposM/CAMPS-UTILS`, hardcoded)
+  — o endpoint que o app consulta (`tauri.conf.json`) já estava certo, só a URL do instalador
+  *dentro* do `latest.json` ia pro repo errado. Corrigido pra `FelipeCamposM/OMNI-AGENTS`.
+- [x] **Espaço no nome do asset** (`productName: "OMNI AGENTS"`) — o GitHub troca espaço por ponto
+  no nome de todo asset de Release, sempre, sem aviso; o `latest.json` gerava a URL com `%20`
+  (espaço codificado), que nunca bate com o nome real do asset (`OMNI.AGENTS_...`, ponto literal)
+  → 404 em silêncio no download da atualização. `collect-installers.mjs` agora já copia pra
+  `installers/` trocando espaço por ponto, e `make-latest-json.mjs` usa o mesmo nome — local e
+  remoto batem exatamente, sem surpresa do GitHub no meio.
+  **Verificado ponta a ponta**: `curl` no endpoint real de `releases/latest/download/latest.json`
+  devolve a URL certa, e o instalador responde HTTP 200.
+
 ## Gotchas
 
 - **Bug real encontrado em 2026-08-27 (usuário travado com "tela preta")**: no caso sem split
