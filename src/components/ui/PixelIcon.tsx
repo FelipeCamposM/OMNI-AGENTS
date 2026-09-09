@@ -47,3 +47,32 @@ export const SlidersIcon = makeIcon(
 export const FolderPlusIcon = makeIcon(
   "M4 4h8v2h10v14H2V4h2zm16 4H10V6H4v12h16V8zm-6 2h2v2h2v2h-2v2h-2v2h-2v-2h-2v-2h2v-2z"
 );
+
+/** Ícones pixel-art novos, desenhados aqui direto em blocos de 2px (mesma grade 24x24, mesmo
+ * estilo dos importados de pixelarticons acima) — sem depender de mais nenhum path externo. */
+
+export const EditIcon = makeIcon(
+  "M16 4h2v2h-2V4zM14 6h2v2h-2V6zM12 8h2v2h-2V8zM10 10h2v2h-2v-2zM8 12h2v2H8v-2zM6 14h2v2H6v-2zM4 16h2v2H4v-2z"
+);
+
+export const TerminalIcon = makeIcon(
+  "M6 6h2v2H6V6zM8 8h2v2H8V8zM10 10h2v2h-2v-2zM8 12h2v2H8v-2zM6 14h2v2H6v-2zM12 16h8v2h-8v-2z"
+);
+
+export const ChatIcon = makeIcon("M5 5h14v10H5V5zM7 15h3v2H7v-2z");
+
+export const ListIcon = makeIcon("M6 6h12v2H6V6zM6 11h12v2H6v-2zM6 16h12v2H6v-2z");
+
+export const BoxIcon = makeIcon(
+  "M4 4h16v2H4V4zM4 18h16v2H4v-2zM4 4h2v16H4V4zM18 4h2v16h-2V4zM4 10h16v2H4v-2z"
+);
+
+export const BookIcon = makeIcon("M4 4h7v16H4V4zM13 4h7v16h-7V4z");
+
+export const KanbanIcon = makeIcon(
+  "M4 4h4v16H4V4zM10 4h4v10h-4V4zM16 4h4v14h-4V4z"
+);
+
+export const GitBranchIcon = makeIcon(
+  "M10 4h2v2h-2V4zM10 6h2v2h-2V6zM8 10h2v2H8v-2zM6 12h2v2H6v-2zM4 14h2v2H4v-2zM4 16h2v2H4v-2zM12 10h2v2h-2v-2zM14 12h2v2h-2v-2zM16 14h2v2h-2v-2zM16 16h2v2h-2v-2z"
+);

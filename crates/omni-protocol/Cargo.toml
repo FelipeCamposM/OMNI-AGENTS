@@ -1,0 +1,7 @@
+[package]
+name = "omni-protocol"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true

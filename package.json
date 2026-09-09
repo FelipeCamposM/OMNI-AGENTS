@@ -1,14 +1,16 @@
 {
   "name": "omni-agents",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "setup": "powershell -ExecutionPolicy Bypass -File scripts\\setup.ps1",
     "setup:dev": "powershell -ExecutionPolicy Bypass -File scripts\\setup.ps1 -DevOnly",
-    "dev": "tauri dev",
+    "dev": "npm run build:engine && tauri dev",
     "dev:vite": "vite",
-    "build": "node scripts/sync-version.mjs && tauri build && node scripts/collect-installers.mjs",
+    "build": "node scripts/sync-version.mjs && npm run build:engine:release && tauri build && node scripts/collect-installers.mjs",
+    "build:engine": "node scripts/build-engine.mjs",
+    "build:engine:release": "node scripts/build-engine.mjs --release",
     "build:vite": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
@@ -20,7 +22,9 @@
     "version:check": "node scripts/sync-version.mjs --check"
   },
   "dependencies": {
+    "@gitgraph/react": "^1.4.0",
     "@gsap/react": "^2.1.2",
+    "@monaco-editor/react": "^4.7.0",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-fs": "^2",
@@ -28,7 +32,10 @@
     "@tauri-apps/plugin-process": "^2.3.1",
     "@tauri-apps/plugin-shell": "^2",
     "@tauri-apps/plugin-updater": "^2.10.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "gsap": "^3.15.0",
+    "monaco-editor": "^0.56.0",
     "ogl": "^1.0.11",
     "pdfjs-dist": "^6.2.108",
     "react": "^18",
@@ -39,6 +46,7 @@
     "three": "^0.180.0"
   },
   "devDependencies": {
+    "@tailwindcss/typography": "^0.5.15",
     "@tauri-apps/cli": "^2",
     "@testing-library/jest-dom": "^6",
     "@testing-library/react": "^14",

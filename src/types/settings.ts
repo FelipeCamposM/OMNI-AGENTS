@@ -35,16 +35,21 @@ export interface AppSettings {
   backgroundBlur: number; // px, 0..40
   glass: GlassLevel;
   animations: MotionLevel;
+
+  /** Como o painel de arquivos salva edições: sozinho com debounce, ou só no Ctrl+S. */
+  fileSaveMode: "auto" | "manual";
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   theme: "escuro",
 
   accent: PALETA_PADRAO,
-  background: "pixel-grid",
+  background: "gradient-waves",
   backgroundPath: "",
-  backgroundOpacity: 35,
+  backgroundOpacity: 55,
   backgroundBlur: 0,
-  glass: "medio",
+  glass: "forte",
   animations: "completas",
+
+  fileSaveMode: "auto",
 };

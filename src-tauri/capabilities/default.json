@@ -5,6 +5,19 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    "dialog:allow-save"
+    "dialog:allow-save",
+    "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
+    "fs:allow-read-dir",
+    "fs:allow-exists",
+    "fs:allow-stat",
+    "fs:allow-mkdir",
+    "fs:allow-remove",
+    "fs:allow-rename",
+    "fs:allow-copy-file",
+    "fs:allow-write-file",
+    { "identifier": "fs:scope", "allow": ["**"] },
+    "opener:allow-open-path",
+    "opener:allow-reveal-item-in-dir"
   ]
 }

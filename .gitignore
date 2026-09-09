@@ -6,6 +6,9 @@ dist-ssr/
 
 # Tauri
 src-tauri/target/
+target/
+target-engine/
+target-tauri/
 src-tauri/binaries/
 src-tauri/gen/
 

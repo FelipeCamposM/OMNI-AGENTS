@@ -216,9 +216,11 @@
     box-shadow: var(--pixel-shadow) var(--pixel-shadow) 0 rgb(var(--c-outline));
   }
 
-  /* Chrome do layout: tom mais escuro/neutro, borda um pouco mais grossa. */
+  /* Chrome do layout: tom mais escuro/neutro, borda um pouco mais grossa. Opacidade própria (não
+     `var(--glass-a)`, que é compartilhada com popover/glass-hover/etc — mudar ela vazaria pra
+     tudo) deixa o efeito de fundo animado (`AppBackground.tsx`) aparecer fraco atrás da sidebar. */
   .glass-strong {
-    background-color: rgb(var(--c-bg-primary) / var(--glass-a));
+    background-color: rgb(var(--c-bg-primary) / 0.82);
     border-width: calc(var(--pixel-border) + 1px);
   }
 
@@ -574,6 +576,23 @@
     0% { box-shadow: 0 0 0 0 rgb(var(--c-danger) / 0.55); }
     70% { box-shadow: 0 0 0 6px rgb(var(--c-danger) / 0); }
     100% { box-shadow: 0 0 0 0 rgb(var(--c-danger) / 0); }
+  }
+
+  /* Alvo de soltar arquivo (árvore de arquivos, dentro ou fora do app). `outline`
+     em vez de `border`: não desloca o conteúdo da linha ao ligar/desligar. Cadência
+     mais rápida que `badge-pulse` (0.9s vs 2s) de propósito — isso é feedback ativo
+     de "solte aqui" durante um arrasto em andamento, não um aviso ocioso; precisa
+     confirmar sem parar que o alvo continua sendo este enquanto o arrasto durar. */
+  .drop-target-active {
+    background-color: rgb(var(--c-selected) / 0.16);
+    outline: 2px solid rgb(var(--c-selected));
+    outline-offset: -2px;
+    animation: drop-target-pulse 0.9s ease-in-out infinite;
+  }
+
+  @keyframes drop-target-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgb(var(--c-selected) / 0.5); }
+    50% { box-shadow: 0 0 0 4px rgb(var(--c-selected) / 0); }
   }
 
   /* Brilho varrendo barras de progresso */

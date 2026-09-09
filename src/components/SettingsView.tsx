@@ -5,10 +5,12 @@ import { UpdateCard } from "./UpdateCard";
 import { BACKGROUND_EFFECTS, isBackgroundEffect } from "./backgrounds/registry";
 import { PALETAS } from "../lib/palettes";
 import { Button, Field, Input, SegmentedControl, Slider } from "./ui";
+import { AgentConnections } from "../features/terminal/AgentConnections";
 
-type SectionId = "aparencia" | "sobre";
+type SectionId = "aparencia" | "agentes" | "sobre";
 
 const SECTIONS: { id: SectionId; label: string }[] = [
+  { id: "agentes", label: "Agentes" },
   { id: "aparencia", label: "Aparência" },
   { id: "sobre", label: "Sobre" },
 ];
@@ -87,6 +89,7 @@ export function SettingsView({ settings, onChange, onReset, initialSection }: Se
 
         <div className="flex-1 min-w-0 space-y-4">
           {section === "aparencia" && <AparenciaSection settings={settings} onChange={onChange} />}
+          {section === "agentes" && <AgentConnections />}
           {section === "sobre" && <SobreSection onReset={onReset} />}
         </div>
       </div>
@@ -225,6 +228,19 @@ function AparenciaSection({ settings, onChange }: SectionProps) {
             )}
           </>
         )}
+      </Card>
+
+      <Card title="Arquivos">
+        <Segmented
+          label="Salvar edições"
+          description="Automático salva sozinho pouco depois de parar de digitar. Manual só salva com Ctrl+S."
+          options={[
+            { value: "auto", label: "Automático" },
+            { value: "manual", label: "Manual (Ctrl+S)" },
+          ]}
+          value={settings.fileSaveMode}
+          onChange={(v) => onChange({ fileSaveMode: v })}
+        />
       </Card>
 
       <Card title="Movimento">

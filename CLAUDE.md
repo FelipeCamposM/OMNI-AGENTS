@@ -1,5 +1,9 @@
 # CLAUDE.md
 
+> **Projeto atual: OMNI AGENTS.** A especificação vigente é `spec.md` e o roadmap ativo é
+> `roadmaps/omni-agents/roadmap.md`. O conteúdo CAMPS-UTILS abaixo é histórico herdado e só deve
+> ser consultado quando ajudar a entender infraestrutura preservada (Tauri, updater e temas).
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## ⚠️ Roadmap obrigatório

@@ -1,0 +1,13 @@
+[package]
+name = "omni-engine"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+omni-protocol = { path = "../omni-protocol" }
+portable-pty = "0.9"
+rand = "0.9"
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
