@@ -57,7 +57,12 @@ mkdirSync(DESTINO, { recursive: true });
 const mb = (n) => (n / 1024 / 1024).toFixed(1).padStart(6);
 console.log(`[installers] -> ${DESTINO}`);
 for (const origem of encontrados) {
-  const nome = origem.split(/[\\/]/).pop();
+  // O GitHub troca espaço por ponto no nome de todo asset de Release, sempre — sem
+  // controle nenhum da nossa parte. Se copiássemos com o espaço original, o nome local
+  // e o nome real do asset no Release divergiriam, e make-latest-json.mjs geraria uma
+  // URL que nunca bate (404 em silêncio — armadilha já documentada no CLAUDE.md).
+  // Renomeando aqui, o nome local já sai igual ao que o GitHub vai produzir.
+  const nome = origem.split(/[\\/]/).pop().replaceAll(" ", ".");
   copyFileSync(origem, join(DESTINO, nome));
   console.log(`  ${mb(statSync(origem).size)} MB  ${nome}`);
 }

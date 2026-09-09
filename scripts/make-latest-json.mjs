@@ -23,7 +23,8 @@ const versao = conf.version;
 
 // A URL do endpoint aponta para `releases/latest`, mas o asset em si mora numa
 // tag. Convenção: v<versao>. Mudou aqui, muda na hora de criar o Release.
-const REPO = "FelipeCamposM/CAMPS-UTILS";
+// Precisa bater com plugins.updater.endpoints no tauri.conf.json.
+const REPO = "FelipeCamposM/OMNI-AGENTS";
 const TAG = `v${versao}`;
 
 const notasIdx = process.argv.indexOf("--notes");
@@ -50,7 +51,10 @@ const CANDIDATOS = [
 ];
 
 function nomeBase() {
-  return `${conf.productName}_${versao}_x64`;
+  // Mesmo replace de espaço->ponto que collect-installers.mjs aplica ao copiar — precisa
+  // bater com o nome de arquivo real em installers/ (que já é o nome real do asset no
+  // GitHub, que também troca espaço por ponto sozinho).
+  return `${conf.productName.replaceAll(" ", ".")}_${versao}_x64`;
 }
 
 const artefato = CANDIDATOS.find((c) => arquivos.includes(c) && arquivos.includes(`${c}.sig`));
