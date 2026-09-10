@@ -1,6 +1,7 @@
 import { Button } from "../../components/ui";
 import type { PaneNode, WorkspaceAction } from "../../types/workspace";
 import { TAB_DRAG_TYPE, readDraggedTab } from "./tabDrag";
+import { startFileTabDrag } from "./fileTabDrag";
 
 interface WorkspaceTabBarProps {
   pane: PaneNode;
@@ -26,6 +27,7 @@ export function WorkspaceTabBar({ pane, dispatch, onCloseTab, dirtyTabIds }: Wor
     <div
       className="flex-1 min-w-0 flex overflow-x-auto"
       role="tablist"
+      data-tab-drop-pane={pane.id}
       aria-label="Tabs do painel"
       onDragOver={(event) => event.preventDefault()}
       onDrop={moveHere}
@@ -33,21 +35,32 @@ export function WorkspaceTabBar({ pane, dispatch, onCloseTab, dirtyTabIds }: Wor
       {pane.tabs.map((item) => (
         <div
           key={item.id}
-          draggable
+          draggable={item.kind === "agent" || item.kind === "terminal"}
+          onPointerDown={(event) => {
+            if (item.kind === "agent" || item.kind === "terminal") return;
+            if ((event.target as HTMLElement).closest("button[aria-label]")) return;
+            startFileTabDrag(event, { paneId: pane.id, tabId: item.id }, dispatch);
+          }}
           onDragStart={(event) => {
+            event.stopPropagation();
+            if (item.kind !== "agent" && item.kind !== "terminal") {
+              event.preventDefault();
+              return;
+            }
             const payload = JSON.stringify({ paneId: pane.id, tabId: item.id });
             event.dataTransfer.effectAllowed = "move";
             event.dataTransfer.setData(TAB_DRAG_TYPE, payload);
             event.dataTransfer.setData("text/plain", payload);
           }}
           className={[
-            "group flex shrink-0 items-stretch border-r-2 border-border-subtle max-w-64",
+            "group flex shrink-0 items-stretch border-r-2 border-border-subtle max-w-64 select-none touch-none cursor-grab active:cursor-grabbing",
             item.id === pane.activeTabId ? "bg-bg-surface" : "hover:bg-overlay/[0.04]",
           ].join(" ")}
         >
           <button
             type="button"
             role="tab"
+            title={`${item.title} — arraste para outro painel ou para uma borda`}
             aria-selected={item.id === pane.activeTabId}
             onClick={() => dispatch({ type: "SELECT_TAB", paneId: pane.id, tabId: item.id })}
             className={[

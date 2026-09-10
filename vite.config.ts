@@ -28,7 +28,9 @@ export default defineConfig({
     hmr: host
       ? { protocol: "ws", host, port: 1421 }
       : undefined,
-    watch: { ignored: ["**/src-tauri/**"] },
+    // Cargo workspace artifacts live in the root target directory.
+    // Watching build executables can cause EBUSY on Windows.
+    watch: { ignored: ["**/src-tauri/**", "**/target/**"] },
   },
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   build: {

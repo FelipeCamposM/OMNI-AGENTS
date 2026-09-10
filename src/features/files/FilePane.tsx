@@ -32,6 +32,15 @@ function languageFor(path: string): string {
 
 const AUTO_SAVE_DELAY_MS = 1500;
 
+interface FileDraft {
+  text: string;
+  saved: string;
+  listeners: Set<() => void>;
+}
+// Moving a tab retains its object, even when React remounts the destination pane.
+// Weak keys release drafts when their tabs are closed.
+const drafts = new WeakMap<WorkspaceTab, FileDraft>();
+
 interface FilePaneProps {
   projectPath: string;
   tab: WorkspaceTab;
@@ -46,15 +55,39 @@ export function FilePane({ projectPath, tab, saveMode, onDirtyChange }: FilePane
   const dirtyRef = useRef(false);
   const savedContentRef = useRef("");
   const autoSaveTimerRef = useRef<number | undefined>(undefined);
+  const draftRef = useRef<FileDraft | undefined>(drafts.get(tab));
+
+  useEffect(() => {
+    const draft = drafts.get(tab);
+    if (!draft) return;
+    const update = () => onDirtyChange(tab.id, draft.text !== draft.saved);
+    draft.listeners.add(update);
+    update();
+    return () => { draft.listeners.delete(update); };
+  }, [tab, content, onDirtyChange]);
 
   useEffect(() => {
     let cancelled = false;
     setContent(null);
     setError(null);
+    const existing = drafts.get(tab);
+    if (existing && existing.text !== existing.saved) {
+      draftRef.current = existing;
+      savedContentRef.current = existing.saved;
+      dirtyRef.current = true;
+      setContent(existing.text);
+      if (saveMode === "auto") {
+        autoSaveTimerRef.current = window.setTimeout(() => void save(existing.text), AUTO_SAVE_DELAY_MS);
+      }
+      return () => window.clearTimeout(autoSaveTimerRef.current);
+    }
     readTextFile(path, projectPath)
       .then((text) => {
         if (cancelled) return;
         savedContentRef.current = text;
+        const draft = { text, saved: text, listeners: new Set<() => void>() };
+        drafts.set(tab, draft);
+        draftRef.current = draft;
         setContent(text);
       })
       .catch((reason) => {
@@ -63,7 +96,7 @@ export function FilePane({ projectPath, tab, saveMode, onDirtyChange }: FilePane
     return () => {
       cancelled = true;
     };
-  }, [path, projectPath]);
+  }, [path, projectPath, tab]);
 
   useEffect(() => () => window.clearTimeout(autoSaveTimerRef.current), []);
 
@@ -77,7 +110,12 @@ export function FilePane({ projectPath, tab, saveMode, onDirtyChange }: FilePane
     try {
       await writeTextFile(path, projectPath, text);
       savedContentRef.current = text;
-      markDirty(false);
+      const draft = draftRef.current;
+      if (draft) {
+        draft.saved = text;
+        draft.listeners.forEach((listener) => listener());
+      }
+      markDirty(draft ? draft.text !== text : false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -85,6 +123,7 @@ export function FilePane({ projectPath, tab, saveMode, onDirtyChange }: FilePane
 
   function handleChange(value: string | undefined) {
     const text = value ?? "";
+    if (draftRef.current) draftRef.current.text = text;
     markDirty(text !== savedContentRef.current);
     if (saveMode === "auto") {
       window.clearTimeout(autoSaveTimerRef.current);

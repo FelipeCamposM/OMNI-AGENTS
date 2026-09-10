@@ -52,11 +52,11 @@ export function TabDropOverlay({ targetPaneId, dispatch, onFinished }: TabDropOv
 
   return (
     <div className="absolute inset-0 z-20 pointer-events-none" aria-label="Destinos da tab">
-      <button className={`${base} pointer-events-auto left-0 top-1/4 bottom-1/4 w-1/4`} onDragOver={allow} onDrop={(event) => drop(event, "horizontal", "before")}>Esquerda</button>
-      <button className={`${base} pointer-events-auto right-0 top-1/4 bottom-1/4 w-1/4`} onDragOver={allow} onDrop={(event) => drop(event, "horizontal", "after")}>Direita</button>
-      <button className={`${base} pointer-events-auto top-0 left-1/4 right-1/4 h-1/4`} onDragOver={allow} onDrop={(event) => drop(event, "vertical", "before")}>Acima</button>
-      <button className={`${base} pointer-events-auto bottom-0 left-1/4 right-1/4 h-1/4`} onDragOver={allow} onDrop={(event) => drop(event, "vertical", "after")}>Abaixo</button>
-      <button className={`${base} pointer-events-auto inset-1/4`} onDragOver={allow} onDrop={(event) => drop(event)}>Mover aqui</button>
+      <button data-tab-drop-pane={targetPaneId} data-tab-drop-direction="horizontal" data-tab-drop-position="before" className={`${base} pointer-events-auto hover:bg-accent/40 left-0 top-1/4 bottom-1/4 w-1/4`} onDragOver={allow} onDrop={(event) => drop(event, "horizontal", "before")}>Esquerda</button>
+      <button data-tab-drop-pane={targetPaneId} data-tab-drop-direction="horizontal" data-tab-drop-position="after" className={`${base} pointer-events-auto hover:bg-accent/40 right-0 top-1/4 bottom-1/4 w-1/4`} onDragOver={allow} onDrop={(event) => drop(event, "horizontal", "after")}>Direita</button>
+      <button data-tab-drop-pane={targetPaneId} data-tab-drop-direction="vertical" data-tab-drop-position="before" className={`${base} pointer-events-auto hover:bg-accent/40 top-0 left-1/4 right-1/4 h-1/4`} onDragOver={allow} onDrop={(event) => drop(event, "vertical", "before")}>Acima</button>
+      <button data-tab-drop-pane={targetPaneId} data-tab-drop-direction="vertical" data-tab-drop-position="after" className={`${base} pointer-events-auto hover:bg-accent/40 bottom-0 left-1/4 right-1/4 h-1/4`} onDragOver={allow} onDrop={(event) => drop(event, "vertical", "after")}>Abaixo</button>
+      <button data-tab-drop-pane={targetPaneId} className={`${base} pointer-events-auto hover:bg-accent/40 inset-1/4`} onDragOver={allow} onDrop={(event) => drop(event)}>Mover aqui</button>
     </div>
   );
 }

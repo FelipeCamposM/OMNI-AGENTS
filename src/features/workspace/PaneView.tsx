@@ -1,5 +1,5 @@
 import { Button } from "../../components/ui";
-import { Component, useCallback, useState } from "react";
+import { Component, useCallback, useEffect, useState } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import type { PaneNode, SplitNode, WorkspaceAction } from "../../types/workspace";
 import type { KanbanAction, KanbanState } from "../../types/kanban";
@@ -12,7 +12,8 @@ import { GitGraphPane } from "../git/GitGraphPane";
 import { KanbanBoard } from "../kanban/KanbanBoard";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { closeTerminal } from "../terminal/terminalService";
-import { PANE_DRAG_TYPE } from "./tabDrag";
+import { PANE_DRAG_TYPE, TAB_DRAG_TYPE } from "./tabDrag";
+import { FILE_TAB_DRAG_EVENT } from "./fileTabDrag";
 import { TabDropOverlay } from "./TabDropOverlay";
 import { WorkspaceTabBar } from "./WorkspaceTabBar";
 
@@ -42,6 +43,19 @@ export function PaneView({
   dispatch,
 }: PaneViewProps) {
   const [dragActive, setDragActive] = useState(false);
+  const [fileDragActive, setFileDragActive] = useState(false);
+  useEffect(() => {
+    const update = (event: Event) => setFileDragActive((event as CustomEvent<boolean>).detail);
+    const finish = () => setDragActive(false);
+    window.addEventListener(FILE_TAB_DRAG_EVENT, update);
+    window.addEventListener("dragend", finish);
+    window.addEventListener("drop", finish);
+    return () => {
+      window.removeEventListener(FILE_TAB_DRAG_EVENT, update);
+      window.removeEventListener("dragend", finish);
+      window.removeEventListener("drop", finish);
+    };
+  }, []);
   const [dirtyTabIds, setDirtyTabIds] = useState<Set<string>>(new Set());
   const tab = pane.tabs.find((item) => item.id === pane.activeTabId) ?? pane.tabs[0];
   const tabId = tab?.id;
@@ -87,6 +101,7 @@ export function PaneView({
       aria-label={`Painel ${tab?.title ?? pane.id}`}
       onPointerDown={() => dispatch({ type: "FOCUS_PANE", paneId: pane.id })}
       onDragEnter={(event) => {
+        if (!Array.from(event.dataTransfer.types).some((type) => type === PANE_DRAG_TYPE || type === TAB_DRAG_TYPE)) return;
         event.preventDefault();
         setDragActive(true);
       }}
@@ -99,6 +114,10 @@ export function PaneView({
         className="h-10 shrink-0 flex items-stretch border-b-2 border-border-subtle bg-bg-elevated/90"
         draggable
         onDragStart={(event) => {
+          if ((event.target as HTMLElement).closest('[role="tablist"]')) {
+            event.preventDefault();
+            return;
+          }
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData(PANE_DRAG_TYPE, JSON.stringify({ paneId: pane.id }));
         }}
@@ -163,7 +182,7 @@ export function PaneView({
         )}
         </PaneErrorBoundary>
       </div>
-      {dragActive && (
+      {(dragActive || fileDragActive) && (
         <TabDropOverlay targetPaneId={pane.id} dispatch={dispatch} onFinished={() => setDragActive(false)} />
       )}
     </section>
