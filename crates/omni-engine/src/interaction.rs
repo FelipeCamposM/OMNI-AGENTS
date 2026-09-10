@@ -22,7 +22,11 @@ pub struct Capabilities { pub prompt: bool, pub approve: bool, pub revision: Str
 /// Require provider chrome plus an empty composer at the actual terminal cursor.
 pub fn ready(screen: &vt100::Screen, provider: &str) -> bool {
     let text = screen.contents();
-    let brand = match provider { "claude" => text.contains("Claude Code"), "codex" => text.contains("OpenAI Codex"), _ => false };
+    // "Claude Code" only shows in the startup banner; it scrolls out of the visible screen after
+    // the first exchange, so requiring it here made this permanently false for any session with
+    // history (confirmed against a real running session — the idle composer never re-shows it).
+    // The structural checks below are strict enough on their own to recognize the composer.
+    let brand = match provider { "claude" => true, "codex" => text.contains("OpenAI Codex"), _ => false };
     let (row, _) = screen.cursor_position();
     let line = screen.rows(0,screen.size().1).nth(row as usize).unwrap_or_default();
     brand && screen.bracketed_paste() && matches!(line.trim(), "❯" | "›" | ">")
@@ -111,16 +115,17 @@ pub fn account_usage(state: &Arc<EngineState>, profile_id: &str, refresh: bool) 
     }).collect();
     // A user may have opened /usage manually in an existing session. Reading it never types
     // or closes their dialog, and preserves the screen's actual last-observed timestamp.
+    // `parse_claude_screen` is strict enough on its own (exact section titles, one percentage and
+    // one reset line each) — the real /usage screen never shows an "Esc to cancel/close" hint, so
+    // gating on that text kept this branch permanently unreachable.
     for session in &sessions {
         let context = session.interaction.lock().map_err(|_|anyhow!("screen poisoned"))?;
         let meta = session.meta.lock().map_err(|_|anyhow!("metadata poisoned"))?;
-        let text = context.parser.screen().contents();
-        if meta.pid.is_some() && (text.contains("Esc to cancel") || text.contains("Esc to close")) {
-            let usage = parse_claude_screen(&text,profile_id,meta.last_activity_at_ms);
-            if usage.status == "available" {
-                state.usage_cache.lock().map_err(|_|anyhow!("cache poisoned"))?.insert(profile_id.into(),(now_ms(),usage.clone()));
-                return Ok(EngineResponse::AccountUsage { usage });
-            }
+        if meta.pid.is_none() { continue; }
+        let usage = parse_claude_screen(&context.parser.screen().contents(),profile_id,meta.last_activity_at_ms);
+        if usage.status == "available" {
+            state.usage_cache.lock().map_err(|_|anyhow!("cache poisoned"))?.insert(profile_id.into(),(now_ms(),usage.clone()));
+            return Ok(EngineResponse::AccountUsage { usage });
         }
     }
     let has_session = !sessions.is_empty();
@@ -152,15 +157,14 @@ pub fn account_usage(state: &Arc<EngineState>, profile_id: &str, refresh: bool) 
         let context = session.interaction.lock().map_err(|_|anyhow!("screen poisoned"))?;
         let text = context.parser.screen().contents();
         if session.meta.lock().map_err(|_|anyhow!("metadata poisoned"))?.pid.is_none() { break; }
-        // Never stamp an earlier /usage view as a fresh observation after a failed command.
-        let has_close_hint = text.contains("Esc to cancel") || text.contains("Esc to close") || text.contains("Escape to close");
-        if !has_close_hint || ready(context.parser.screen(),"claude") { continue; }
+        // Still the idle composer: /usage hasn't rendered yet (or was already closed). The real
+        // screen never shows an "Esc to close" hint here, so `parse_claude_screen`'s own strict
+        // grammar — not a hint string that doesn't exist — is what decides this is done.
+        if ready(context.parser.screen(),"claude") { continue; }
         result = parse_claude_screen(&text,profile_id,now_ms());
         if result.status == "available" {
-            if has_close_hint {
-                let mut writer = session.writer.lock().map_err(|_|anyhow!("writer poisoned"))?;
-                writer.write_all(b"\x1b")?; writer.flush()?;
-            }
+            let mut writer = session.writer.lock().map_err(|_|anyhow!("writer poisoned"))?;
+            writer.write_all(b"\x1b")?; writer.flush()?;
             break;
         }
     }

@@ -32,7 +32,14 @@ it("desmonta o terminal ao esvaziar a pane e permite criar agente sem tab fantas
 });
 
 describe("arraste de arquivos entre painéis", () => {
-  beforeEach(() => { vi.stubGlobal("PointerEvent", MouseEvent); });
+  beforeEach(() => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    Object.defineProperties(HTMLElement.prototype, {
+      setPointerCapture: { configurable: true, value: vi.fn() },
+      hasPointerCapture: { configurable: true, value: vi.fn(() => true) },
+      releasePointerCapture: { configurable: true, value: vi.fn() },
+    });
+  });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   function setup(kind: "file" | "markdown" = "file", title = "code.ts") {
@@ -46,7 +53,8 @@ describe("arraste de arquivos entre painéis", () => {
 
   it.each([["file", "code.ts"], ["file", "photo.png"], ["markdown", "README.md"]] as const)("move somente a aba %s %s para outro painel", (kind, title) => {
     const { dispatch, source } = setup(kind, title);
-    fireEvent.pointerDown(source, { button: 0, clientX: 10, clientY: 10 });
+    expect(fireEvent.pointerDown(source, { button: 0, clientX: 10, clientY: 10 })).toBe(false);
+    expect(source.parentElement!.setPointerCapture).toHaveBeenCalled();
     fireEvent.pointerMove(window, { clientX: 80, clientY: 80 });
     const destination = within(screen.getByRole("region", { name: "Painel target" })).getByRole("button", { name: "Mover aqui" });
     Object.defineProperty(document, "elementFromPoint", { configurable: true, value: vi.fn(() => destination) });

@@ -11,6 +11,10 @@ export function startFileTabDrag(
   dispatch: Dispatch<WorkspaceAction>,
 ) {
   if (event.button !== 0) return;
+  // Cancel the browser's default drag before a draggable ancestor can take over.
+  event.preventDefault();
+  const source = event.currentTarget as HTMLElement;
+  source.setPointerCapture(event.pointerId);
   const { clientX, clientY, pointerId } = event;
   let dragging = false;
   const announce = (active: boolean) => window.dispatchEvent(new CustomEvent(FILE_TAB_DRAG_EVENT, { detail: active }));
@@ -23,6 +27,7 @@ export function startFileTabDrag(
     if (dragging) next.preventDefault();
   }
   function cleanup() {
+    if (source.hasPointerCapture(pointerId)) source.releasePointerCapture(pointerId);
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", finish);
     window.removeEventListener("pointercancel", cancel);
