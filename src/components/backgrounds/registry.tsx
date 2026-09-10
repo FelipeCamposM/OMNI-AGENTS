@@ -147,6 +147,15 @@ const FloatingLinesPreset = lazy(async () => {
   };
 });
 
+/**
+ * Fora do JSX de propósito. `gridMul` entra na lista de dependências do
+ * `useEffect` do FaultyTerminal (FaultyTerminal.tsx:487) — um literal inline
+ * seria um array novo a cada render, e o efeito destruiria e reconstruiria o
+ * renderer WebGL inteiro toda vez. O `<AppBackground>` re-renderiza a cada
+ * saída de terminal, então isso trava o app.
+ */
+const FAULTY_GRID_MUL: [number, number] = [2, 1];
+
 const FaultyTerminalPreset = lazy(async () => {
   const { default: FaultyTerminal } = await import("../FaultyTerminal");
   return {
@@ -158,9 +167,19 @@ const FaultyTerminalPreset = lazy(async () => {
         tint={cores.linhas[1]}
         pause={still}
         pageLoadAnimation={!still}
-        scale={1.6}
-        gridMul={[2, 1]}
-        digitSize={1.4}
+        // ponytail: 1 device pixel por CSS pixel, não 2. O shader chama
+        // digit() 10x por pixel e cada digit() faz 5 fbm() — ~600 operações
+        // trigonométricas por pixel, por frame. Em tela cheia, dpr 2 é 4x
+        // isso. Se ainda pesar em máquina fraca, 0.6 é o próximo degrau
+        // (o canvas é esticado por CSS, e num efeito de CRT nem aparece).
+        dpr={1}
+        // Tamanho dos glifos. O shader faz `p = uv * uScale` e depois corta a
+        // grade em cima de `p`, então scale maior = mais células na tela =
+        // cada item menor. Não muda o custo: o número de chamadas de digit()
+        // por pixel é o mesmo. Suba se ainda estiver grande.
+        scale={2.2}
+        gridMul={FAULTY_GRID_MUL}
+        digitSize={1.2}
         timeScale={0.3}
         scanlineIntensity={0.4}
         glitchAmount={1}

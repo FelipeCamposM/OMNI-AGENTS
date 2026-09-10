@@ -10,6 +10,7 @@
     "dev:vite": "vite",
     "build": "node scripts/sync-version.mjs && npm run build:engine:release && tauri build && node scripts/collect-installers.mjs",
     "build:engine": "node scripts/build-engine.mjs",
+    "build:mobile": "vite build --config vite.mobile.config.ts",
     "build:engine:release": "node scripts/build-engine.mjs --release",
     "build:vite": "tsc && vite build",
     "preview": "vite preview",

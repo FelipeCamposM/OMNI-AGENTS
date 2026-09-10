@@ -1,4 +1,6 @@
 mod conversations;
+mod account_usage;
+mod mobile;
 mod engine_client;
 mod git_client;
 mod profiles;
@@ -13,6 +15,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             engine_client::engine_status,
+            account_usage::account_usage,
+            mobile::mobile_settings,
             engine_client::ensure_engine,
             engine_client::terminal_sessions,
             engine_client::agent_cli_statuses,

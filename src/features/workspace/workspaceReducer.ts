@@ -24,13 +24,6 @@ function welcomeTab(name: string): WorkspaceTab {
   return { id: nextId("tab"), kind: "agent", title: `${name} · novo agente` };
 }
 
-/** Reseta uma tab pro estado "agente novo", mantendo o id (é sempre a última tab da última pane
- * — não dá pra removê-la, então limpamos o resourceId em vez de deixá-la presa apontando pra uma
- * sessão que o chamador já está encerrando). */
-function resetTab(tab: WorkspaceTab): WorkspaceTab {
-  return { id: tab.id, kind: "agent", title: "Novo agente" };
-}
-
 function createTab(kind: WorkspaceTab["kind"] = "agent", title?: string, resourceId?: string): WorkspaceTab {
   const tab: WorkspaceTab = { id: nextId("tab"), kind, title: title ?? `New ${kind}` };
   return resourceId ? { ...tab, resourceId } : tab;
@@ -107,7 +100,8 @@ function buildPresetLayout(current: LayoutNode, preset: LayoutPreset): LayoutNod
   }
   for (let i = slots; i < existing.length; i++) {
     const last = panes[slots - 1];
-    panes[slots - 1] = { ...last, tabs: [...last.tabs, ...existing[i].tabs] };
+    const tabs = [...last.tabs, ...existing[i].tabs];
+    panes[slots - 1] = { ...last, tabs, activeTabId: last.activeTabId ?? tabs[0]?.id ?? null };
   }
 
   switch (preset) {
@@ -161,13 +155,11 @@ function takeTab(
       const nextLayout = removePane(layout, paneId);
       if (nextLayout) return { layout: nextLayout, tab };
     }
-    // Última tab da última pane: não dá pra removê-la nem deixar a pane sem nenhuma tab —
-    // reseta em vez de devolver null (que antes deixava o chamador sem opção e a tab presa
-    // apontando pra um resourceId morto, ex.: "session not found" ao fechar a única sessão).
+    // A última pane permanece, mas seu conteúdo é desmontado de verdade.
     return {
       tab,
       layout: mapNode(layout, (node) =>
-        node.type === "pane" && node.id === paneId ? { ...node, tabs: [resetTab(tab)] } : node
+        node.type === "pane" && node.id === paneId ? { ...node, tabs: [], activeTabId: null } : node
       ),
     };
   }

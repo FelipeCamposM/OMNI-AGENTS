@@ -1,3 +1,5 @@
+mod interaction;
+mod mobile;
 use anyhow::{anyhow, Context, Result};
 use omni_protocol::{
     atomic_write_json, EngineRequest, EngineResponse, SessionState, TerminalSession,
@@ -31,6 +33,8 @@ struct OutputBuffer {
 }
 
 struct LiveSession {
+    interaction: Mutex<interaction::Interaction>,
+    reserved: std::sync::atomic::AtomicBool,
     meta: Mutex<TerminalSession>,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
@@ -62,6 +66,7 @@ impl SessionEntry {
         match self {
             Self::Live(session) => {
                 let mut meta = session.meta.lock().expect("session metadata poisoned").clone();
+                meta.input_locked = session.reserved.load(Ordering::SeqCst);
                 meta.state = apply_idle_timeout(meta.state, meta.last_activity_at_ms, now_ms());
                 meta
             }
@@ -71,6 +76,9 @@ impl SessionEntry {
 }
 
 struct EngineState {
+    persist_lock: Mutex<()>,
+    usage_cache: Mutex<HashMap<String, (u64, omni_core::usage::AccountUsage)>>,
+    mobile: mobile::MobileRuntime,
     token: String,
     state_file: PathBuf,
     sessions: Mutex<HashMap<String, SessionEntry>>,
@@ -79,6 +87,7 @@ struct EngineState {
 
 impl EngineState {
     fn persist(&self) -> Result<()> {
+        let _guard = self.persist_lock.lock().map_err(|_| anyhow!("persistence lock poisoned"))?;
         let sessions: Vec<_> = self
             .sessions
             .lock()
@@ -104,6 +113,9 @@ async fn main() -> Result<()> {
     let state_file = engine_dir.join("sessions.json");
     let sessions = load_historical_sessions(&state_file);
     let state = Arc::new(EngineState {
+        persist_lock: Mutex::new(()),
+        usage_cache: Mutex::new(HashMap::new()),
+        mobile: mobile::MobileRuntime::new(&engine_dir),
         token,
         state_file,
         sessions: Mutex::new(sessions),
@@ -113,6 +125,8 @@ async fn main() -> Result<()> {
     let listener = TcpListener::bind(("127.0.0.1", DEFAULT_ENGINE_PORT))
         .await
         .with_context(|| format!("engine already running or port {DEFAULT_ENGINE_PORT} unavailable"))?;
+
+    mobile::start(state.clone());
 
     loop {
         let (stream, _) = listener.accept().await?;
@@ -130,7 +144,10 @@ async fn serve_client(stream: TcpStream, state: Arc<EngineState>) -> Result<()> 
     let mut lines = BufReader::new(reader).lines();
     while let Some(line) = lines.next_line().await? {
         let response = match serde_json::from_str::<EngineRequest>(&line) {
-            Ok(request) if request.token() == state.token => handle_request(request, &state),
+            Ok(request) if request.token() == state.token => {
+                let state = state.clone();
+                tokio::task::spawn_blocking(move || handle_request(request, &state)).await?
+            },
             Ok(_) => EngineResponse::Error {
                 code: "UNAUTHORIZED".into(),
                 message: "invalid engine token".into(),
@@ -148,6 +165,8 @@ async fn serve_client(stream: TcpStream, state: Arc<EngineState>) -> Result<()> 
 
 fn handle_request(request: EngineRequest, state: &Arc<EngineState>) -> EngineResponse {
     let result = match request {
+        EngineRequest::AccountUsage { profile_id, refresh, .. } => interaction::account_usage(state, &profile_id, refresh),
+        EngineRequest::MobileSettings { config, .. } => mobile::settings(state, config),
         EngineRequest::Ping { .. } => {
             return EngineResponse::Pong {
                 protocol_version: PROTOCOL_VERSION,
@@ -275,7 +294,7 @@ fn spawn_reader_thread(state: Arc<EngineState>, session: Arc<LiveSession>, mut r
         loop {
             match reader.read(&mut bytes) {
                 Ok(0) => break,
-                Ok(length) => append_output(&session, String::from_utf8_lossy(&bytes[..length]).into_owned()),
+                Ok(length) => append_output(&session, &bytes[..length], watched_pid),
                 Err(error) => {
                     eprintln!("terminal reader failed: {error}");
                     break;
@@ -358,6 +377,7 @@ fn spawn_terminal_inner(
         rows: rows.max(1),
         cols: cols.max(1),
         initial_command: initial_command.clone(),
+        input_locked: false,
         env: origin.env,
         provider: origin.provider,
         profile_id: origin.profile_id,
@@ -365,6 +385,8 @@ fn spawn_terminal_inner(
         external_session_id: origin.external_session_id,
     };
     let session = Arc::new(LiveSession {
+        interaction: Mutex::new(interaction::Interaction::new(rows.max(1), cols.max(1))),
+        reserved: std::sync::atomic::AtomicBool::new(false),
         meta: Mutex::new(metadata.clone()),
         writer: Mutex::new(writer),
         master: Mutex::new(master),
@@ -450,10 +472,14 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
         // The Arc stays the same object in the map — only its interior fields are
         // swapped, so no removal/reinsertion window where lookups would fail.
         RestartTarget::Live(session) => {
+            let mut context = session.interaction.lock().map_err(|_| anyhow!("screen poisoned"))?;
+            if session.reserved.load(Ordering::SeqCst) { return Err(anyhow!("Consulta de uso em andamento")); }
             if let Ok(mut child) = session.child.lock() {
                 let _ = child.kill();
             }
             let meta = session.meta.lock().map_err(|_| anyhow!("session metadata poisoned"))?.clone();
+            context.parser = vt100::Parser::new(meta.rows, meta.cols, 0);
+            context.input_revision += 1;
             let (pid, writer, master, child, reader) =
                 open_pty_and_spawn(&meta.cwd, &meta.shell, meta.rows, meta.cols, &meta.env)?;
             *session.writer.lock().map_err(|_| anyhow!("terminal writer poisoned"))? = writer;
@@ -466,6 +492,7 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
                 meta.last_activity_at_ms = now_ms();
                 meta.clone()
             };
+            drop(context);
             state.persist()?;
             // Reinvoke the same agent/CLI the session was originally launched with.
             spawn_initial_command_thread(session.clone(), meta.initial_command.clone());
@@ -506,11 +533,15 @@ fn looks_like_approval_prompt(chunk: &str) -> bool {
     APPROVAL_PROMPT_PATTERNS.iter().any(|pattern| lower.contains(pattern))
 }
 
-fn append_output(session: &LiveSession, data: String) {
+fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) {
+    let data = String::from_utf8_lossy(bytes).into_owned();
     if data.is_empty() {
         return;
     }
     let length = data.len();
+    let mut interaction = session.interaction.lock().expect("screen poisoned");
+    if session.meta.lock().expect("metadata poisoned").pid != watched_pid { return; }
+    interaction.parser.process(bytes);
     let approval_requested = looks_like_approval_prompt(&data);
     if let Ok(mut output) = session.output.lock() {
         let sequence = output.next_seq;
@@ -537,6 +568,9 @@ fn write_terminal(state: &EngineState, session_id: &str, data: &str) -> Result<E
     let SessionEntry::Live(session) = sessions.get(session_id).ok_or_else(|| anyhow!("session not found"))? else {
         return Err(anyhow!("session is not running"));
     };
+    let mut interaction = session.interaction.lock().map_err(|_| anyhow!("screen poisoned"))?;
+    if session.reserved.load(Ordering::SeqCst) { return Err(anyhow!("Consulta de uso em andamento; aguarde")); }
+    interaction.input_revision += 1;
     let mut writer = session.writer.lock().map_err(|_| anyhow!("terminal writer poisoned"))?;
     writer.write_all(data.as_bytes())?;
     writer.flush()?;
@@ -548,6 +582,9 @@ fn resize_terminal(state: &EngineState, session_id: &str, rows: u16, cols: u16) 
     let SessionEntry::Live(session) = sessions.get(session_id).ok_or_else(|| anyhow!("session not found"))? else {
         return Err(anyhow!("session is not running"));
     };
+    let mut interaction = session.interaction.lock().map_err(|_| anyhow!("screen poisoned"))?;
+    interaction.parser.screen_mut().set_size(rows.max(1), cols.max(1));
+    interaction.input_revision += 1;
     session.master.lock().map_err(|_| anyhow!("terminal master poisoned"))?.resize(PtySize {
         rows: rows.max(1),
         cols: cols.max(1),
@@ -671,14 +708,55 @@ mod tests {
     use super::*;
 
     fn test_state() -> Arc<EngineState> {
-        let dir = env::temp_dir().join(format!("omni-engine-test-{}", now_ms()));
+        let dir = env::temp_dir().join(format!("omni-engine-test-{}-{:x}", now_ms(), rand::random::<u64>()));
         fs::create_dir_all(&dir).expect("create temp state dir");
         Arc::new(EngineState {
+            persist_lock: Mutex::new(()),
+            usage_cache: Mutex::new(HashMap::new()),
+            mobile: mobile::MobileRuntime::new(&dir),
             token: "test-token".into(),
             state_file: dir.join("sessions.json"),
             sessions: Mutex::new(HashMap::new()),
             id_sequence: AtomicU64::new(1),
         })
+    }
+
+    #[tokio::test]
+    async fn two_tcp_clients_can_read_independently() {
+        let state = test_state();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut clients = Vec::new();
+            for _ in 0..2 {
+                let (stream, _) = listener.accept().await.unwrap();
+                clients.push(tokio::spawn(serve_client(stream, state.clone())));
+            }
+            for client in clients { client.await.unwrap().unwrap(); }
+        });
+        async fn client(address: std::net::SocketAddr) {
+            let stream = TcpStream::connect(address).await.unwrap();
+            let mut stream = BufReader::new(stream);
+            for (kind, expected) in [("ping", "pong"), ("list_sessions", "sessions")] {
+                let request = serde_json::json!({"type":kind,"token":"test-token"});
+                stream.get_mut().write_all(format!("{request}\n").as_bytes()).await.unwrap();
+                let mut line = String::new(); stream.read_line(&mut line).await.unwrap();
+                let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(response["type"], expected);
+            }
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::join!(client(address), client(address)); server.await.unwrap();
+        }).await.unwrap();
+    }
+
+    #[test]
+    fn usage_without_existing_claude_session_never_spawns() {
+        let state = test_state();
+        let EngineResponse::AccountUsage { usage } = interaction::account_usage(&state, "missing", true).unwrap() else { panic!("usage response expected") };
+        assert_eq!(usage.status, "unknown");
+        assert!(usage.primary.is_none());
+        assert!(state.sessions.lock().unwrap().is_empty());
     }
 
     #[test]

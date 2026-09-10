@@ -60,7 +60,6 @@ function isLayoutNode(value: unknown): value is LayoutNode {
     return (
       typeof node.id === "string" &&
       Array.isArray(node.tabs) &&
-      node.tabs.length > 0 &&
       node.tabs.every(
         (tab) =>
           tab &&
@@ -68,8 +67,9 @@ function isLayoutNode(value: unknown): value is LayoutNode {
           typeof tab.title === "string" &&
           typeof tab.kind === "string" && PANE_KINDS.has(tab.kind)
       ) &&
-      typeof node.activeTabId === "string" &&
-      node.tabs.some((tab) => tab.id === node.activeTabId)
+      (node.tabs.length === 0
+        ? node.activeTabId === null
+        : typeof node.activeTabId === "string" && node.tabs.some((tab) => tab.id === node.activeTabId))
     );
   }
   return (

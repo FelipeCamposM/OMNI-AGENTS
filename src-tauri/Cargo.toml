@@ -25,6 +25,7 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["full"] }
 omni-protocol = { path = "../crates/omni-protocol" }
+omni-core = { path = "../crates/omni-core" }
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

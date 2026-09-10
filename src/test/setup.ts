@@ -29,6 +29,7 @@ vi.mock("@tauri-apps/api/app", () => ({
 }));
 vi.mock("@xterm/xterm", () => ({
   Terminal: class TerminalMock {
+    options = { disableStdin: false };
     rows = 24;
     cols = 80;
     loadAddon() {}

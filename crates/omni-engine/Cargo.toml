@@ -11,3 +11,14 @@ rand = "0.9"
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+omni-core = { path = "../omni-core" }
+axum = "0.8"
+vt100 = "0.16"
+include_dir = "0.7"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"

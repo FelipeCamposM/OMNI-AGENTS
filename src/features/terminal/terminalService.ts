@@ -19,6 +19,7 @@ export interface TerminalSession {
   output_seq: number;
   rows: number;
   cols: number;
+  input_locked?: boolean;
 }
 
 export type AgentCliId = "cursor" | "gemini" | "claude" | "codex";

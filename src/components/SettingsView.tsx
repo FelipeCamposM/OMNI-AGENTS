@@ -6,11 +6,13 @@ import { BACKGROUND_EFFECTS, isBackgroundEffect } from "./backgrounds/registry";
 import { PALETAS } from "../lib/palettes";
 import { Button, Field, Input, SegmentedControl, Slider } from "./ui";
 import { AgentConnections } from "../features/terminal/AgentConnections";
+import { MobileSettings } from "../features/mobile/MobileSettings";
 
-type SectionId = "aparencia" | "agentes" | "sobre";
+type SectionId = "aparencia" | "agentes" | "mobile" | "sobre";
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "agentes", label: "Agentes" },
+  { id: "mobile", label: "Celular" },
   { id: "aparencia", label: "Aparência" },
   { id: "sobre", label: "Sobre" },
 ];
@@ -90,6 +92,7 @@ export function SettingsView({ settings, onChange, onReset, initialSection }: Se
         <div className="flex-1 min-w-0 space-y-4">
           {section === "aparencia" && <AparenciaSection settings={settings} onChange={onChange} />}
           {section === "agentes" && <AgentConnections />}
+          {section === "mobile" && <MobileSettings />}
           {section === "sobre" && <SobreSection onReset={onReset} />}
         </div>
       </div>

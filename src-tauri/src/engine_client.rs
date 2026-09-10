@@ -311,7 +311,7 @@ fn request_or_error(build: impl FnOnce(String) -> EngineRequest) -> EngineRespon
     })
 }
 
-fn authenticated_request(build: impl FnOnce(String) -> EngineRequest) -> Result<EngineResponse, String> {
+pub(crate) fn authenticated_request(build: impl FnOnce(String) -> EngineRequest) -> Result<EngineResponse, String> {
     let token = fs::read_to_string(engine_dir()?.join("engine.token"))
         .map_err(|error| format!("engine token unavailable: {error}"))?;
     send_request(build(token.trim().to_owned()))
@@ -324,7 +324,8 @@ fn send_request(request: EngineRequest) -> Result<EngineResponse, String> {
         .next()
         .ok_or_else(|| "engine address unavailable".to_string())?;
     let mut stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).map_err(|error| error.to_string())?;
-    stream.set_read_timeout(Some(Duration::from_secs(2))).map_err(|error| error.to_string())?;
+    let timeout = if matches!(&request, EngineRequest::AccountUsage { .. } | EngineRequest::MobileSettings { .. }) { 15 } else { 2 };
+    stream.set_read_timeout(Some(Duration::from_secs(timeout))).map_err(|error| error.to_string())?;
     serde_json::to_writer(&mut stream, &request).map_err(|error| error.to_string())?;
     stream.write_all(b"\n").map_err(|error| error.to_string())?;
     let mut response = String::new();

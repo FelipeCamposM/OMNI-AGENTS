@@ -711,6 +711,38 @@ em execução na hora de conferir. O que precisa ser olhado com o app aberto:
    com **dois** trechos. Depois passar o bastão para o Codex e conferir o
    `.omni/handoff/<id>.md`.
 
+## 2026-09-10 — Uso por conta, pane vazia e acesso mobile
+
+- [x] **Uso Codex:** `crates/omni-core/src/usage.rs` lê pela cauda o último evento de uso do
+  rollout mais recente do perfil, valida percentuais/janelas/reset e informa observação
+  desatualizada. Cache de 60 s no comando Tauri `account_usage`. `AccountUsage.tsx` integrado às
+  contas em Configurações → Agentes; ausência de dado nunca vira zero.
+- [x] **Última aba:** `workspaceReducer` preserva pane com `tabs: []` e `activeTabId: null`.
+  `workspaceService` aceita o estado salvo, `PaneView` desmonta o terminal e mostra **Novo agente**.
+  Ajustados fechamento por prefixo, testes de regressão e seleção ao redistribuir tabs em presets.
+- [x] **Claude:** `interaction.rs` reconstrói tela ANSI com `vt100`, reconhece gramática estrita
+  de `/usage`, reserva entrada e consulta só em sessão existente elegível. Cache de 5 min para
+  resultado/15 s para falha, timeout de 10 s; também lê `/usage` aberto manualmente. Sem leitura
+  de credencial ou acesso direto à API. Reset ambíguo permanece literal; UI informa melhor esforço.
+- [x] **HTTP mobile no engine:** Axum, assets React/Vite embutidos, cinco rotas de conversas/
+  timeline/prompt/aprovação/atenção. Configurações → Celular persiste ativação e bind. Desativado
+  inicialmente; aceita localhost ou IP confirmado pelo cliente Tailscale. TCP fica em loopback.
+- [x] **Fila e concorrência:** ações com idempotência, revisão de tela/entrada/instância, expiração
+  e revalidação antes da PTY. Nenhum spawn pelo HTTP; escolhas de aprovação de uso único.
+  Persistência de sessões serializada; leitores de perfis/conversas compartilhados sem Tauri.
+  Histórico Codex só associa um candidato compatível; ambiguidade vira indisponível.
+- [x] **UI mobile:** conversas, atenção, timeline paginada, resposta e permitir/negar. Poll de 5 s
+  com recuo e suspensão quando oculta. Retry de rede conserva chave da ação. Sem xterm/PWA/push.
+- [x] **Validação automatizada:** testes de parser/isolamento/paginação/deduplicação, pane vazia
+  persistida e desmontagem, HTTP concorrente/origem inválida/ausência de spawn, reenvio, expiração,
+  contexto vencido e escrita única de prompt/aprovação. Navegador headless verificado em 320,
+  390 e 768 px, sem overflow e com alvos de toque de 44 px (`scripts/check-mobile-browser.mjs`).
+- [ ] **Validação no ambiente real:** capturas de `/usage` e menus Claude/Codex em sessões
+  existentes; celular em 4G com Tailscale e janela desktop fechada. Fixtures de parser são
+  sintéticos: formatos não reconhecidos continuam bloqueados/indisponíveis, sem tentar adivinhar.
+
+Operação, contrato HTTP, limites e comandos de build/teste em `docs/mobile-and-account-usage.md`.
+
 ## Gotchas
 
 - **Bug real encontrado em 2026-08-27 (usuário travado com "tela preta")**: no caso sem split
@@ -741,8 +773,8 @@ em execução na hora de conferir. O que precisa ser olhado com o app aberto:
   `ensure_engine()` respawnar com o binário novo.
 - A árvore de layout usa `ratio` normalizado e limita cada lado a no mínimo 20%.
 - A última pane não pode ser fechada; fechar uma folha colapsa o split pai.
-- Uma pane nunca fica sem tabs: fechar/mover sua última tab só é permitido quando outra pane
-  pode assumir o layout; o reducer colapsa o split automaticamente.
+- A última pane pode ficar sem tabs (`activeTabId: null`); esse estado deve sobreviver ao reload.
+  Fechar a última tab de uma pane secundária continua colapsando o split automaticamente.
 - O conteúdo das panes ainda é placeholder intencional. Terminal e agentes dependem do engine
   persistente das Fases 2 e 3.
 - A documentação `README.md`, `RESUME.md` e partes antigas de `CLAUDE.md` ainda descrevem

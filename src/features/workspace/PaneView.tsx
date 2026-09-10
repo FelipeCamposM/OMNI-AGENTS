@@ -61,12 +61,13 @@ export function PaneView({
   }
 
   function closeTab(item: PaneNode["tabs"][number]) {
-    const close = item.resourceId ? closeTerminal(item.resourceId).catch(() => undefined) : Promise.resolve();
+    const close = item.resourceId && (item.kind === "agent" || item.kind === "terminal")
+      ? closeTerminal(item.resourceId).catch(() => undefined) : Promise.resolve();
     void close.then(() => dispatch({ type: "CLOSE_TAB", paneId: pane.id, tabId: item.id }));
   }
 
   function closePane() {
-    const sessions = pane.tabs.flatMap((item) => item.resourceId ? [closeTerminal(item.resourceId)] : []);
+    const sessions = pane.tabs.flatMap((item) => item.resourceId && (item.kind === "agent" || item.kind === "terminal") ? [closeTerminal(item.resourceId)] : []);
     void Promise.allSettled(sessions).then(() => dispatch({ type: "CLOSE_PANE", paneId: pane.id }));
   }
 
@@ -123,7 +124,13 @@ export function PaneView({
 
       <div className="flex-1 min-h-0">
         <PaneErrorBoundary key={tab?.id ?? pane.id}>
-        {tab?.kind === "terminal" || tab?.kind === "agent" ? (
+        {!tab ? (
+          <div className="h-full flex items-center justify-center">
+            <Button onClick={() => dispatch({ type: "CREATE_TAB", paneId: pane.id, kind: "agent", title: "Novo agente" })}>
+              Novo agente
+            </Button>
+          </div>
+        ) : tab.kind === "terminal" || tab.kind === "agent" ? (
           <TerminalPane
             projectId={projectId}
             projectPath={projectPath}

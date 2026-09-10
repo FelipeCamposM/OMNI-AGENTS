@@ -42,6 +42,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   const [retry, setRetry] = useState(0);
   const [launch, setLaunch] = useState<AgentLaunch | null>(null);
   const [switching, setSwitching] = useState(false);
+  const [inputLocked, setInputLocked] = useState(false);
   const conversationRef = useRef<string | null>(null);
   const agent = launch?.agent ?? null;
 
@@ -174,6 +175,8 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         if (snapshot.from_seq > sequenceRef.current) terminal.write("\r\n[scrollback anterior descartado]\r\n");
         if (snapshot.data) terminal.write(snapshot.data);
         setState(snapshot.session.state);
+        setInputLocked(Boolean(snapshot.session.input_locked));
+        terminal.options.disableStdin = Boolean(snapshot.session.input_locked);
         sequenceRef.current = snapshot.next_seq;
       } catch (reason) {
         if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
@@ -182,7 +185,10 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     }
 
     const dataSubscription = terminal.onData((data) => {
-      if (sessionRef.current) void writeTerminal(sessionRef.current, data).catch((reason) => setError(String(reason)));
+      if (sessionRef.current) void writeTerminal(sessionRef.current, data).catch((reason) => {
+        if (String(reason).includes("Consulta de uso")) setInputLocked(true);
+        else setError(String(reason));
+      });
     });
     const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
       fit.fit();
@@ -259,6 +265,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
       />
       <div className="absolute right-3 top-2 z-10 flex items-center gap-2 bg-[#0e0e14]/90 px-2 py-1 text-[10px] uppercase text-text-muted">
         <span>{stateGlyph(state)} {state.replace(/_/g, " ")}</span>
+        {inputLocked && <span className="text-xs text-warning">Consultando /usage…</span>}
         {state === "working" && sessionRef.current && (
           <button
             type="button"

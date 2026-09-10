@@ -1,0 +1,8 @@
+html, body, #root { min-height: 100%; height: auto; overflow: auto; }
+body { margin: 0; background: rgb(var(--c-bg-primary)); color: rgb(var(--c-text-primary)); }
+body { user-select: text; -webkit-user-select: text; }
+.mobile-shell { max-width: 48rem; margin: auto; padding: 1rem; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.mobile-shell .btn { min-height: 44px; }
+.mobile-card { border: 1px solid rgb(var(--c-border-subtle)); background: rgb(var(--c-bg-surface)); padding: 1rem; margin-block: .75rem; }
+.mobile-message { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; }
+.mobile-composer { display: block; width: 100%; min-height: 7rem; padding: .75rem; background: rgb(var(--c-bg-elevated)); border: 1px solid rgb(var(--c-border)); font-size: 16px; }

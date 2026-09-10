@@ -57,23 +57,7 @@ pub fn credential_present(provider: &str, config_dir: &Path) -> bool {
             && env::var_os(api_key_var).is_some_and(|value| !value.is_empty()))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Profile {
-    pub id: String,
-    pub provider: String,
-    pub name: String,
-    pub config_dir: String,
-    /// Aponta para o diretório nativo do CLI. Nasce sozinho e não pode ser removido — é o que faz
-    /// os logins que já existiam continuarem funcionando.
-    #[serde(default)]
-    pub builtin: bool,
-    pub created_at_ms: u64,
-    #[serde(default)]
-    pub last_used_at_ms: Option<u64>,
-    /// Derivado do disco a cada consulta, nunca persistido.
-    #[serde(skip)]
-    pub authenticated: bool,
-}
+pub use omni_core::Profile;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileStore {

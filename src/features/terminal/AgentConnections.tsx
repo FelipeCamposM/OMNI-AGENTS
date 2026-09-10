@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Input } from "../../components/ui";
+import { AccountUsage } from "./AccountUsage";
 import {
   MULTI_ACCOUNT_PROVIDERS,
   connectAgentCli,
@@ -160,7 +161,7 @@ export function AgentConnections() {
               {multiAccount && connection !== "missing" && accounts.length > 0 && (
                 <ul className="mt-2 space-y-1 pl-6">
                   {accounts.map((profile) => (
-                    <li key={profile.id} className="flex items-center gap-3">
+                    <li key={profile.id} className="flex flex-wrap items-center gap-3">
                       <span
                         className={`h-1.5 w-1.5 shrink-0 ${profile.authenticated ? "bg-success" : "bg-text-muted"}`}
                       />
@@ -192,6 +193,7 @@ export function AgentConnections() {
                           Remover
                         </Button>
                       )}
+                      <AccountUsage profileId={profile.id} provider={profile.provider} />
                     </li>
                   ))}
                 </ul>

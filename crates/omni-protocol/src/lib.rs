@@ -30,6 +30,8 @@ pub struct TerminalSession {
     pub rows: u16,
     pub cols: u16,
     #[serde(default)]
+    pub input_locked: bool,
+    #[serde(default)]
     pub initial_command: Option<String>,
     /// Variáveis de ambiente injetadas no shell da PTY. É por aqui que o isolamento de conta
     /// acontece (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`) — o CLI é digitado no shell, então herda daqui.
@@ -74,6 +76,8 @@ pub fn read_json_or_default<T: DeserializeOwned + Default>(path: &Path) -> T {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EngineRequest {
+    AccountUsage { token: String, profile_id: String, refresh: bool },
+    MobileSettings { token: String, config: Option<MobileConfig> },
     Ping { token: String },
     ListSessions { token: String },
     SpawnTerminal {
@@ -109,6 +113,7 @@ pub enum EngineRequest {
 impl EngineRequest {
     pub fn token(&self) -> &str {
         match self {
+            Self::AccountUsage { token, .. } | Self::MobileSettings { token, .. } => token,
             Self::Ping { token }
             | Self::ListSessions { token }
             | Self::SpawnTerminal { token, .. }
@@ -127,10 +132,18 @@ impl EngineRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EngineResponse {
+    AccountUsage { usage: omni_core::usage::AccountUsage },
+    MobileSettings { config: MobileConfig, listening: Option<String>, error: Option<String> },
     Pong { protocol_version: u16, engine_pid: u32 },
     Sessions { sessions: Vec<TerminalSession> },
     Session { session: TerminalSession },
     Snapshot { session: TerminalSession, from_seq: u64, next_seq: u64, data: String },
     Ok,
     Error { code: String, message: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MobileConfig { pub enabled: bool, pub bind: String }
+impl Default for MobileConfig {
+    fn default() -> Self { Self { enabled: false, bind: "127.0.0.1:47322".into() } }
 }

@@ -21,7 +21,7 @@ export interface PaneNode {
   type: "pane";
   id: string;
   tabs: WorkspaceTab[];
-  activeTabId: string;
+  activeTabId: string | null;
 }
 
 export interface SplitNode {

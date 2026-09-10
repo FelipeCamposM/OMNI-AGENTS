@@ -169,12 +169,11 @@ describe("workspaceReducer", () => {
 
     expect(state.projects[0].layout.type).toBe("pane");
     const tabs = findPane(state.projects[0].layout, paneId)?.tabs;
-    expect(tabs).toHaveLength(1);
-    // Reseta em vez de deixar presa apontando pro resourceId que acabou de ser fechado.
-    expect(tabs?.[0].resourceId).toBeUndefined();
+    expect(tabs).toEqual([]);
+    expect(findPane(state.projects[0].layout, paneId)?.activeTabId).toBeNull();
   });
 
-  it("CLOSE_TAB na última tab da última pane reseta em vez de travar (regressão: 'session not found')", () => {
+  it("CLOSE_TAB na última tab mantém a pane vazia (regressão: 'session not found')", () => {
     let state = workspaceReducer(emptyWorkspace(), { type: "ADD_PROJECT", path: "C:\\dev\\omni" });
     const paneId = state.projects[0].activePaneId;
     const onlyTabId = findPane(state.projects[0].layout, paneId)?.activeTabId;
@@ -189,9 +188,13 @@ describe("workspaceReducer", () => {
     state = workspaceReducer(state, { type: "CLOSE_TAB", paneId, tabId: onlyTabId });
 
     const pane = findPane(state.projects[0].layout, paneId);
-    expect(pane?.tabs).toHaveLength(1);
-    expect(pane?.tabs[0].resourceId).toBeUndefined();
-    expect(pane?.tabs[0].kind).toBe("agent");
+    expect(pane?.tabs).toEqual([]);
+    expect(pane?.activeTabId).toBeNull();
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(state));
+    expect(loadWorkspace().projects[0].layout).toEqual(state.projects[0].layout);
+    state = workspaceReducer(state, { type: "CREATE_TAB", paneId, kind: "agent", title: "Novo agente" });
+    expect(findPane(state.projects[0].layout, paneId)?.tabs).toHaveLength(1);
+    expect(findPane(state.projects[0].layout, paneId)?.activeTabId).not.toBe(onlyTabId);
   });
 
   it("move a última tab e colapsa a pane de origem", () => {

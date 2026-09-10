@@ -1,4 +1,4 @@
-import { Component, Suspense } from "react";
+import { Component, Suspense, useMemo } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import type { AppSettings } from "../../types/settings";
 import { motionOn } from "../../lib/motion";
@@ -15,6 +15,13 @@ import { getBackgroundEffect } from "./registry";
  * é redesenhado aqui porque o `body::after` do CSS ficaria ATRÁS do canvas.
  */
 export function AppBackground({ settings }: { settings: AppSettings }) {
+  // Identidade estável é requisito, não otimização: os efeitos guardam as
+  // cores em listas de dependência de `useEffect` (ex.: `linesGradient` em
+  // FloatingLines.tsx:487). Objeto novo a cada render = WebGL destruído e
+  // reconstruído a cada render — e este componente re-renderiza a cada saída
+  // de terminal, porque mora no App.
+  const cores = useMemo(() => coresDoEfeito(settings.accent), [settings.accent]);
+
   const efeito = getBackgroundEffect(settings.background);
   if (!efeito) return null;
 
@@ -37,7 +44,7 @@ export function AppBackground({ settings }: { settings: AppSettings }) {
               key={settings.accent}
               className="h-full w-full"
               still={!motionOn()}
-              cores={coresDoEfeito(settings.accent)}
+              cores={cores}
             />
           </Suspense>
         </EffectBoundary>

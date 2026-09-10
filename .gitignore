@@ -1,6 +1,7 @@
 # Node
 node_modules/
 dist/
+dist-mobile/
 dist-ssr/
 *.local
 

@@ -65,6 +65,7 @@ async function copyEngine(source, destination) {
 }
 
 const release = process.argv.includes("--release");
+execFileSync(process.execPath, [resolve("node_modules/vite/bin/vite.js"), "build", "--config", "vite.mobile.config.ts"], { cwd: resolve("."), stdio: "inherit" });
 const profile = release ? "release" : "debug";
 const engineTarget = resolve("target-engine");
 const cargoArgs = ["build", "-p", "omni-engine", "-j", "1"];

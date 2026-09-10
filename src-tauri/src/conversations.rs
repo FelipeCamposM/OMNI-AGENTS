@@ -22,30 +22,7 @@ use std::{
 /// Windows porque o agente novo recebe só o **caminho** do arquivo, nunca o conteúdo.
 const HANDOFF_BUDGET_CHARS: usize = 12_000;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Segment {
-    pub provider: String,
-    pub profile_id: Option<String>,
-    /// Id da sessão do lado do provider — o `--session-id` do Claude.
-    pub external_session_id: Option<String>,
-    /// Caminho do `.jsonl` do provider. `None` quando o provider não deixa escolher o id da
-    /// sessão (Codex), aí só dá para resolver depois, por data de modificação.
-    pub transcript_path: Option<String>,
-    pub terminal_session_id: Option<String>,
-    pub started_at_ms: u64,
-    pub ended_at_ms: Option<u64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Conversation {
-    pub id: String,
-    pub project_id: String,
-    /// Guardado porque o slug do diretório de transcript deriva dele.
-    pub cwd: String,
-    pub title: String,
-    pub created_at_ms: u64,
-    pub segments: Vec<Segment>,
-}
+pub use omni_core::conversations::{Conversation, Segment};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConversationStore {
