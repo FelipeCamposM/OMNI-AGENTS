@@ -6,6 +6,8 @@ import { Button } from "../../components/ui";
 import type { WorkspaceTab } from "../../types/workspace";
 import { joinPath, writeBinaryFile } from "../files/filesService";
 import {
+  attachTerminal,
+  beginConversation,
   ensureAgentTrust,
   ensureEngine,
   resizeTerminal,
@@ -14,10 +16,14 @@ import {
   stopTerminal,
   terminalSnapshot,
   type AgentCliStatus,
+  type AgentLaunch,
+  type LaunchPlan,
+  type Profile,
   type TerminalState,
   writeTerminal,
 } from "./terminalService";
 import { AgentLauncher } from "./AgentLauncher";
+import { AgentSwitcher } from "./AgentSwitcher";
 
 interface TerminalPaneProps {
   projectId: string;
@@ -34,7 +40,10 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<TerminalState>("stopped");
   const [retry, setRetry] = useState(0);
-  const [agent, setAgent] = useState<AgentCliStatus | null>(null);
+  const [launch, setLaunch] = useState<AgentLaunch | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const conversationRef = useRef<string | null>(null);
+  const agent = launch?.agent ?? null;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -108,17 +117,47 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         setError(null);
         await ensureEngine();
         if (!sessionRef.current) {
-          if (agent) await ensureAgentTrust(agent.id, projectPath);
+          if (agent) await ensureAgentTrust(agent.id, projectPath, launch?.profile?.id);
+
+          // A conversa é a entidade que sobrevive à troca de conta e de IA. Abri-la antes do
+          // spawn é o que fixa o `--session-id` do Claude e, com ele, o caminho do transcript.
+          let command = agent?.command;
+          let externalSessionId: string | undefined;
+          if (agent && !conversationRef.current) {
+            const plan = launch?.conversationId
+              ? null
+              : await beginConversation({
+                  projectId,
+                  cwd: projectPath,
+                  provider: agent.id,
+                  profileId: launch?.profile?.id,
+                  command: agent.command,
+                  title: tab.title,
+                });
+            conversationRef.current = plan?.conversation_id ?? launch?.conversationId ?? null;
+            if (plan) {
+              command = plan.initial_command;
+              externalSessionId = plan.external_session_id ?? undefined;
+            }
+          }
+
           const session = await spawnTerminal({
             projectId,
             name: `${agent?.label ?? tab.title} · agent`,
             cwd: projectPath,
             rows: terminal.rows,
             cols: terminal.cols,
-            initialCommand: agent?.command,
+            initialCommand: command,
+            provider: agent?.id,
+            profileId: launch?.profile?.id,
+            conversationId: conversationRef.current ?? undefined,
+            externalSessionId,
           });
           if (cancelled) return;
           sessionRef.current = session.id;
+          if (conversationRef.current) {
+            await attachTerminal(conversationRef.current, session.id).catch(() => undefined);
+          }
           setState(session.state);
           onSessionCreated(session.id, session.name);
         }
@@ -186,11 +225,28 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
       dataSubscription.dispose();
       terminal.dispose();
     };
-  }, [agent, paneId, projectId, projectPath, retry, tab.id, tab.title, onSessionCreated]);
+  }, [agent, launch?.profile?.id, paneId, projectId, projectPath, retry, tab.id, tab.title, onSessionCreated]);
+
+  /** Aplica a troca preparada pelo backend: para a sessão atual e relança na conta/IA nova,
+   *  mantendo a mesma conversa. Não abre aba nem conversa nova — é a mesma timeline. */
+  async function applySwitch(plan: LaunchPlan, nextAgent: AgentCliStatus, profile: Profile | null) {
+    const current = sessionRef.current;
+    setSwitching(false);
+    if (current) await stopTerminal(current).catch(() => undefined);
+    sessionRef.current = undefined;
+    sequenceRef.current = 0;
+    conversationRef.current = plan.conversation_id;
+    if (plan.notice) setError(plan.notice);
+    setLaunch({
+      agent: { ...nextAgent, command: plan.initial_command },
+      profile,
+      conversationId: plan.conversation_id,
+    });
+  }
 
   if (!tab.resourceId && !agent) {
     const projectName = projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath;
-    return <AgentLauncher projectName={projectName} onLaunch={setAgent} />;
+    return <AgentLauncher projectName={projectName} onLaunch={setLaunch} />;
   }
 
   return (
@@ -229,7 +285,21 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
             reiniciar
           </button>
         )}
+        {conversationRef.current && agent && (
+          <button type="button" className="hover:underline" onClick={() => setSwitching(true)}>
+            trocar conta / IA
+          </button>
+        )}
       </div>
+      {switching && conversationRef.current && agent && (
+        <AgentSwitcher
+          conversationId={conversationRef.current}
+          currentProvider={agent.id}
+          currentProfileId={launch?.profile?.id ?? null}
+          onCancel={() => setSwitching(false)}
+          onSwitch={(plan, nextAgent, profile) => void applySwitch(plan, nextAgent, profile)}
+        />
+      )}
       {error && (
         <div role="alert" className="absolute inset-x-3 top-3 z-10 border-2 border-danger bg-bg-elevated p-3 text-xs text-danger">
           <p>{error}</p>

@@ -99,6 +99,8 @@ export function useKanbanDispatcher(
         const agent = configured ?? agents.find((item) => item.available);
         if (!agent) return; // nenhuma CLI instalada/encontrada — nada a fazer ainda
 
+        // Sem profile explícito: o backend escolhe a conta preferida do provider (a primeira
+        // autenticada). O dispatcher roda sozinho, então cair numa conta sem login travaria a fila.
         await ensureAgentTrust(agent.id, project.path);
         const spawned = await spawnTerminal({
           projectId: project.id,
@@ -107,6 +109,7 @@ export function useKanbanDispatcher(
           rows: 30,
           cols: 120,
           initialCommand: agent.command,
+          provider: agent.id,
         });
         sessionId = spawned.id;
         sessionByProjectRef.current[project.id] = sessionId;

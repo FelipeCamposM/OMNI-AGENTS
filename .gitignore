@@ -37,3 +37,6 @@ desktop.ini
 
 # Instaladores gerados pelo build (copiados por scripts/collect-installers.mjs)
 installers/
+
+# Briefings de handoff entre agentes: carregam conteudo de conversa, nao versionar.
+.omni/handoff/

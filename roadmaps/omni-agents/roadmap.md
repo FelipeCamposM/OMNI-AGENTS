@@ -605,6 +605,112 @@ Publicado: https://github.com/FelipeCamposM/OMNI-AGENTS/releases/tag/v0.2.0
   **Verificado ponta a ponta**: `curl` no endpoint real de `releases/latest/download/latest.json`
   devolve a URL certa, e o instalador responde HTTP 200.
 
+## 2026-09-10 — Detecção silenciosa, múltiplas contas e conversa contínua
+
+### Fase A — bug da detecção de agentes (causa raiz)
+
+- [x] **Piscar de janelas: `where.exe` por candidato.** `command_exists()` em
+  `src-tauri/src/engine_client.rs` rodava `where.exe <cmd>` como processo filho. O binário do
+  Tauri é subsistema `windows` (sem console), então **cada** `where.exe` alocava um console novo —
+  `Stdio::null()` redireciona os streams mas não impede a alocação. Pior: `agent_cli_statuses()`
+  chamava `command_exists` **duas vezes por provider** (uma dentro do `find`, outra para preencher
+  `available`), ~9 janelas por consulta, e a consulta roda no mount de `AgentConnections`,
+  `AgentLauncher` e `KanbanBoard` mais uma vez por task do Kanban.
+  Corrigido com `resolve_on_path()`: resolução de PATH × PATHEXT em Rust puro, **zero processos**.
+  Resolve uma vez só e devolve o caminho absoluto no payload, para que uma falha futura apareça na
+  UI em vez de virar um `available: false` mudo. Usa `dir.join(format!("{name}{suffix}"))` e não
+  `with_extension`, que truncaria no primeiro ponto do nome.
+- [x] **Mesma causa em todo comando git.** `git_client.rs` disparava `git` sem `CREATE_NO_WINDOW`
+  em `git_available()` **e** em `run_git()` — ou seja, toda operação de git piscava também. Helper
+  `hidden()` aplicado nos dois. `connect_agent_cli` segue com janela visível de propósito: ali o
+  console *é* a UX de login.
+- [x] **"Nenhum aparece conectado": não existia estado de logado.** `available` significava só
+  "o nome resolve no PATH", e o melhor rótulo que a UI sabia mostrar era o botão "Conectar" — nunca
+  "conectado", por construção. Agora `AgentCliStatus` tem `authenticated`, e a UI separa três
+  estados: verde/conectado, âmbar/instalado sem login, cinza/não instalado.
+- [x] **`.catch(() => undefined)` em `AgentLauncher.tsx` engolia a falha do invoke**, deixando os
+  quatro providers em `available: false` sem nenhum sinal — a outra metade do sintoma. Agora vira
+  alerta visível.
+- **Verificado**: o algoritmo PATH × PATHEXT foi rodado contra o PATH real desta máquina e resolve
+  `claude` (`.exe`), `codex`, `gemini` (scripts npm sem extensão) e `cursor-agent`/`agent`
+  (`.cmd`), e devolve nada para um nome inexistente. Testes: `resolve_on_path` e
+  `every_declared_cli_has_a_config_dir` (Rust), `AgentConnections.test.tsx` (5 casos).
+
+### Fase B — múltiplas contas por provider (spec §6.6, §9.3, §9.4)
+
+- [x] **Bloqueio removido: o engine não passava env para a PTY.** Passava só `OMNI_AGENTS=1`, e o
+  CLI não é argv — é digitado no shell 800 ms depois. Sem env, não há isolamento. `SpawnTerminal` e
+  `TerminalSession` ganharam `env`, mais `provider`/`profile_id`/`conversation_id`/
+  `external_session_id`, todos com `#[serde(default)]` para o `sessions.json` já gravado continuar
+  carregando. `SessionOrigin` agrupa esses campos; `restart` e `duplicate` replicam o env, senão a
+  troca de conta se desfazia sozinha no primeiro restart.
+- [x] `src-tauri/src/profiles.rs`: registro em `profiles.json` (engine dir), config dirs em
+  `%APPDATA%\OMNI-AGENTS\profiles\<provider>\<id>\`. Guarda id, provider, nome, config dir e datas
+  — **nunca** credencial (§9.4). Um profile `builtin` por provider aponta para o diretório nativo,
+  nasce sozinho e não pode ser removido: é o que preserva os logins que já existiam.
+- [x] Mapa de isolamento: `claude` → `CLAUDE_CONFIG_DIR`, `codex` → `CODEX_HOME`. Gemini e Cursor
+  não leem env var de config dir, então só têm o perfil padrão — `create_profile` recusa com
+  mensagem explícita em vez de criar um perfil que nunca funcionaria.
+- [x] `trust_claude` passou a gravar em `<config_dir>/.claude.json`, não mais em `~/.claude.json`
+  fixo — sem isso todo profile novo esbarraria no diálogo de trust.
+- [x] UI: Configurações → Agentes lista as contas por provider com "+ Conta", "Entrar"/
+  "Reautenticar" por conta e "Remover" (que apaga também o config dir, onde mora a credencial).
+  `AgentLauncher` ganhou seletor de conta, preferindo automaticamente uma já autenticada.
+- **Verificado na mão**: `CLAUDE_CONFIG_DIR` apontado para um diretório vazio faz
+  `claude auth status` reportar `loggedIn: false` com o `~/.claude` intacto, e o `.claude.json`
+  nasce **dentro** do config dir. O mesmo comando reporta `projectsDirectory` como
+  `<config_dir>/projects`, o que confirmou o layout usado na Fase C.
+
+### Fase C — conversa que sobrevive à troca de conta e de IA
+
+- [x] **Decisão: índice de ponteiros, não transcript.** Claude e Codex já gravam a conversa inteira
+  em disco (um `.jsonl` deste projeto passa de 5 MB). `conversations.json` guarda só quais
+  conversas existem e, por conversa, a lista de trechos: provider, profile, id da sessão nativa,
+  caminho do arquivo e datas. Dezenas de linhas, escritas na criação e na troca.
+  **Não existe tabela de mensagens, e por consequência não existe tailer** — sem mensagens para
+  guardar, não há motivo para seguir arquivo nenhum.
+- [x] `claude --session-id <uuid>` no spawn: escolher o id na largada torna o caminho do transcript
+  conhecido desde já, sem vigiar diretório atrás do arquivo recém-nascido. `uuid` já vinha na
+  árvore via Tauri, então virou dep direta sem baixar nada novo.
+- [x] **Claude → Claude é continuação de verdade**: copia o `.jsonl` para
+  `<config-dir-destino>/projects/<slug>/<uuid>.jsonl`, pré-aprova o trust lá, e retoma com
+  `claude --resume <uuid>`. Mesmo id nos dois trechos, de propósito — o que muda é a conta.
+- [x] **Cross-provider é handoff, não continuação.** Dois caminhos: o gracioso (`handoff_prompt`
+  pede ao agente que ainda responde para escrever `.omni/handoff/<id>.md`) e o forçado (parseia o
+  `.jsonl`, mantém só texto de `user`/`assistant`, descarta `tool_use`/`tool_result` e sidechains,
+  e corta pela cauda em 12k caracteres). O cabeçalho do arquivo diz que é um resumo automático, não
+  um briefing escrito pelo agente — o parser não sabe inventar "próximo passo".
+  O agente novo recebe só o **caminho**: `codex "Leia .omni/handoff/<id>.md — ..."`. O transcript
+  nunca vai por argumento (limite de 32k da linha de comando do Windows).
+- [x] Parser cobre **só o formato do Claude** nesta passada, por combinação. Trecho de Codex nasce
+  sem `transcript_path` (o CLI não deixa escolher o id da sessão); sair de um Codex mudo cai no
+  caminho gracioso.
+- [x] UI: botão "trocar conta / IA" na barra do `TerminalPane` abre o `AgentSwitcher`, que separa
+  visualmente as duas operações e avisa, antes de trocar de IA, que cache de prompt, estado interno
+  e aprovações não transferem.
+- [x] `.omni/handoff/` no `.gitignore` — o markdown carrega conteúdo de conversa.
+
+### Estado da verificação
+
+`npm run typecheck` limpo, `npm run test` 99/99, `cargo test --workspace` 11/11 (8 em `src-tauri`,
+3 no engine). `cargo check --workspace` limpo.
+
+**Pendente de validação visual em `tauri dev`** — a porta 1420 estava ocupada por um dev server já
+em execução na hora de conferir. O que precisa ser olhado com o app aberto:
+
+1. Configurações → Agentes: nenhuma janela de console deve piscar, nem no mount nem clicando
+   "Verificar novamente" várias vezes seguidas. Os CLIs instalados devem aparecer com caminho
+   absoluto e os logados em verde. **Repetir num build instalado** (`npm run build`) — o subsistema
+   `windows` é o que diferencia o comportamento, e dev pode mascarar (ver o gotcha do CSP em
+   `CLAUDE.md`, mesma família de armadilha).
+2. Criar uma conta Claude "trabalho", logar, e conferir que
+   `%APPDATA%\OMNI-AGENTS\profiles\claude\trabalho\.credentials.json` nasceu e que `~/.claude`
+   não mudou. `/status` dentro de cada agente deve mostrar contas distintas.
+3. Abrir Claude, trocar duas ou três mensagens, usar "trocar conta / IA" para outra conta Claude:
+   o histórico tem que aparecer no agente novo, e `conversations.json` tem que ter **uma** conversa
+   com **dois** trechos. Depois passar o bastão para o Codex e conferir o
+   `.omni/handoff/<id>.md`.
+
 ## Gotchas
 
 - **Bug real encontrado em 2026-08-27 (usuário travado com "tela preta")**: no caso sem split

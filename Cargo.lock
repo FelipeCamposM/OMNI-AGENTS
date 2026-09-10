@@ -2509,6 +2509,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-updater",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2529,6 +2530,7 @@ name = "omni-protocol"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]

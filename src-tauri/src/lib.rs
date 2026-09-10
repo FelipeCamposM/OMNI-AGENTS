@@ -1,5 +1,7 @@
+mod conversations;
 mod engine_client;
 mod git_client;
+mod profiles;
 
 pub fn run() {
     tauri::Builder::default()
@@ -24,6 +26,15 @@ pub fn run() {
             engine_client::duplicate_terminal,
             engine_client::restart_terminal,
             engine_client::terminal_snapshot,
+            conversations::list_conversations,
+            conversations::begin_conversation,
+            conversations::attach_terminal,
+            conversations::handoff_prompt,
+            conversations::plan_switch,
+            profiles::list_profiles,
+            profiles::create_profile,
+            profiles::rename_profile,
+            profiles::delete_profile,
             git_client::git_status,
             git_client::git_diff,
             git_client::git_stage,

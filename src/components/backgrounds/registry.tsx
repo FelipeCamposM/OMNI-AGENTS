@@ -19,6 +19,11 @@ import type { CoresEfeito } from "../../lib/palettes";
  * Regras dos efeitos:
  * - NÃO edite o arquivo vendorizado em `src/components/<Nome>/` — um
  *   `shadcn add` futuro sobrescreve. Presets moram aqui.
+ *   Exceção conhecida: `FaultyTerminal.tsx` vem escrito para os tipos do React
+ *   19 (`useRef<Program>(null)`), que neste projeto (React 18) dá
+ *   `TS2540: Cannot assign to 'current'`. Os dois refs viraram
+ *   `useRef<X | null>(null)`. Se um `shadcn add` reverter isso, o
+ *   `npm run typecheck` reprova na hora — é só refazer.
  * - O componente ocupa 100% do container e não recebe ponteiro (o
  *   AppBackground já cuida de posição, veil e pointer-events).
  * - `lazy` é obrigatório: cada efeito arrasta WebGL (ogl ~50 kB) e só deve
@@ -142,6 +147,39 @@ const FloatingLinesPreset = lazy(async () => {
   };
 });
 
+const FaultyTerminalPreset = lazy(async () => {
+  const { default: FaultyTerminal } = await import("../FaultyTerminal");
+  return {
+    default: ({ className, still, cores }: BackgroundEffectProps) => (
+      <FaultyTerminal
+        className={className}
+        // `linhas[1]` é a cor base da paleta — o efeito tem um tint só, e não
+        // vale um campo novo em CoresEfeito para isso.
+        tint={cores.linhas[1]}
+        pause={still}
+        pageLoadAnimation={!still}
+        scale={1.6}
+        gridMul={[2, 1]}
+        digitSize={1.4}
+        timeScale={0.3}
+        scanlineIntensity={0.4}
+        glitchAmount={1}
+        flickerAmount={0.6}
+        noiseAmp={1}
+        // digit() já roda 9x por pixel; com aberração vira 27, e este fundo
+        // divide GPU com vários PTYs abertos.
+        chromaticAberration={0}
+        dither={0}
+        curvature={0.15}
+        brightness={0.9}
+        // O <AppBackground> é pointer-events: none e o FaultyTerminal escuta
+        // `mousemove` no próprio container, então nunca dispararia.
+        mouseReact={false}
+      />
+    ),
+  };
+});
+
 export const BACKGROUND_EFFECTS: BackgroundEffect[] = [
   {
     id: "gradient-waves",
@@ -152,6 +190,11 @@ export const BACKGROUND_EFFECTS: BackgroundEffect[] = [
     id: "floating-lines",
     label: "Linhas flutuantes",
     component: FloatingLinesPreset,
+  },
+  {
+    id: "faulty-terminal",
+    label: "Terminal falho",
+    component: FaultyTerminalPreset,
   },
 ];
 

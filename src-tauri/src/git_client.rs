@@ -1,8 +1,21 @@
 use serde::Serialize;
 use std::process::{Command, Stdio};
 
+/// `CREATE_NO_WINDOW`. Sem isso, todo `git` disparado por um binário de subsistema `windows`
+/// (que não tem console próprio) aloca um console novo e pisca na tela — mesma causa que fazia a
+/// detecção de agentes piscar. `Stdio::null()` sozinho não resolve: ele redireciona os streams,
+/// não impede a alocação.
+fn hidden(command: &mut Command) -> &mut Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    command
+}
+
 fn git_available() -> bool {
-    Command::new("git")
+    hidden(&mut Command::new("git"))
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -11,7 +24,7 @@ fn git_available() -> bool {
 }
 
 fn run_git(cwd: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = hidden(&mut Command::new("git"))
         .args(args)
         .current_dir(cwd)
         .output()

@@ -1,13 +1,23 @@
 import {
+  AlertIcon,
   BookIcon,
-  BoxIcon,
   ChatIcon,
+  ChevronDownIcon,
+  CircleIcon,
+  CloseIcon,
+  CopyIcon,
+  DockerIcon,
+  FolderIcon,
   FolderPlusIcon as FolderPlus,
   GitBranchIcon,
   KanbanIcon,
   ListIcon,
+  PlayIcon,
+  ReloadIcon,
   SlidersIcon as Sliders,
   TerminalIcon,
+  WarningIcon,
+  ZapOffIcon,
 } from "./ui/PixelIcon";
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
@@ -36,8 +46,8 @@ const SECTION_ICON: Record<(typeof SECTIONS)[number], React.ComponentType<{ clas
   AGENTS: ChatIcon,
   TERMINALS: TerminalIcon,
   COMMANDS: ListIcon,
-  DOCKER: BoxIcon,
-  FILES: FolderPlus,
+  DOCKER: DockerIcon,
+  FILES: FolderIcon,
   SKILLS: BookIcon,
   GIT: GitBranchIcon,
   KANBAN: KanbanIcon,
@@ -177,7 +187,7 @@ export function Sidebar({
                   ].join(" ")}
                   title={project.path}
                 >
-                  <FolderPlus className="mr-2 inline w-3 h-3 shrink-0 text-accent" aria-hidden />
+                  <FolderIcon className="mr-2 inline w-3 h-3 shrink-0 text-accent" aria-hidden />
                   {project.name}
                 </button>
                 <button
@@ -185,9 +195,9 @@ export function Sidebar({
                   aria-label={`Fechar projeto ${project.name}`}
                   title="Fechar projeto"
                   onClick={() => onCloseProject(project.id)}
-                  className="w-8 shrink-0 text-text-muted opacity-60 hover:text-danger hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  className="grid w-8 shrink-0 place-items-center text-text-muted opacity-60 hover:text-danger hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                 >
-                  ×
+                  <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
               </div>
             ))
@@ -205,7 +215,7 @@ export function Sidebar({
                       className="min-w-0 flex-1 py-1.5 text-left text-xs text-text-secondary hover:text-text-primary truncate"
                       title={`${session.name} · ${session.state}`}
                     >
-                      <span className="mr-2" aria-hidden="true">{sessionGlyph(session.state)}</span>
+                      <SessionStateIcon state={session.state} />
                       {session.name}
                     </button>
                     <button
@@ -213,27 +223,27 @@ export function Sidebar({
                       aria-label={`Duplicar agente ${session.name}`}
                       title="Duplicar sessão"
                       onClick={() => onDuplicateTerminal(session.id)}
-                      className="w-8 shrink-0 text-text-muted opacity-60 hover:text-text-primary hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                      className="grid w-8 shrink-0 place-items-center text-text-muted opacity-60 hover:text-text-primary hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                     >
-                      ⧉
+                      <CopyIcon className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
                     <button
                       type="button"
                       aria-label={`Reiniciar agente ${session.name}`}
                       title="Reiniciar sessão"
                       onClick={() => onRestartTerminal(session.id)}
-                      className="w-8 shrink-0 text-text-muted opacity-60 hover:text-text-primary hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                      className="grid w-8 shrink-0 place-items-center text-text-muted opacity-60 hover:text-text-primary hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                     >
-                      ↻
+                      <ReloadIcon className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
                     <button
                       type="button"
                       aria-label={`Fechar agente ${session.name}`}
                       title="Encerrar e remover agente"
                       onClick={() => onCloseTerminal(session.id)}
-                      className="w-8 shrink-0 text-text-muted opacity-60 hover:text-danger hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                      className="grid w-8 shrink-0 place-items-center text-text-muted opacity-60 hover:text-danger hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                     >
-                      ×
+                      <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
                   </div>
                 ))
@@ -292,7 +302,10 @@ function SidebarSection({
         onClick={() => setOpen((value) => !value)}
         className="w-full flex items-center gap-2 text-text-muted text-[10px] font-medium uppercase tracking-wider px-3 pt-1 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       >
-        <span aria-hidden="true">{open ? "▾" : "▸"}</span>
+        <ChevronDownIcon
+          className={`h-3 w-3 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`}
+          aria-hidden="true"
+        />
         {Icon && <Icon className="w-3 h-3 shrink-0" aria-hidden />}
         {label}
       </button>
@@ -301,13 +314,23 @@ function SidebarSection({
   );
 }
 
-function sessionGlyph(state: TerminalSession["state"]) {
-  if (state === "working") return "▸";
-  if (state === "approval_required") return "⏵";
-  if (state === "crashed") return "✖";
-  if (state === "orphan") return "⚠";
-  if (state === "answered") return "●";
-  return "○";
+/** Estado da sessão como ícone. `working` e `approval_required` ganham cor porque são os dois
+ *  estados que pedem alguma coisa de quem está olhando; o resto fica no tom do texto. */
+const SESSION_STATE_ICON: Record<
+  TerminalSession["state"],
+  { icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>; className: string }
+> = {
+  working: { icon: PlayIcon, className: "text-success" },
+  approval_required: { icon: AlertIcon, className: "text-warning" },
+  crashed: { icon: ZapOffIcon, className: "text-danger" },
+  orphan: { icon: WarningIcon, className: "text-text-muted" },
+  answered: { icon: CircleIcon, className: "text-accent" },
+  stopped: { icon: CircleIcon, className: "text-text-muted" },
+};
+
+function SessionStateIcon({ state }: { state: TerminalSession["state"] }) {
+  const { icon: Icon, className } = SESSION_STATE_ICON[state];
+  return <Icon className={`mr-2 inline h-3 w-3 shrink-0 ${className}`} aria-hidden />;
 }
 
 function NavItem({

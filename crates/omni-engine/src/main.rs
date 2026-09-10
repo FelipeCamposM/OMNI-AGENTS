@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use omni_protocol::{
-    EngineRequest, EngineResponse, SessionState, TerminalSession, DEFAULT_ENGINE_PORT,
-    PROTOCOL_VERSION,
+    atomic_write_json, EngineRequest, EngineResponse, SessionState, TerminalSession,
+    DEFAULT_ENGINE_PORT, PROTOCOL_VERSION,
 };
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use rand::RngCore;
@@ -86,10 +86,7 @@ impl EngineState {
             .values()
             .map(SessionEntry::metadata)
             .collect();
-        let encoded = serde_json::to_vec_pretty(&sessions)?;
-        let temporary = self.state_file.with_extension("json.tmp");
-        fs::write(&temporary, encoded)?;
-        fs::rename(temporary, &self.state_file)?;
+        atomic_write_json(&self.state_file, &sessions)?;
         Ok(())
     }
 
@@ -158,9 +155,31 @@ fn handle_request(request: EngineRequest, state: &Arc<EngineState>) -> EngineRes
             }
         }
         EngineRequest::ListSessions { .. } => list_sessions(state),
-        EngineRequest::SpawnTerminal { project_id, name, cwd, shell, initial_command, rows, cols, .. } => {
-            spawn_terminal(state, project_id, name, cwd, shell, initial_command, rows, cols)
-        }
+        EngineRequest::SpawnTerminal {
+            project_id,
+            name,
+            cwd,
+            shell,
+            initial_command,
+            rows,
+            cols,
+            env,
+            provider,
+            profile_id,
+            conversation_id,
+            external_session_id,
+            ..
+        } => spawn_terminal(
+            state,
+            project_id,
+            name,
+            cwd,
+            shell,
+            initial_command,
+            rows,
+            cols,
+            SessionOrigin { env, provider, profile_id, conversation_id, external_session_id },
+        ),
         EngineRequest::WriteTerminal { session_id, data, .. } => write_terminal(state, &session_id, &data),
         EngineRequest::ResizeTerminal { session_id, rows, cols, .. } => {
             resize_terminal(state, &session_id, rows, cols)
@@ -194,7 +213,13 @@ fn list_sessions(state: &EngineState) -> Result<EngineResponse> {
 
 type PtySpawn = (Option<u32>, Box<dyn Write + Send>, Box<dyn MasterPty + Send>, Box<dyn Child + Send + Sync>, Box<dyn Read + Send>);
 
-fn open_pty_and_spawn(cwd: &str, shell: &str, rows: u16, cols: u16) -> Result<PtySpawn> {
+fn open_pty_and_spawn(
+    cwd: &str,
+    shell: &str,
+    rows: u16,
+    cols: u16,
+    env: &[(String, String)],
+) -> Result<PtySpawn> {
     let cwd_path = Path::new(cwd);
     if !cwd_path.is_dir() {
         return Err(anyhow!("terminal cwd does not exist: {cwd}"));
@@ -210,6 +235,10 @@ fn open_pty_and_spawn(cwd: &str, shell: &str, rows: u16, cols: u16) -> Result<Pt
     let mut command = CommandBuilder::new(shell);
     command.cwd(cwd_path);
     command.env("OMNI_AGENTS", "1");
+    // Isolamento de conta: o CLI é digitado no shell, então herda o ambiente daqui.
+    for (key, value) in env {
+        command.env(key, value);
+    }
     #[cfg(windows)]
     if shell.to_ascii_lowercase().contains("powershell")
         || shell.to_ascii_lowercase().contains("pwsh")
@@ -274,6 +303,31 @@ fn spawn_reader_thread(state: Arc<EngineState>, session: Arc<LiveSession>, mut r
     });
 }
 
+/// Quem a sessão é, do ponto de vista de conta e conversa. Agrupado num struct porque
+/// `spawn_terminal_inner` já estava no limite de argumentos.
+#[derive(Debug, Clone, Default)]
+struct SessionOrigin {
+    env: Vec<(String, String)>,
+    provider: Option<String>,
+    profile_id: Option<String>,
+    conversation_id: Option<String>,
+    external_session_id: Option<String>,
+}
+
+impl SessionOrigin {
+    /// Reconstrói a origem a partir de uma sessão já existente — usado por duplicate/restart, que
+    /// precisam manter a mesma conta.
+    fn of(session: &TerminalSession) -> Self {
+        Self {
+            env: session.env.clone(),
+            provider: session.provider.clone(),
+            profile_id: session.profile_id.clone(),
+            conversation_id: session.conversation_id.clone(),
+            external_session_id: session.external_session_id.clone(),
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_terminal_inner(
     state: &Arc<EngineState>,
@@ -286,9 +340,10 @@ fn spawn_terminal_inner(
     rows: u16,
     cols: u16,
     created_at_ms: u64,
+    origin: SessionOrigin,
 ) -> Result<TerminalSession> {
     let shell = shell.unwrap_or_else(default_shell);
-    let (pid, writer, master, child, reader) = open_pty_and_spawn(&cwd, &shell, rows, cols)?;
+    let (pid, writer, master, child, reader) = open_pty_and_spawn(&cwd, &shell, rows, cols, &origin.env)?;
     let metadata = TerminalSession {
         id: id.clone(),
         project_id,
@@ -303,6 +358,11 @@ fn spawn_terminal_inner(
         rows: rows.max(1),
         cols: cols.max(1),
         initial_command: initial_command.clone(),
+        env: origin.env,
+        provider: origin.provider,
+        profile_id: origin.profile_id,
+        conversation_id: origin.conversation_id,
+        external_session_id: origin.external_session_id,
     };
     let session = Arc::new(LiveSession {
         meta: Mutex::new(metadata.clone()),
@@ -324,6 +384,7 @@ fn spawn_terminal_inner(
     Ok(metadata)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_terminal(
     state: &Arc<EngineState>,
     project_id: String,
@@ -333,9 +394,12 @@ fn spawn_terminal(
     initial_command: Option<String>,
     rows: u16,
     cols: u16,
+    origin: SessionOrigin,
 ) -> Result<EngineResponse> {
     let id = state.next_id();
-    let metadata = spawn_terminal_inner(state, id, project_id, name, cwd, shell, initial_command, rows, cols, now_ms())?;
+    let metadata = spawn_terminal_inner(
+        state, id, project_id, name, cwd, shell, initial_command, rows, cols, now_ms(), origin,
+    )?;
     Ok(EngineResponse::Session { session: metadata })
 }
 
@@ -361,6 +425,9 @@ fn duplicate_session(state: &Arc<EngineState>, session_id: &str) -> Result<Engin
         source.rows,
         source.cols,
         now_ms(),
+        // Mesma conta da sessão de origem: uma cópia que caísse no profile padrão seria uma
+        // troca de conta silenciosa.
+        SessionOrigin { env: source.env, ..SessionOrigin::default() },
     )?;
     Ok(EngineResponse::Session { session: metadata })
 }
@@ -388,7 +455,7 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
             }
             let meta = session.meta.lock().map_err(|_| anyhow!("session metadata poisoned"))?.clone();
             let (pid, writer, master, child, reader) =
-                open_pty_and_spawn(&meta.cwd, &meta.shell, meta.rows, meta.cols)?;
+                open_pty_and_spawn(&meta.cwd, &meta.shell, meta.rows, meta.cols, &meta.env)?;
             *session.writer.lock().map_err(|_| anyhow!("terminal writer poisoned"))? = writer;
             *session.master.lock().map_err(|_| anyhow!("terminal master poisoned"))? = master;
             *session.child.lock().map_err(|_| anyhow!("terminal child poisoned"))? = child;
@@ -409,6 +476,7 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
         // before this engine process started — nothing to preserve, so a fresh
         // LiveSession (same id) via spawn_terminal_inner is the whole job.
         RestartTarget::Historical(meta) => {
+            let origin = SessionOrigin::of(&meta);
             let metadata = spawn_terminal_inner(
                 state,
                 meta.id,
@@ -420,6 +488,7 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
                 meta.rows,
                 meta.cols,
                 meta.created_at_ms,
+                origin,
             )?;
             Ok(EngineResponse::Session { session: metadata })
         }
@@ -628,6 +697,7 @@ mod tests {
             24,
             80,
             now_ms(),
+            SessionOrigin::default(),
         )
         .expect("spawn should succeed");
         assert_eq!(spawned.id, id);
