@@ -743,6 +743,56 @@ em execução na hora de conferir. O que precisa ser olhado com o app aberto:
 
 Operação, contrato HTTP, limites e comandos de build/teste em `docs/mobile-and-account-usage.md`.
 
+## v0.3.1 — release beta com notas de versão (2026-09-10)
+
+- [x] **Notas de versão dentro do app**: `src/lib/changelog.ts` guarda as entradas (mais nova no
+  topo, em linguagem de usuário) e `SobreSection` de `SettingsView.tsx` renderiza o card
+  "Novidades". A entrada 0.3.1 tem `beta`, que desenha o selo e o aviso em `text-warning`.
+- [x] **Aviso de beta onde importa**: além da nota de versão, um `role="note"` no topo de
+  `src/features/mobile/MobileSettings.tsx` diz que a conexão com o celular não funciona nesta
+  versão. Quem entra direto na seção Celular nunca leria a nota em Sobre.
+- [x] **Release publicado como latest**: `v0.3.1`, com `-setup.exe`, `.sig` e `latest.json`.
+  Endpoint do updater verificado respondendo 0.3.1, e a URL do instalador retorna 200.
+- [x] **Marcado como release normal, não pre-release** — de propósito, mesmo sendo beta. Marcar
+  pre-release tiraria ele de `releases/latest/download/latest.json` e o updater pararia calado.
+  O aviso de beta vive no texto do release e na UI, não na flag do GitHub.
+
+### A senha de assinatura quase se perdeu — leia antes do próximo release
+
+`npm run build` falhou em *"failed to decode secret key: incorrect updater private key password"*.
+As duas variáveis no escopo User estavam erradas **desde que foram gravadas**:
+
+| Variável | Continha | Devia conter |
+|---|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | a chave do **CAMPS-UTILS** | `~/.tauri/omni-agents.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | o texto-modelo `<senha da omni-agents>` | a senha real |
+
+O snippet do próprio roadmap (linha ~591) foi colado sem substituir o placeholder. O 0.2.0 tinha
+sido assinado com as credenciais passadas à mão na sessão de 09/09, que nunca chegaram ao ambiente.
+
+A chave certa foi confirmada comparando o key id do `.sig` do 0.2.0 (`tVwu/Frvupa`) com
+`omni-agents.key.pub` e com a `pubkey` do `tauri.conf.json` — as três batem. A senha foi
+recuperada do transcript da sessão de 09/09, onde ficou o resultado do comando que a exibiu antes
+de apagar o arquivo temporário.
+
+**Duas lições:**
+
+1. Guarde a senha num cofre de verdade. Ela só sobreviveu porque um transcript de sessão não foi
+   apagado — isso não é armazenamento. Perder chave **e** senha significa que ninguém já
+   instalado recebe atualização de novo: a pubkey está gravada no binário deles.
+2. **`npx tauri signer --help` imprime o valor das variáveis de ambiente.** Rodar isso num
+   contexto compartilhado despeja a chave privada na tela. Foi como a chave do CAMPS-UTILS vazou
+   para o transcript desta sessão — ela está criptografada e a senha não vazou junto, mas
+   **rotacione a chave do CAMPS-UTILS** quando for mexer naquele projeto.
+
+`.env.example` na raiz documenta as duas variáveis; `.env` já é ignorado pelo git e o Vite não
+expõe variável sem prefixo `VITE_` ao bundle, então a cópia local não vaza para produção.
+
+### Pendente
+
+- [ ] **Conexão com o celular**: o motivo de a 0.3.1 sair como beta. Enquanto não funcionar, o
+  aviso em `MobileSettings.tsx` e o `beta` da entrada no changelog têm de continuar lá.
+
 ## Gotchas
 
 - **Bug real encontrado em 2026-08-27 (usuário travado com "tela preta")**: no caso sem split
