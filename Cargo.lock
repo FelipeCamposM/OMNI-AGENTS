@@ -2585,7 +2585,7 @@ dependencies = [
 
 [[package]]
 name = "omni-agents"
-version = "0.2.0"
+version = "0.3.1"
 dependencies = [
  "omni-core",
  "omni-protocol",

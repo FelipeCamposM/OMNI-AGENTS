@@ -4,6 +4,7 @@ import type { AppSettings, Background, GlassLevel, MotionLevel, Theme } from "..
 import { UpdateCard } from "./UpdateCard";
 import { BACKGROUND_EFFECTS, isBackgroundEffect } from "./backgrounds/registry";
 import { PALETAS } from "../lib/palettes";
+import { CHANGELOG } from "../lib/changelog";
 import { Button, Field, Input, SegmentedControl, Slider } from "./ui";
 import { AgentConnections } from "../features/terminal/AgentConnections";
 import { MobileSettings } from "../features/mobile/MobileSettings";
@@ -279,6 +280,36 @@ function SobreSection({ onReset }: { onReset: () => void }) {
       </Card>
 
       <UpdateCard />
+
+      <Card title="Novidades">
+        <div className="space-y-5">
+          {CHANGELOG.map((entrada) => (
+            <article key={entrada.version} className="space-y-2">
+              <div className="flex items-baseline gap-2">
+                <h3 className="text-text-primary text-xs font-semibold">
+                  Versão {entrada.version}
+                </h3>
+                <span className="text-text-muted text-[10px]">{entrada.date}</span>
+                {entrada.beta && (
+                  <span className="border border-warning text-warning px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
+                    Beta
+                  </span>
+                )}
+              </div>
+              {entrada.beta && (
+                <p role="note" className="text-warning text-[11px] leading-relaxed">
+                  {entrada.beta}
+                </p>
+              )}
+              <ul className="text-text-secondary text-[11px] leading-relaxed space-y-1 list-disc pl-4">
+                {entrada.changes.map((mudanca) => (
+                  <li key={mudanca}>{mudanca}</li>
+                ))}
+              </ul>
+            </article>
+          ))}
+        </div>
+      </Card>
 
       <Card title="Dados do app">
         <p className="text-text-muted text-[11px]">Preferências ficam salvas neste computador.</p>

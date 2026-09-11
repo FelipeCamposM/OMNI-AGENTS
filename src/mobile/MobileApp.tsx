@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Button } from "../components/ui/Button";
 import { request, actionKey, ApiError, type Conversation, type Timeline } from "./api";
+import { usePoll } from "./usePoll";
 
 const STATES: Record<string,string> = { working: "Trabalhando", answered: "Resposta disponível", approval_required: "Possível aprovação pendente", stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido" };
 
@@ -22,17 +23,10 @@ function ConversationDetail({ conversation, refresh }: { conversation: Conversat
   const [cursor, setCursor] = useState(0);
   const pending = useRef<{ signature: string; key: string; revision: string } | null>(null);
   const load = useCallback(async () => { setData(await request<Timeline>(`/conversas/${encodeURIComponent(conversation.id)}/timeline?cursor=${cursor}`)); }, [conversation.id, cursor]);
-  useEffect(() => {
-    let cancelled = false; let timer: number; let delay = 5000;
-    async function poll() {
-      if (!document.hidden) {
-        try { const result = await request<Timeline>(`/conversas/${encodeURIComponent(conversation.id)}/timeline?cursor=${cursor}`); if (!cancelled) { setData(result); setError(null); } delay = 5000; }
-        catch (reason) { if (!cancelled) setError(String(reason)); delay = Math.min(delay * 2,60000); }
-      }
-      if (!cancelled) timer = window.setTimeout(poll,delay);
-    }
-    void poll(); return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [conversation.id,cursor]);
+  usePoll(async () => {
+    const result = await request<Timeline>(`/conversas/${encodeURIComponent(conversation.id)}/timeline?cursor=${cursor}`);
+    setData(result); setError(null);
+  }, reason => setError(String(reason)), [conversation.id,cursor]);
   async function send(kind: "prompt" | "aprovar", permitir?: boolean) {
     const capability = conversation.capabilities;
     if (!capability || busy) return;
@@ -83,13 +77,7 @@ export function MobileApp() {
     const [all,waiting] = await Promise.all([request<Conversation[]>("/conversas"),request<Conversation[]>("/atencao")]);
     setConversations(all); setAttention(waiting); setError(null);
   },[]);
-  useEffect(() => {
-    let cancelled = false; let timer: number; let delay = 5000;
-    async function poll() { if (!document.hidden) { try { await refresh(); delay = 5000; } catch (reason) { if (!cancelled) setError(String(reason)); delay = Math.min(delay * 2,60000); } }
-      if (!cancelled) timer = window.setTimeout(poll,delay);
-    }
-    void poll(); return () => { cancelled = true; window.clearTimeout(timer); };
-  },[refresh]);
+  usePoll(refresh, reason => setError(String(reason)), [refresh]);
   const conversation = conversations.find(c => c.id === selected);
   return <main className="mobile-shell"><header className="flex items-center justify-between gap-3 mb-5"><h1 className="font-bold text-lg">OMNI AGENTS</h1><Button variant="ghost" onClick={() => void refresh().catch(reason => setError(String(reason)))}>Atualizar</Button></header>
     {error && <p role="alert" className="text-danger">Não foi possível conectar: {error}</p>}

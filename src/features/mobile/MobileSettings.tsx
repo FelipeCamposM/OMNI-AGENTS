@@ -36,6 +36,11 @@ export function MobileSettings() {
   }
   return <section className="space-y-4" aria-label="Acesso pelo celular">
     <h2 className="text-sm font-semibold">Acesso pelo celular · Tailscale</h2>
+    <p role="note" className="border border-warning text-warning p-3 text-xs leading-relaxed">
+      <strong>Beta — ainda não funciona.</strong> A conexão com o celular está em desenvolvimento nesta
+      versão. Você consegue ativar aqui, mas o acesso pelo telefone provavelmente não vai abrir. Vai
+      ficar pronto numa próxima versão.
+    </p>
     <p className="text-xs text-text-secondary">Instale o Tailscale no PC e no celular com a mesma conta. Informe abaixo o IP do PC mostrado no Tailscale e a porta 47322. O acesso continua com a janela do OMNI fechada, enquanto o PC e o engine estiverem ligados.</p>
     <Field label="Endereço HTTP" htmlFor="mobile-bind"><Input id="mobile-bind" value={bind} onChange={event => setBind(event.target.value)} placeholder="100.x.x.x:47322" /></Field>
     <p className="text-xs text-text-muted">127.0.0.1 permite testar somente neste PC.</p>

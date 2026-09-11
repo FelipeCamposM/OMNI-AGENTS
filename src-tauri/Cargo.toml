@@ -1,6 +1,6 @@
 [package]
 name = "omni-agents"
-version = "0.2.0"
+version = "0.3.1"
 description = "OMNI AGENTS desktop workspace"
 authors = []
 edition = "2021"
