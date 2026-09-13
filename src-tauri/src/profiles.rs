@@ -27,7 +27,6 @@ fn credential_rule(provider: &str) -> Option<(&'static str, &'static str)> {
     match provider {
         "claude" => Some((".credentials.json", "ANTHROPIC_API_KEY")),
         "codex" => Some(("auth.json", "OPENAI_API_KEY")),
-        "gemini" => Some(("oauth_creds.json", "GEMINI_API_KEY")),
         "cursor" => Some(("cli-config.json", "")),
         _ => None,
     }
@@ -40,7 +39,6 @@ pub fn native_config_dir(provider: &str) -> Option<PathBuf> {
     let default = match provider {
         "claude" => home.join(".claude"),
         "codex" => home.join(".codex"),
-        "gemini" => home.join(".gemini"),
         "cursor" => home.join(".cursor"),
         _ => return None,
     };
@@ -114,9 +112,16 @@ fn save(store: &ProfileStore) -> Result<(), String> {
     atomic_write_json(&store_path()?, store).map_err(|error| error.to_string())
 }
 
+/// Providers que o app suporta hoje. O Gemini saiu em 2026-09: o Google desligou o login por
+/// conta individual do Gemini CLI em 18/06/2026 e migrou para o Antigravity CLI.
+pub const SUPPORTED_PROVIDERS: [&str; 3] = ["claude", "codex", "cursor"];
+
 /// Garante um profile `default` por provider suportado, apontando para o diretório nativo do CLI.
+/// Também descarta profiles de provider que o app não suporta mais — senão o `profiles.json` de
+/// quem já usava o app guardaria um `gemini-padrao` órfão pra sempre.
 fn with_defaults(mut store: ProfileStore) -> ProfileStore {
-    for provider in ["claude", "codex", "gemini", "cursor"] {
+    store.profiles.retain(|profile| SUPPORTED_PROVIDERS.contains(&profile.provider.as_str()));
+    for provider in SUPPORTED_PROVIDERS {
         if store.profiles.iter().any(|profile| profile.provider == provider && profile.builtin) {
             continue;
         }
@@ -288,7 +293,7 @@ mod tests {
 
     #[test]
     fn providers_without_isolation_reject_extra_profiles() {
-        assert!(config_dir_var("gemini").is_none());
-        assert!(create_profile("gemini".into(), "Trabalho".into()).is_err());
+        assert!(config_dir_var("cursor").is_none());
+        assert!(create_profile("cursor".into(), "Trabalho".into()).is_err());
     }
 }

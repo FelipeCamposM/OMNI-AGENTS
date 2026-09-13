@@ -133,7 +133,10 @@ fn error(status: StatusCode, message: &str) -> ApiError { (status,Json(json!({"e
 async fn same_origin(State(state): State<Arc<EngineState>>, request: Request, next: Next) -> Response {
     let bind = state.mobile.config.lock().expect("config poisoned").bind.clone();
     if request.headers().get("host").and_then(|v|v.to_str().ok()) != Some(bind.as_str()) {
-        return error(StatusCode::FORBIDDEN,"Host não permitido").into_response();
+        // A mensagem nomeia a causa real: o Host tem que bater com o bind literal, então abrir pelo
+        // nome MagicDNS do Tailscale cai aqui. Afrouxar a checagem não é opção — ela é a defesa
+        // contra CSRF e DNS rebinding.
+        return error(StatusCode::FORBIDDEN,"Host não permitido; abra pelo IP do Tailscale (100.x.x.x:porta), não pelo nome MagicDNS").into_response();
     }
     if request.method() != axum::http::Method::GET {
         let origin = format!("http://{bind}");

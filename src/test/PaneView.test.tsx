@@ -31,6 +31,23 @@ it("desmonta o terminal ao esvaziar a pane e permite criar agente sem tab fantas
   expect(screen.getByRole("button", { name: "Fechar painel" })).toBeDisabled();
 });
 
+it("o + escolhe entre agente e terminal", async () => {
+  const dispatch = vi.fn();
+  const pane: PaneNode = { type: "pane", id: "p", activeTabId: "tab", tabs: [{ id: "tab", kind: "agent", title: "Claude", resourceId: "s1" }] };
+  render(<PaneView pane={pane} active onlyPane maximized={false} projectId="project" projectPath="C:/test" fileSaveMode="auto" kanban={{ version: 1, tasks: [], agentByProject: {}, dispatcherEnabled: false, failureTimestamps: [], pausedUntil: null }} kanbanDispatch={vi.fn()} dispatch={dispatch} />);
+
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Nova tab" }));
+  const menu = screen.getByRole("menu", { name: "Nova tab" });
+  await userEvent.click(within(menu).getByRole("menuitem", { name: /Novo terminal/ }));
+  expect(dispatch).toHaveBeenCalledWith({ type: "CREATE_TAB", paneId: "p", kind: "terminal", title: "Novo terminal" });
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("button", { name: "Nova tab" }));
+  await userEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: /Novo agente/ }));
+  expect(dispatch).toHaveBeenCalledWith({ type: "CREATE_TAB", paneId: "p", kind: "agent", title: "Novo agente" });
+});
+
 describe("arraste de arquivos entre painéis", () => {
   beforeEach(() => {
     vi.stubGlobal("PointerEvent", MouseEvent);

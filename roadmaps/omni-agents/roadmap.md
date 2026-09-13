@@ -793,6 +793,228 @@ expõe variável sem prefixo `VITE_` ao bundle, então a cópia local não vaza 
 - [ ] **Conexão com o celular**: o motivo de a 0.3.1 sair como beta. Enquanto não funcionar, o
   aviso em `MobileSettings.tsx` e o `beta` da entrada no changelog têm de continuar lá.
 
+## "+" da barra de tabs escolhe agente ou terminal (2026-09-11)
+
+- [x] O "+" de `WorkspaceTabBar.tsx` criava sempre uma aba de agente. Agora abre um menu
+  (`NewTabMenu`, mesmo padrão de portal medido do `WorkspaceSwitcher` — a tablist é
+  `overflow-x-auto` e recortaria um popover absoluto) com duas opções:
+  **Novo agente** (seletor de CLI) e **Novo terminal** (shell do sistema, sem agente).
+  As opções vivem em `NEW_TAB_OPTIONS`, exportado e reusado na pane vazia de `PaneView.tsx`.
+- [x] `TerminalPane.tsx`: aba `kind: "terminal"` não passa mais pelo `AgentLauncher` — vai direto
+  pro `spawnTerminal` sem `initialCommand`/`provider`, que é o shell puro (Git Bash no Windows).
+  O nome da sessão passa a ser o título da aba quando não há agente.
+- [x] `workspaceReducer.ts` → `BIND_TAB_RESOURCE` forçava `kind: "agent"` em qualquer aba ligada a
+  uma sessão; isso devolvia o seletor de CLI numa aba de terminal puro. Agora preserva `terminal`.
+- Testes: `src/test/PaneView.test.tsx` (menu abre, cada item despacha o `kind` certo, fecha depois
+  do clique) e `src/test/App.test.tsx` (fluxo completo pelo menu).
+
+## Colar e Shift+Enter no terminal (2026-09-11)
+
+Três bugs distintos no mesmo caminho de entrada do terminal, todos com a mesma origem: a API de
+teclado do xterm.js não faz o que o nome sugere.
+
+- [x] **Ctrl+V colava duas vezes.** `attachCustomKeyEventHandler` devolvendo `false` só diz "xterm,
+  não processa essa tecla" — **não** cancela o evento. A ação padrão do browser (o paste nativo)
+  seguia acontecendo e caía no textarea do xterm, ao mesmo tempo em que o handler lia o clipboard
+  e escrevia na PTY à mão. Agora só o paste nativo cola — e ele é o caminho certo, porque respeita
+  bracketed paste (sem isso, texto multi-linha vira N mensagens separadas numa CLI como o Claude
+  Code).
+- [x] **Shift+Enter enviava a mensagem em vez de quebrar linha.** Mesma armadilha, sinal trocado:
+  faltava o `preventDefault()`, então a quebra de linha nativa vazava pro xterm logo depois da
+  sequência e a CLI lia como "enviar". Junto disso, a sequência estava errada: `ESC[13;2u` (CSI-u/fixterms) só
+  vale se a CLI ligar o protocolo kitty, e o Ink não liga. O que o Ink lê é `ESC CR` (meta+Enter),
+  a mesma sequência que o `/terminal-setup` do Claude Code instala no VS Code e no iTerm2.
+- [x] **Colar arquivo/imagem morria com `os error 3`.** `writeBinaryFile()` em
+  `src/features/files/filesService.ts` não criava a pasta destino, e `.omni-agents/pasted/` só
+  nasce na primeira colagem. Corrigido com `mkdir(dirName(path), { recursive: true })` dentro da
+  própria função — o outro caller (`FileTree.tsx`) cola em pasta existente, mas a guarda no lugar
+  compartilhado cobre os dois.
+- [x] **Ctrl+V de imagem agora entrega pra CLI, não salva arquivo.** Em aba de agente, quem sabe
+  lidar com imagem é a própria CLI — ela lê o clipboard do sistema e anexa como `[Image #N]`.
+  O handler só encaminha a tecla (`CLI_IMAGE_PASTE = "v"`, a mesma sequência ESC v que o
+  Alt+V já mandava e que funcionava). Salvar em `.omni-agents/pasted/` e digitar o caminho ficou
+  só pro terminal puro, onde não há ninguém pra ler o clipboard. Se alguma CLI passar a escutar
+  `^V` (0x16), é a constante no topo de `TerminalPane.tsx` que muda.
+- [x] Junto: o nome do arquivo colado é digitado cru na PTY, sem aspas. Nome com espaço e vírgula
+  (`ChatGPT Image 4 de set. de 2026, 14_55_22.webp`) fazia a CLI ler só o primeiro pedaço.
+  `TerminalPane.tsx` agora troca tudo fora de `[\w.-]` por `-` na geração do nome.
+- O handler de teclas saiu de dentro do `useEffect` e virou `src/features/terminal/keyBindings.ts`
+  (função pura `handleTerminalKey`), com a armadilha documentada no topo do arquivo. Isso existe
+  porque a lógica já regrediu duas vezes e não havia teste nenhum: o mock do xterm em
+  `src/test/setup.ts` descarta o handler, então não dava pra testar sem extrair.
+- Testes: `src/test/keyBindings.test.ts` (Ctrl+V **não** pode cancelar o evento; Shift+Enter
+  **tem** que cancelar e mandar `ESC CR`; Ctrl+C só copia com seleção) e um caso novo em
+  `src/test/filesService.test.ts` pro mkdir da pasta destino.
+
+## Commit e push num botão só (2026-09-11)
+
+- [x] `git_push` novo em `src-tauri/src/git_client.rs` (registrado em `lib.rs`). Branch nova não
+  tem upstream e aí `git push` puro falha mandando configurar — em vez de ler o texto do stderr
+  (frágil, muda com idioma/versão, mesma razão do comentário em `git_status`), o comando pergunta
+  por `@{u}`: se não existe, publica com `push --set-upstream origin <branch>`.
+- [x] `gitPush()` em `src/features/git/gitService.ts` e o botão **Commit e push** ao lado do
+  **Commit** em `src/components/GitPanel.tsx`. O push roda depois do commit, no mesmo `try`: se
+  falhar (sem rede, sem remoto, rejeitado), o commit já está feito e o erro aparece — nada é
+  desfeito nem escondido.
+- [x] Bug encontrado ao escrever o teste: `refresh()` limpava o erro dentro do `.then`, o que
+  apagava a mensagem do push logo depois de exibida (o commit tinha dado certo, o status
+  recarregava, e o erro sumia). Agora a limpeza é síncrona no início do `refresh()` e o `catch`
+  chama `refresh()` **antes** do `setError`.
+- [x] `run_git()` engolia o motivo da falha: reportava stderr e, se ele viesse vazio, devolvia
+  "git falhou sem mensagem de erro". Vários comandos (`commit` sem nada staged, hooks, o próprio
+  `push`) escrevem a explicação no **stdout** e deixam só o código no status. Agora o stdout é o
+  fallback, e quando os dois vêm vazios a mensagem nomeia o comando e o código de saída.
+- [x] `GIT_TERMINAL_PROMPT=0` em todo `git` disparado pelo app: sem console, um pedido de
+  usuário/senha no terminal penduraria o processo pra sempre e o botão travaria em "ocupado".
+  Agora falha na hora com mensagem. Não afeta o Git Credential Manager, que é GUI.
+- [x] `git_push` recusa HEAD destacado com mensagem própria em vez de tentar `push -u origin HEAD`.
+- Testes: `src/test/GitPanel.test.tsx` (Commit não empurra; Commit e push comita antes de
+  empurrar; push que falha deixa o erro visível).
+
+## Attention Center entre workspaces + lista de workspaces na sidebar (2026-09-12)
+
+Com vários workspaces abertos não dava pra saber que um agente de outro workspace terminou, pediu
+aprovação ou quebrou — `App.tsx` só entregava à sidebar as sessões do projeto ativo.
+
+- [x] **Seção ATENÇÃO** (`src/components/AttentionPanel.tsx`), primeiro filho do `<nav>` da
+  sidebar: lista os agentes pendentes de **todos** os workspaces, com
+  `workspace · projeto · motivo`, ordenados por prioridade (spec §11.3). Fica fora de
+  `SidebarSection` de propósito — aquelas seções são desabilitadas sem projeto ativo, e o aviso
+  precisa aparecer justamente quando você não está no workspace do agente.
+- [x] **Lista de workspaces sempre visível** (`src/components/WorkspaceList.tsx`), substituindo o
+  dropdown `WorkspaceSwitcher.tsx` (**apagado**). O dropdown escondia tanto a natureza da coisa
+  ("Workspace 1" parecia rótulo, não seletor) quanto o badge de pendência. Sem portal: a máquina de
+  `createPortal` + medição existia só porque aquilo era popover dentro da `<aside>.glass`.
+- [x] **`useAttention`** (`src/features/terminal/useAttention.ts`): mapa de "já visto" em `useRef`,
+  gravado **durante o render** (num efeito, o badge piscaria ~1s no agente que o usuário está
+  olhando). Respeita `maximizedPaneId` (só a pane maximizada é renderizada) e as Configurações
+  abertas (nenhuma pane na tela ⇒ nada é marcado como visto).
+- [x] **`FOCUS_SESSION`** (`workspacesReducer.ts`): ação de nível de coleção, **antes** do
+  roteamento por workspace ativo. Corrige um bug real de antes: o Ctrl+Tab ("próxima atenção")
+  despachava `SELECT_PROJECT` pra um projeto de outro workspace — no-op — e o `ATTACH_TERMINAL`
+  seguinte grudava a sessão **no projeto errado**. `useWorkspaceKeymap` agora recebe os itens de
+  atenção no lugar das sessões (troca de prop, não adição: `WorkspaceView` era o único consumidor).
+- [x] **Limite de uso e erro de API** (`crates/omni-protocol/src/lib.rs`,
+  `crates/omni-engine/src/main.rs`): campo `notice: Option<String>` (`"usage_limit"` /
+  `"api_error"`), **não** uma variante nova de `SessionState`. Três motivos: `append_output`
+  reescreve `state` a cada chunk (a variante seria apagada pelo byte seguinte); `DEAD_STATES` do
+  Kanban e `STATES` do `MobileApp.tsx` são `Set.has`/`Record<string,string>`, então a falha seria
+  **silenciosa**; e o motivo da parada é metadado ortogonal ao estado.
+
+### Por que a detecção lê a TELA e não o chunk
+
+`detect_notice` recebe `interaction.parser.screen().contents()`. Três ganhos sobre varrer o chunk
+(como `looks_like_approval_prompt` ainda faz): **limpa sozinho** quando a mensagem sai de vista —
+zero código de limpeza em `write_terminal`/`stop_session`; **imune a fronteira de chunk** — uma
+leitura de 8 KB pode partir a frase no meio (bug latente que a varredura de aprovação tem hoje); e
+**sem escapes ANSI** no meio do texto, então `"api error:"` casa de verdade. A única limpeza
+explícita que sobrou é em `restart_session` — um restart sem nenhuma saída nova nunca chamaria
+`append_output` e deixaria o aviso velho colado.
+
+Verificado: `npm run typecheck` limpo, `npm run test` 144/144, `cargo test -p omni-engine` 15/15,
+`cargo check --manifest-path src-tauri/Cargo.toml` limpo, `npm run build:engine` refeito depois dos
+testes (ver armadilha do binário vizinho no fim deste arquivo). **Falta a validação visual no app
+instalado** — o fluxo de dois workspaces com agentes reais não foi exercido.
+
+## Notificação do Windows quando agente pede atenção (2026-09-12)
+
+Complemento da seção ATENÇÃO: aquilo só avisa com o app aberto na frente. Agora avisa fora dele.
+
+- [x] **`tauri-plugin-notification`** adicionado (`src-tauri/Cargo.toml`, registrado em `lib.rs`,
+  permissão `notification:default` em `capabilities/default.json`). É a única forma de toast do SO —
+  não dava pra resolver com o que já existia.
+- [x] **`useAttentionNotifier`** (`src/features/terminal/useAttentionNotifier.ts`): dois mecanismos
+  de propósito — o **toast** conta o que aconteceu e some; o **piscar na barra de tarefas**
+  (`requestUserAttention`, API core do Tauri, sem dependência nova) fica até você olhar.
+- [x] Só dispara com a janela **sem foco** (`isFocused()`): com o app na frente, a seção ATENÇÃO já
+  mostra tudo e o toast vira barulho. Chave = `sessionId:reason`, então o mesmo motivo não repete,
+  mas "terminou" → "aprovação pendente" na mesma sessão notifica de novo. Aviso que sumiu é
+  removido do set e pode notificar outra vez depois.
+- [x] Acima de 3 agentes de uma vez, vira um aviso-resumo — dez toasts empilhados no Windows são
+  dez cliques pra limpar.
+- [x] Preferência `notifyAttention` (`src/types/settings.ts`, Configurações → **Avisos**), ligada
+  por padrão; `loadSettings` faz spread sobre os defaults, então quem já tem o app instalado
+  recebe ligada sem migração. Cobre a spec §21.4 no mínimo viável (liga/desliga global — ainda não
+  tem por evento, por projeto nem por agente).
+
+### O toast só vale no app instalado
+
+`tauri dev` não tem AppUserModelID registrado, então no desenvolvimento o toast pode não aparecer
+(ou aparecer com identidade errada). O piscar da barra funciona nos dois. Testar isso exige o
+instalador NSIS, não o `dev` — mesma classe de armadilha do CSP documentada acima.
+
+Verificado: `npm run typecheck` limpo, `npm run test` 148/148 (4 testes novos do notifier, com o
+plugin e a janela mockados), `cargo check --manifest-path src-tauri/Cargo.toml` limpo. **Não
+validado no Windows de verdade** — falta rodar o app instalado e confirmar o toast.
+
+## Gemini removido (2026-09-12)
+
+O Google desligou o Gemini CLI para contas individuais (Google AI Pro, Ultra e free) em
+**18/06/2026** e migrou para o Antigravity CLI. Continuam funcionando só licença Gemini Code
+Assist (enterprise) e API key — ou seja, o login por conta, que é o que o OMNI oferecia, deixou
+de existir. Provider removido por inteiro.
+
+- [x] `src-tauri/src/engine_client.rs`: fora de `AGENT_CLIS` (array 4 → 3).
+- [x] `src-tauri/src/profiles.rs`: fora de `credential_rule` e `native_config_dir`. A lista de
+  providers virou a const `SUPPORTED_PROVIDERS`, e `with_defaults()` agora **descarta** profiles
+  de provider não suportado — senão o `profiles.json` de quem já usava o app guardaria um
+  `gemini-padrao` órfão pra sempre.
+- [x] Front: `AgentCliId` (`terminalService.ts`), `DESCRIPTIONS` (`AgentConnections.tsx`),
+  fallback do `AgentLauncher.tsx`, dica do "+" em `WorkspaceTabBar.tsx`.
+- [x] `spec.md` e o comentário em `conversations.rs` atualizados.
+- Teste `AgentConnections.test.tsx` usava o gemini como exemplo de provider **sem** isolamento de
+  config dir. Sobrou só o cursor nesse papel, então o caso foi remontado: cursor = instalado sem
+  login (botão "Entrar"), codex = ausente (o "+ Conta" desabilitado, escopado na linha dele porque
+  o claude também tem um).
+
+## "os error 10048" no terminal: o app esgotava as portas do Windows (2026-09-13)
+
+Sintoma relatado: depois de horas com o app aberto **sem mexer**, os panes enchiam de
+`Normalmente e permitida apenas uma utilizacao de cada endereco de soquete (os error 10048)`;
+trocar de projeto e voltar limpava, porque o remount do `TerminalPane` zerava o estado de erro.
+
+**Causa raiz:** `send_request` (`src-tauri/src/engine_client.rs`) abria um `TcpStream` novo por
+requisicao e o descartava. Cada pane pede snapshot a cada 100ms e a lista de sessoes vai a cada 1s
+-> ~30 conexoes/s com tres panes, cada uma parada 120s em `TIME_WAIT`. A faixa dinamica do Windows
+tem 16384 portas (`netsh int ipv4 show dynamicport tcp`); medido na maquina do usuario no momento
+do erro: **5116 sockets em TIME_WAIT** so contra a porta 47321. Esgotada a faixa, todo `connect`
+falha com `WSAEADDRINUSE`. O engine nunca teve culpa — `serve_client` sempre leu varias linhas na
+mesma conexao; era o cliente que jogava o socket fora.
+
+- [x] `IDLE_CONNECTION` (`Mutex<Option<BufReader<TcpStream>>>`) guarda a conexao entre requisicoes.
+- [x] Reenvio seguro: `ExchangeError.unsent` separa "falhou antes de escrever a linha" (o engine so
+  age com a linha completa, entao reenviar e seguro) de "ja enviei e o timeout estourou" (a operacao
+  pode ter rodado). Requisicao que nao e `read_only()` nunca e reenviada — repetir `SpawnTerminal`
+  abriria sessao duplicada e `WriteTerminal` digitaria duas vezes dentro do agente.
+- [x] `EngineRequest::read_only()` (`crates/omni-protocol`): so `Ping`, `ListSessions` e `Snapshot`.
+  **`AccountUsage` ficou de fora de proposito** — com `refresh` ele digita `/usage` na PTY, e
+  escrita disfarcada de leitura.
+- [x] Depois de qualquer erro a conexao e descartada em vez de devolvida ao cache: uma resposta
+  atrasada viraria a resposta da requisicao seguinte (dessincronizacao silenciosa, o pior tipo).
+- [x] Teste `sequential_requests_share_one_connection`: servidor de mentira conta quantas conexoes
+  aceitou; tres requisicoes tem que caber em uma.
+
+### O banner grudava por falha passageira (mesmo relato)
+
+`TerminalPane.poll()` chamava `setError` na primeira falha e **nunca limpava** — so o remount
+(trocar de projeto e voltar) apagava. Agora: `FALHAS_ATE_AVISAR = 3` falhas seguidas antes de
+mostrar, `setError(null)` ao voltar a responder (atualizacao funcional, senao seriam 10 renders por
+segundo), e o intervalo do poll cai de 100ms pra 1s enquanto esta falhando — martelar um engine
+caido so gasta socket.
+
+### `OMNI_ENGINE_PORT`
+
+Cliente e engine agora leem essa variavel (`engine_client::engine_port` e o `bind` do `main.rs`).
+Existe porque **app instalado e app de dev na mesma maquina disputam a porta fixa**: o segundo a
+subir fala com o engine do primeiro. Foi exatamente o que aconteceu aqui — o engine de ontem
+(`AppData\Local\OMNI AGENTS\omni-engine.exe`) segurava a 47321, entao o app de dev rodava contra
+um engine sem o campo `notice`.
+
+Verificado: `npm run typecheck` limpo, `npm run test` 151/151 (2 testes novos do banner),
+`cargo test --manifest-path src-tauri/Cargo.toml` 9/9, `cargo test -p omni-engine` 15/15,
+`npm run build:engine` refeito. **Falta rodar o app por horas e conferir o `TIME_WAIT` parado** —
+a prova final e medir `netstat -ano | findstr :47321` depois de um dia aberto.
+
 ## Gotchas
 
 - **Bug real encontrado em 2026-08-27 (usuário travado com "tela preta")**: no caso sem split

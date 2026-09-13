@@ -8,6 +8,7 @@ import { CHANGELOG } from "../lib/changelog";
 import { Button, Field, Input, SegmentedControl, Slider } from "./ui";
 import { AgentConnections } from "../features/terminal/AgentConnections";
 import { MobileSettings } from "../features/mobile/MobileSettings";
+import { testarAviso } from "../features/terminal/useAttentionNotifier";
 
 type SectionId = "aparencia" | "agentes" | "mobile" | "sobre";
 
@@ -247,6 +248,20 @@ function AparenciaSection({ settings, onChange }: SectionProps) {
         />
       </Card>
 
+      <Card title="Avisos">
+        <Segmented
+          label="Agente pedindo atenção"
+          description="Notificação do Windows e piscada na barra de tarefas quando um agente termina, pede aprovação ou trava — só com o OMNI fora de foco. A seção ATENÇÃO na barra lateral funciona de qualquer jeito."
+          options={[
+            { value: "sim", label: "Notificar" },
+            { value: "nao", label: "Só na barra lateral" },
+          ]}
+          value={settings.notifyAttention ? "sim" : "nao"}
+          onChange={(v) => onChange({ notifyAttention: v === "sim" })}
+        />
+        <TesteDeAviso />
+      </Card>
+
       <Card title="Movimento">
         <Segmented
           label="Animações"
@@ -257,6 +272,44 @@ function AparenciaSection({ settings, onChange }: SectionProps) {
         />
       </Card>
     </>
+  );
+}
+
+/** Manda um aviso de mentira e diz o que deu errado. O toast do Windows falha em silêncio por
+ *  várias razões diferentes (permissão, plugin, "não perturbe"), e sem isto não há como separá-las. */
+function TesteDeAviso() {
+  const [resultado, setResultado] = useState<{ ok: boolean; texto: string } | null>(null);
+  const [testando, setTestando] = useState(false);
+
+  async function testar() {
+    setTestando(true);
+    setResultado(null);
+    const erro = await testarAviso();
+    setResultado(
+      erro
+        ? { ok: false, texto: erro }
+        : { ok: true, texto: "Aviso enviado. Se nada apareceu, veja Windows → Configurações → Sistema → Notificações." }
+    );
+    setTestando(false);
+  }
+
+  return (
+    <div className="mt-3">
+      <Button size="sm" variant="ghost" loading={testando} onClick={() => void testar()}>
+        Testar aviso
+      </Button>
+      <p className="mt-2 text-[11px] text-text-muted">
+        O teste ignora a regra de foco — o aviso de verdade só aparece com o OMNI em segundo plano.
+      </p>
+      {resultado && (
+        <p
+          role="status"
+          className={`mt-2 border-l-2 pl-3 text-xs ${resultado.ok ? "border-success text-success" : "border-danger text-danger"}`}
+        >
+          {resultado.texto}
+        </p>
+      )}
+    </div>
   );
 }
 

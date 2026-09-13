@@ -6,6 +6,7 @@ use std::{
     net::{TcpStream, ToSocketAddrs},
     path::PathBuf,
     process::{Command, Stdio},
+    sync::Mutex,
     thread,
     time::Duration,
 };
@@ -96,10 +97,9 @@ pub fn spawn_terminal(
 
 /// Providers suportados: id, rótulo, candidatos de binário no PATH, args do comando de login.
 /// Fonte única — `agent_cli_statuses` e `connect_agent_cli` leem daqui.
-const AGENT_CLIS: [(&str, &str, &[&str], &[&str]); 4] = [
+const AGENT_CLIS: [(&str, &str, &[&str], &[&str]); 3] = [
     ("claude", "Claude", &["claude"], &[]),
     ("codex", "Codex", &["codex"], &["login"]),
-    ("gemini", "Gemini", &["gemini"], &[]),
     ("cursor", "Cursor", &["cursor-agent", "agent"], &["login"]),
 ];
 
@@ -317,20 +317,92 @@ pub(crate) fn authenticated_request(build: impl FnOnce(String) -> EngineRequest)
     send_request(build(token.trim().to_owned()))
 }
 
-fn send_request(request: EngineRequest) -> Result<EngineResponse, String> {
-    let address = ("127.0.0.1", DEFAULT_ENGINE_PORT)
+/// Porta do engine. `OMNI_ENGINE_PORT` existe para subir uma instância paralela — app instalado e
+/// app de dev na mesma máquina brigam pela porta fixa, e o segundo a subir acaba falando com o
+/// engine do primeiro (versão velha, sem os campos novos do protocolo).
+pub(crate) fn engine_port() -> u16 {
+    env::var("OMNI_ENGINE_PORT").ok().and_then(|value| value.parse().ok()).unwrap_or(DEFAULT_ENGINE_PORT)
+}
+
+/// Conexão ociosa guardada entre requisições.
+///
+/// **Sem isto o app esgota as portas efêmeras do Windows.** Cada pane pede um snapshot a cada
+/// 100ms e a lista de sessões vai a cada 1s; abrindo um socket novo por requisição, três panes
+/// geram ~30 conexões/s que ficam 120s em `TIME_WAIT`. Com 16384 portas dinâmicas, algumas horas
+/// de app aberto — mesmo parado, sem ninguém mexer — esgotam a faixa e todo `connect` passa a
+/// falhar com `WSAEADDRINUSE` (os error 10048), que chegava na tela como "erro no terminal" sem
+/// nenhuma relação visível com a causa. O engine sempre soube atender várias requisições na mesma
+/// conexão (`serve_client` lê linha a linha em laço); era o cliente que jogava o socket fora.
+static IDLE_CONNECTION: Mutex<Option<BufReader<TcpStream>>> = Mutex::new(None);
+
+struct ExchangeError {
+    message: String,
+    /// A requisição com certeza não chegou a ser executada (falha ao conectar ou ao escrever — o
+    /// engine só age depois de receber a linha inteira). Só nesse caso reenviar é seguro.
+    unsent: bool,
+}
+
+fn connect() -> Result<BufReader<TcpStream>, String> {
+    let address = ("127.0.0.1", engine_port())
         .to_socket_addrs()
         .map_err(|error| error.to_string())?
         .next()
         .ok_or_else(|| "engine address unavailable".to_string())?;
-    let mut stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).map_err(|error| error.to_string())?;
-    let timeout = if matches!(&request, EngineRequest::AccountUsage { .. } | EngineRequest::MobileSettings { .. }) { 15 } else { 2 };
-    stream.set_read_timeout(Some(Duration::from_secs(timeout))).map_err(|error| error.to_string())?;
-    serde_json::to_writer(&mut stream, &request).map_err(|error| error.to_string())?;
-    stream.write_all(b"\n").map_err(|error| error.to_string())?;
+    let stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).map_err(|error| error.to_string())?;
+    // Requisições são pequenas e sequenciais: esperar o buffer de Nagle só adiciona latência.
+    let _ = stream.set_nodelay(true);
+    Ok(BufReader::new(stream))
+}
+
+fn exchange(
+    connection: &mut BufReader<TcpStream>,
+    request: &EngineRequest,
+    timeout: Duration,
+) -> Result<EngineResponse, ExchangeError> {
+    let unsent = |error: String| ExchangeError { message: error, unsent: true };
+    let sent = |error: String| ExchangeError { message: error, unsent: false };
+
+    let stream = connection.get_mut();
+    stream.set_read_timeout(Some(timeout)).map_err(|error| unsent(error.to_string()))?;
+    serde_json::to_writer(&mut *stream, request).map_err(|error| unsent(error.to_string()))?;
+    stream.write_all(b"\n").map_err(|error| unsent(error.to_string()))?;
+    stream.flush().map_err(|error| unsent(error.to_string()))?;
+
+    // Daqui pra baixo a requisição já saiu: um timeout pode ser só lentidão do engine, com a
+    // operação já feita do outro lado. Reenviar às cegas duplicaria o efeito.
     let mut response = String::new();
-    BufReader::new(stream).read_line(&mut response).map_err(|error| error.to_string())?;
-    serde_json::from_str(&response).map_err(|error| error.to_string())
+    let bytes = connection.read_line(&mut response).map_err(|error| sent(error.to_string()))?;
+    if bytes == 0 {
+        return Err(sent("o engine fechou a conexão".into()));
+    }
+    serde_json::from_str(&response).map_err(|error| sent(error.to_string()))
+}
+
+fn send_request(request: EngineRequest) -> Result<EngineResponse, String> {
+    let timeout = Duration::from_secs(
+        if matches!(&request, EngineRequest::AccountUsage { .. } | EngineRequest::MobileSettings { .. }) { 15 } else { 2 },
+    );
+    let mut guard = IDLE_CONNECTION.lock().map_err(|_| "engine connection poisoned".to_string())?;
+
+    // `take()`: a conexão só volta pro cache quando a troca termina bem. Depois de um erro ela pode
+    // estar dessincronizada — uma resposta atrasada viraria a resposta da requisição seguinte.
+    if let Some(mut connection) = guard.take() {
+        match exchange(&mut connection, &request, timeout) {
+            Ok(response) => {
+                *guard = Some(connection);
+                return Ok(response);
+            }
+            // Conexão reaproveitada que morreu parada: reenvia só o que comprovadamente não chegou
+            // a ser executado, ou o que é seguro repetir (ping, listagem, snapshot).
+            Err(error) if !error.unsent && !request.read_only() => return Err(error.message),
+            Err(_) => {}
+        }
+    }
+
+    let mut connection = connect()?;
+    let response = exchange(&mut connection, &request, timeout).map_err(|error| error.message)?;
+    *guard = Some(connection);
+    Ok(response)
 }
 
 fn spawn_engine() -> Result<(), String> {
@@ -386,6 +458,56 @@ pub(crate) fn engine_dir() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Prova que o cliente reaproveita a conexão: um servidor de mentira conta quantas vezes
+    /// aceitou. Sem o cache, cada requisição abriria um socket novo — que é o que esgotava as
+    /// portas efêmeras do Windows e fazia o terminal mostrar "os error 10048" depois de horas.
+    #[test]
+    fn sequential_requests_share_one_connection() {
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("porta livre");
+        let port = listener.local_addr().expect("endereço").port();
+        let aceitas = Arc::new(AtomicUsize::new(0));
+        let contador = aceitas.clone();
+
+        let servidor = thread::spawn(move || {
+            for stream in listener.incoming().take(1) {
+                let stream = stream.expect("conexão");
+                contador.fetch_add(1, Ordering::SeqCst);
+                let leitor = BufReader::new(stream.try_clone().expect("clone"));
+                let mut escritor = stream;
+                // Uma resposta por linha recebida — igual ao `serve_client` do engine.
+                for linha in leitor.lines() {
+                    if linha.is_err() {
+                        break;
+                    }
+                    let resposta = serde_json::to_vec(&EngineResponse::Ok).expect("json");
+                    if escritor.write_all(&resposta).is_err() || escritor.write_all(b"\n").is_err() {
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Isola o teste do engine de verdade que possa estar rodando na porta padrão.
+        env::set_var("OMNI_ENGINE_PORT", port.to_string());
+        *IDLE_CONNECTION.lock().expect("cache") = None;
+
+        for _ in 0..3 {
+            let resposta = send_request(EngineRequest::Ping { token: "t".into() }).expect("requisição");
+            assert!(matches!(resposta, EngineResponse::Ok));
+        }
+
+        // Solta a conexão pro servidor de mentira encerrar e o teste não ficar preso.
+        *IDLE_CONNECTION.lock().expect("cache") = None;
+        env::remove_var("OMNI_ENGINE_PORT");
+        servidor.join().expect("servidor encerra");
+
+        assert_eq!(aceitas.load(Ordering::SeqCst), 1, "três requisições têm que caber numa conexão só");
+    }
 
     #[test]
     fn resolve_on_path_finds_a_binary_that_exists_and_rejects_one_that_does_not() {

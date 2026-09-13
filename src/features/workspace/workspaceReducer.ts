@@ -260,7 +260,14 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
                 ...node,
                 tabs: node.tabs.map((tab) =>
                   tab.id === action.tabId
-                    ? { ...tab, kind: "agent", resourceId: action.resourceId, title: action.title ?? tab.title }
+                    // Uma aba de terminal puro continua terminal: forçar "agent" aqui devolvia
+                    // o seletor de CLI na próxima montagem da pane.
+                    ? {
+                        ...tab,
+                        kind: tab.kind === "terminal" ? "terminal" : "agent",
+                        resourceId: action.resourceId,
+                        title: action.title ?? tab.title,
+                      }
                     : tab
                 ),
               }

@@ -28,7 +28,9 @@ import type { SettingsSection } from "../hooks/useNotifications";
 import type { KanbanState } from "../types/kanban";
 import type { Project, WorkspaceState } from "../types/workspace";
 import type { TerminalSession } from "../features/terminal/terminalService";
-import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import type { AttentionItem } from "../features/terminal/useAttention";
+import { WorkspaceList } from "./WorkspaceList";
+import { AttentionPanel } from "./AttentionPanel";
 import { FileTree } from "./FileTree";
 import { GitPanel } from "./GitPanel";
 import { KanbanPanel } from "./KanbanPanel";
@@ -60,6 +62,9 @@ interface SidebarProps {
   onCreateWorkspace: () => void;
   onCloseWorkspace: (workspaceId: string) => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
+  attention: AttentionItem[];
+  attentionByWorkspace: Record<string, number>;
+  onFocusSession: (item: AttentionItem) => void;
   projects: Project[];
   activeProjectId: string | null;
   activeProjectPath: string | null;
@@ -90,6 +95,9 @@ export function Sidebar({
   onCreateWorkspace,
   onCloseWorkspace,
   onRenameWorkspace,
+  attention,
+  attentionByWorkspace,
+  onFocusSession,
   projects,
   activeProjectId,
   activeProjectPath,
@@ -142,19 +150,20 @@ export function Sidebar({
         <NotificationBell onOpenSettings={onOpenSettings} />
       </div>
 
-      <div className="px-4 py-2 border-b border-border-subtle/60">
-        <WorkspaceSwitcher
+      {/* Nav */}
+      <nav ref={navRef} className="px-2 py-3 flex-1 min-h-0 overflow-y-auto space-y-3">
+        <AttentionPanel items={attention} onFocusSession={onFocusSession} />
+
+        <WorkspaceList
           workspaces={workspaces}
           activeWorkspaceId={activeWorkspaceId}
+          attentionByWorkspace={attentionByWorkspace}
           onSelect={onSelectWorkspace}
           onCreate={onCreateWorkspace}
           onClose={onCloseWorkspace}
           onRename={onRenameWorkspace}
         />
-      </div>
 
-      {/* Nav */}
-      <nav ref={navRef} className="px-2 py-3 flex-1 min-h-0 overflow-y-auto space-y-3">
         <div className="space-y-0.5">
           <div className="flex items-center justify-between px-3 pt-1">
             <p className="text-text-muted text-[10px] font-medium uppercase tracking-wider">Projects</p>

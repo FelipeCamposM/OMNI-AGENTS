@@ -31,6 +31,12 @@ pub struct TerminalSession {
     pub cols: u16,
     #[serde(default)]
     pub input_locked: bool,
+    /// Por que a sessão parou, quando o motivo não cabe no `state`: `"usage_limit"` ou
+    /// `"api_error"`. Campo à parte e não variante de `SessionState` de propósito — `state` é
+    /// reescrito a cada chunk em `append_output`, então um estado novo seria apagado pelo byte
+    /// seguinte de saída.
+    #[serde(default)]
+    pub notice: Option<String>,
     #[serde(default)]
     pub initial_command: Option<String>,
     /// Variáveis de ambiente injetadas no shell da PTY. É por aqui que o isolamento de conta
@@ -111,6 +117,16 @@ pub enum EngineRequest {
 }
 
 impl EngineRequest {
+    /// Requisição que só lê estado — repetir é inofensivo. Usado pelo cliente para decidir se pode
+    /// reenviar depois de perder uma conexão reaproveitada; repetir um `SpawnTerminal` abriria uma
+    /// segunda sessão, e um `WriteTerminal` digitaria duas vezes dentro do agente.
+    ///
+    /// `AccountUsage` fica **de fora** de propósito: com `refresh` ele digita `/usage` na PTY do
+    /// agente, então é escrita disfarçada de leitura.
+    pub fn read_only(&self) -> bool {
+        matches!(self, Self::Ping { .. } | Self::ListSessions { .. } | Self::Snapshot { .. })
+    }
+
     pub fn token(&self) -> &str {
         match self {
             Self::AccountUsage { token, .. } | Self::MobileSettings { token, .. } => token,

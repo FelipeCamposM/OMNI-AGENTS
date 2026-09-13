@@ -15,7 +15,7 @@ import { closeTerminal } from "../terminal/terminalService";
 import { PANE_DRAG_TYPE, TAB_DRAG_TYPE } from "./tabDrag";
 import { FILE_TAB_DRAG_EVENT } from "./fileTabDrag";
 import { TabDropOverlay } from "./TabDropOverlay";
-import { WorkspaceTabBar } from "./WorkspaceTabBar";
+import { NEW_TAB_OPTIONS, WorkspaceTabBar } from "./WorkspaceTabBar";
 
 interface PaneViewProps {
   pane: PaneNode;
@@ -144,10 +144,17 @@ export function PaneView({
       <div className="flex-1 min-h-0">
         <PaneErrorBoundary key={tab?.id ?? pane.id}>
         {!tab ? (
-          <div className="h-full flex items-center justify-center">
-            <Button onClick={() => dispatch({ type: "CREATE_TAB", paneId: pane.id, kind: "agent", title: "Novo agente" })}>
-              Novo agente
-            </Button>
+          <div className="h-full flex items-center justify-center gap-2">
+            {NEW_TAB_OPTIONS.map((option) => (
+              <Button
+                key={option.kind}
+                variant={option.kind === "agent" ? "primary" : "ghost"}
+                title={option.hint}
+                onClick={() => dispatch({ type: "CREATE_TAB", paneId: pane.id, kind: option.kind, title: option.title })}
+              >
+                {option.title}
+              </Button>
+            ))}
           </div>
         ) : tab.kind === "terminal" || tab.kind === "agent" ? (
           <TerminalPane

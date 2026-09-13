@@ -60,6 +60,11 @@ export async function gitCommit(projectPath: string, message: string): Promise<v
   await invoke("git_commit", { projectPath, message });
 }
 
+/** Faz `push` na branch atual; se ela ainda não tem upstream, publica com `-u origin`. */
+export async function gitPush(projectPath: string): Promise<void> {
+  await invoke("git_push", { projectPath });
+}
+
 export async function gitBranches(projectPath: string): Promise<GitBranch[]> {
   const result = await invoke<GitBranch[]>("git_branches", { projectPath });
   return Array.isArray(result) ? result : [];

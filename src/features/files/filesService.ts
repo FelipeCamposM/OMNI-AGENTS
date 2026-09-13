@@ -163,5 +163,9 @@ export async function copyIntoProject(
  * tem o conteúdo (via Clipboard API), não o caminho original de disco. */
 export async function writeBinaryFile(projectRoot: string, absolutePath: string, data: Uint8Array): Promise<void> {
   assertWithinRoot(absolutePath, projectRoot);
+  // O plugin não cria a pasta sozinho — sem isto, colar no terminal morria com "os error 3"
+  // (`.omni-agents/pasted/` só nasce na primeira colagem). `recursive` também torna o mkdir
+  // idempotente, então não precisa checar se já existe.
+  await mkdir(dirName(absolutePath), { recursive: true });
   await pluginWriteFile(absolutePath, data);
 }

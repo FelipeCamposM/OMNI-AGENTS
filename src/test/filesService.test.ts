@@ -139,6 +139,15 @@ describe("colar (Ctrl+V) conteúdo de arquivo", () => {
     expect(mockWriteFile).toHaveBeenCalledWith("C:\\dev\\projeto\\colado.bin", data);
   });
 
+  it("cria a pasta destino antes de escrever (senão dá os error 3 na primeira colagem)", async () => {
+    await writeBinaryFile(
+      "C:\\dev\\projeto",
+      "C:\\dev\\projeto\\.omni-agents\\pasted\\imagem.webp",
+      new Uint8Array([1])
+    );
+    expect(mockMkdir).toHaveBeenCalledWith("C:\\dev\\projeto\\.omni-agents\\pasted", { recursive: true });
+  });
+
   it("rejeita colar fora da raiz do projeto", async () => {
     await expect(writeBinaryFile("C:\\dev\\projeto", "C:\\outro\\colado.bin", new Uint8Array())).rejects.toThrow();
     expect(mockWriteFile).not.toHaveBeenCalled();

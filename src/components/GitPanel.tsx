@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   gitCommit,
+  gitPush,
   gitStage,
   gitStatus,
   gitUnstage,
@@ -28,11 +29,12 @@ export function GitPanel({ projectPath, onOpenDiff, onOpenGraph }: GitPanelProps
   const refresh = useCallback(() => {
     if (!projectPath) return;
     setStatus(undefined);
+    // Limpa o erro aqui, síncrono, e não no `.then`: quem chama `refresh()` e logo depois reporta
+    // uma falha própria (o push que quebrou depois de um commit que deu certo) teria a mensagem
+    // apagada quando o status voltasse.
+    setError(null);
     gitStatus(projectPath)
-      .then((next) => {
-        setStatus(next);
-        setError(null);
-      })
+      .then(setStatus)
       .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   }, [projectPath]);
 
@@ -56,14 +58,20 @@ export function GitPanel({ projectPath, onOpenDiff, onOpenGraph }: GitPanelProps
     }
   }
 
-  async function commit() {
+  /** `push` roda depois do commit e no mesmo try: se o push falhar (sem rede, sem remoto,
+   *  rejeitado), o commit já está feito e o erro aparece — nada é desfeito. */
+  async function commit(push: boolean) {
     if (!projectPath || !message.trim()) return;
     setBusy(true);
     try {
       await gitCommit(projectPath, message.trim());
       setMessage("");
+      if (push) await gitPush(projectPath);
       refresh();
     } catch (reason) {
+      // `refresh()` antes do `setError`: ele limpa o erro de forma síncrona, então reportar
+      // depois é o que faz a mensagem sobreviver ao recarregamento do status.
+      refresh();
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setBusy(false);
@@ -129,14 +137,25 @@ export function GitPanel({ projectPath, onOpenDiff, onOpenGraph }: GitPanelProps
             rows={2}
             className="w-full resize-none border border-border-subtle bg-bg-elevated px-2 py-1 text-xs text-text-primary outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           />
-          <button
-            type="button"
-            disabled={busy || !message.trim()}
-            onClick={commit}
-            className="w-full border border-border-subtle bg-bg-elevated py-1 text-xs text-text-primary hover:bg-overlay/[0.07] disabled:opacity-40"
-          >
-            Commit
-          </button>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              disabled={busy || !message.trim()}
+              onClick={() => commit(false)}
+              className="flex-1 border border-border-subtle bg-bg-elevated py-1 text-xs text-text-primary hover:bg-overlay/[0.07] disabled:opacity-40"
+            >
+              Commit
+            </button>
+            <button
+              type="button"
+              disabled={busy || !message.trim()}
+              onClick={() => commit(true)}
+              title={`Commit e push${status.branch ? ` em ${status.branch}` : ""}`}
+              className="flex-1 border border-border-subtle bg-bg-elevated py-1 text-xs text-text-primary hover:bg-overlay/[0.07] disabled:opacity-40"
+            >
+              Commit e push
+            </button>
+          </div>
         </div>
       )}
     </div>

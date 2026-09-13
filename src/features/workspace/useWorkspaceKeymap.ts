@@ -1,10 +1,6 @@
 import { useEffect, useRef } from "react";
-import type { Project, WorkspaceAction } from "../../types/workspace";
-import type { TerminalSession } from "../terminal/terminalService";
-
-/** Ordem de prioridade do Attention Center (spec §11.3), reduzida aos 6 estados que o
- * engine hoje emite de fato. */
-const ATTENTION_PRIORITY: TerminalSession["state"][] = ["approval_required", "crashed", "answered"];
+import type { Project, WorkspacesAction } from "../../types/workspace";
+import type { AttentionItem } from "../terminal/useAttention";
 
 function isTerminalFocused(): boolean {
   return document.activeElement?.closest('[data-omni-context="terminal"]') != null;
@@ -19,13 +15,13 @@ function isReturnToAppShortcut(event: KeyboardEvent): boolean {
  * de navegação do app ficam ativos. Um único listener em `window`, sem Context API. */
 export function useWorkspaceKeymap(
   project: Project | null,
-  sessions: TerminalSession[],
-  dispatch: React.Dispatch<WorkspaceAction>
+  attention: AttentionItem[],
+  dispatch: React.Dispatch<WorkspacesAction>
 ) {
   const projectRef = useRef(project);
   projectRef.current = project;
-  const sessionsRef = useRef(sessions);
-  sessionsRef.current = sessions;
+  const attentionRef = useRef(attention);
+  attentionRef.current = attention;
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -55,7 +51,7 @@ export function useWorkspaceKeymap(
         dispatch({ type: "TOGGLE_MAXIMIZE", paneId: activeProject.activePaneId });
       } else if (event.ctrlKey && event.key === "Tab") {
         event.preventDefault();
-        goToNextAttention(activeProject, sessionsRef.current, dispatch);
+        goToNextAttention(attentionRef.current, dispatch);
       }
     }
 
@@ -64,21 +60,19 @@ export function useWorkspaceKeymap(
   }, [dispatch]);
 }
 
-function goToNextAttention(
-  activeProject: Project,
-  sessions: TerminalSession[],
-  dispatch: React.Dispatch<WorkspaceAction>
-) {
-  // ponytail: pula pro item de atenção de maior prioridade, não faz round-robin real
-  // entre vários pendentes. Adicionar um cursor "último visitado" se isso incomodar
-  // com múltiplas aprovações pendentes ao mesmo tempo.
-  const ranked = sessions
-    .filter((session) => ATTENTION_PRIORITY.includes(session.state))
-    .sort((a, b) => ATTENTION_PRIORITY.indexOf(a.state) - ATTENTION_PRIORITY.indexOf(b.state));
-  const next = ranked[0];
+function goToNextAttention(attention: AttentionItem[], dispatch: React.Dispatch<WorkspacesAction>) {
+  // ponytail: pula pro item de atenção de maior prioridade (a lista já vem ordenada por
+  // `useAttention`), não faz round-robin real entre vários pendentes. Adicionar um cursor
+  // "último visitado" se isso incomodar com várias aprovações pendentes ao mesmo tempo.
+  const next = attention[0];
   if (!next) return;
-  if (next.project_id !== activeProject.id) {
-    dispatch({ type: "SELECT_PROJECT", projectId: next.project_id });
-  }
-  dispatch({ type: "ATTACH_TERMINAL", sessionId: next.id, title: next.name });
+  // FOCUS_SESSION e não SELECT_PROJECT + ATTACH_TERMINAL: o projeto pode estar em outro
+  // workspace, e aí o SELECT_PROJECT era no-op e o ATTACH grudava a sessão no projeto errado.
+  dispatch({
+    type: "FOCUS_SESSION",
+    workspaceId: next.workspaceId,
+    projectId: next.projectId,
+    sessionId: next.sessionId,
+    title: next.sessionName,
+  });
 }

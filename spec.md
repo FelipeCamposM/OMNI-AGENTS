@@ -657,7 +657,8 @@ trait AgentProvider {
 ### P1 — arquitetura pronta, implementação posterior
 
 - OpenAI Codex CLI;
-- Gemini CLI;
+- ~~Gemini CLI~~ — removido: o Google descontinuou o login por conta individual em
+  18/06/2026 e migrou para o Antigravity CLI;
 - Cursor CLI;
 - Custom CLI Provider.
 
@@ -2123,7 +2124,6 @@ reattach
 ## P1 — pós-MVP imediato
 
 - Codex provider;
-- Gemini provider;
 - Custom CLI provider;
 - worktrees no UI;
 - editor leve;

@@ -22,8 +22,17 @@ import {
   type TerminalState,
   writeTerminal,
 } from "./terminalService";
+import { handleTerminalKey } from "./keyBindings";
 import { AgentLauncher } from "./AgentLauncher";
 import { AgentSwitcher } from "./AgentSwitcher";
+
+/** Colar imagem numa CLI de agente: ESC v (meta+v) — o que o Alt+V já mandava e funcionava.
+ *  Se alguma CLI passar a escutar ^V (0x16) em vez disso, é aqui que muda. */
+const CLI_IMAGE_PASTE = "\x1bv";
+
+/** Falhas seguidas do poll antes de mostrar o banner de erro. Com poll de 100ms, três falhas são
+ *  ~0,3s de engine mudo — abaixo disso é soluço, não queda, e o banner só atrapalha. */
+const FALHAS_ATE_AVISAR = 3;
 
 interface TerminalPaneProps {
   projectId: string;
@@ -37,6 +46,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   const hostRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef(tab.resourceId);
   const sequenceRef = useRef(0);
+  const falhasRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [state, setState] = useState<TerminalState>("stopped");
   const [retry, setRetry] = useState(0);
@@ -69,49 +79,18 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     terminal.open(host);
     fit.fit();
 
-    // xterm.js segue a convenção clássica de terminal Unix: Ctrl+V manda o byte de controle
-    // literal (^V) pro shell, só Shift+Insert/Ctrl+Shift+V colam. Esse app é Windows-first — aqui
-    // Ctrl+V sozinho também cola, sem tirar os atalhos antigos. Mesma lógica pro Ctrl+C: só copia
-    // quando há seleção (como todo terminal moderno) — sem seleção, continua sendo o SIGINT de
-    // sempre, não intercepta.
-    terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type !== "keydown") return true;
-
-      if (event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey) {
-        const key = event.key.toLowerCase();
-
-        if (key === "v") {
-          const sessionId = sessionRef.current;
-          if (sessionId) {
-            void navigator.clipboard
-              .readText()
-              .then((text) => { if (text) void writeTerminal(sessionId, text); })
-              .catch(() => undefined);
-          }
-          return false;
-        }
-
-        if (key === "c" && terminal.hasSelection()) {
+    terminal.attachCustomKeyEventHandler((event) =>
+      handleTerminalKey(event, {
+        hasSelection: () => terminal.hasSelection(),
+        copySelection: () => {
           void navigator.clipboard.writeText(terminal.getSelection()).catch(() => undefined);
-          return false;
-        }
-      }
-
-      // xterm.js real só olha `altKey` pro Enter (Alt+Enter manda ESC+CR) — Shift é ignorado
-      // completamente, então Shift+Enter saía idêntico a Enter puro (\r) e a CLI (Claude Code
-      // etc.) nunca via sinal nenhum de "quebra de linha sem enviar". A sequência que essas CLIs
-      // (Ink) reconhecem pra Shift+Enter é o protocolo CSI-u/"fixterms" — `ESC[13;2u`
-      // (13 = code do Enter, 2 = modificador Shift) — é o que VS Code/Kitty/iTerm2 mandam quando
-      // reconhecem esse protocolo; `ESC+CR` (primeira tentativa) é só o que Alt+Enter já manda por
-      // padrão, CLI nenhuma olha pra ele como "nova linha".
-      if (event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey && event.key === "Enter") {
-        const sessionId = sessionRef.current;
-        if (sessionId) void writeTerminal(sessionId, "\x1b[13;2u").catch(() => undefined);
-        return false;
-      }
-
-      return true;
-    });
+        },
+        write: (data) => {
+          const sessionId = sessionRef.current;
+          if (sessionId) void writeTerminal(sessionId, data).catch(() => undefined);
+        },
+      })
+    );
 
     async function start() {
       try {
@@ -144,7 +123,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
 
           const session = await spawnTerminal({
             projectId,
-            name: `${agent?.label ?? tab.title} · agent`,
+            name: agent ? `${agent.label} · agent` : tab.title,
             cwd: projectPath,
             rows: terminal.rows,
             cols: terminal.cols,
@@ -178,10 +157,24 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         setInputLocked(Boolean(snapshot.session.input_locked));
         terminal.options.disableStdin = Boolean(snapshot.session.input_locked);
         sequenceRef.current = snapshot.next_seq;
+        // Voltou a responder: derruba um aviso que tenha sobrado. Atualização funcional porque
+        // isto roda 10x por segundo — devolver o mesmo valor faz o React nem re-renderizar.
+        falhasRef.current = 0;
+        setError((anterior) => (anterior === null ? anterior : null));
       } catch (reason) {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+        falhasRef.current += 1;
+        // Uma falha isolada não vira banner: o poll é a cada 100ms e qualquer soluço momentâneo
+        // do engine deixava o erro colado na tela até trocar de projeto e voltar (o remount era a
+        // única coisa que limpava).
+        if (!cancelled && falhasRef.current >= FALHAS_ATE_AVISAR) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
       }
-      if (!cancelled) pollTimer = window.setTimeout(poll, 100);
+      // Enquanto está falhando, espaça as tentativas: martelar de 100 em 100ms um engine que caiu
+      // só gasta socket e atrasa a recuperação.
+      if (!cancelled) {
+        pollTimer = window.setTimeout(poll, falhasRef.current >= FALHAS_ATE_AVISAR ? 1_000 : 100);
+      }
     }
 
     const dataSubscription = terminal.onData((data) => {
@@ -199,19 +192,32 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     resizeObserver?.observe(host);
 
     // Captura na fase de captura (antes do próprio textarea do xterm ver o evento): xterm só lê
-    // `clipboardData.getData("text/plain")`, então colar uma imagem (sem texto no clipboard) hoje
-    // não faz nada. Se houver imagem, salva como arquivo no projeto e digita o caminho na PTY —
-    // mesmo padrão de paste-para-arquivo já usado em FileTree.tsx.
+    // `clipboardData.getData("text/plain")`, então colar uma imagem (sem texto no clipboard) não
+    // faria nada sozinho.
+    //
+    // Numa aba de agente quem sabe lidar com imagem é a própria CLI — ela lê o clipboard do
+    // sistema e anexa como `[Image #N]`. O papel daqui é só entregar a tecla: manda a mesma
+    // sequência que o Alt+V já mandava (ESC v, meta+v), que é o atalho de colar imagem que
+    // funciona nessas CLIs. Salvar em disco e digitar o caminho continua sendo o caminho de
+    // terminal puro, onde não há ninguém pra ler o clipboard.
     async function handleImagePaste(event: ClipboardEvent) {
       const files = event.clipboardData?.files;
       const imageFile = files && Array.from(files).find((file) => file.type.startsWith("image/"));
       if (!imageFile || !sessionRef.current) return;
       event.preventDefault();
       event.stopPropagation();
+      if (agent) {
+        void writeTerminal(sessionRef.current, CLI_IMAGE_PASTE).catch(() => undefined);
+        return;
+      }
       try {
         const buffer = new Uint8Array(await imageFile.arrayBuffer());
         const extension = imageFile.type.split("/")[1] || "png";
-        const fileName = /\.\w+$/.test(imageFile.name) ? imageFile.name : `pasted-${Date.now()}.${extension}`;
+        // O caminho é digitado cru na PTY, sem aspas — espaço e vírgula no nome (o padrão de
+        // print do ChatGPT, p.ex.) fariam a CLI ler só o primeiro pedaço. Troca tudo que não for
+        // seguro por "-" em vez de tentar citar pra cada shell.
+        const rawName = /\.\w+$/.test(imageFile.name) ? imageFile.name : `pasted-${Date.now()}.${extension}`;
+        const fileName = rawName.replace(/[^\w.-]+/g, "-");
         const absolutePath = joinPath(projectPath, ".omni-agents", "pasted", fileName);
         await writeBinaryFile(projectPath, absolutePath, buffer);
         await writeTerminal(sessionRef.current, absolutePath);
@@ -250,7 +256,8 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     });
   }
 
-  if (!tab.resourceId && !agent) {
+  // Aba de terminal puro não passa pelo seletor de CLI: sobe direto no shell do sistema.
+  if (tab.kind !== "terminal" && !tab.resourceId && !agent) {
     const projectName = projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath;
     return <AgentLauncher projectName={projectName} onLaunch={setLaunch} />;
   }

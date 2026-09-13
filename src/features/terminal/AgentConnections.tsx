@@ -15,7 +15,6 @@ import {
 
 const DESCRIPTIONS: Record<AgentCliId, string> = {
   cursor: "Cursor Agent CLI",
-  gemini: "Gemini CLI · Google, API key ou Vertex AI",
   claude: "Claude Code · Claude ou Anthropic Console",
   codex: "OpenAI Codex CLI",
 };

@@ -20,9 +20,12 @@ export interface TerminalSession {
   rows: number;
   cols: number;
   input_locked?: boolean;
+  /** Por que a sessão parou, quando o motivo não cabe no `state` (o engine só distingue seis).
+   *  Ortogonal ao `state` de propósito: `state` é reescrito a cada chunk de saída. */
+  notice?: "usage_limit" | "api_error";
 }
 
-export type AgentCliId = "cursor" | "gemini" | "claude" | "codex";
+export type AgentCliId = "cursor" | "claude" | "codex";
 
 export interface AgentCliStatus {
   id: AgentCliId;

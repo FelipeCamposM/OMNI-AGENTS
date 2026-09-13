@@ -8,6 +8,8 @@ import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import { useKanban } from "./features/kanban/useKanban";
 import { useKanbanDispatcher } from "./features/kanban/useKanbanDispatcher";
 import { useTerminalSessions } from "./features/terminal/useTerminalSessions";
+import { useAttention, type AttentionItem } from "./features/terminal/useAttention";
+import { useAttentionNotifier } from "./features/terminal/useAttentionNotifier";
 import { closeTerminal, duplicateTerminal, restartTerminal } from "./features/terminal/terminalService";
 import type { SettingsSection } from "./hooks/useNotifications";
 import { useSettings } from "./hooks/useSettings";
@@ -22,6 +24,26 @@ export function App() {
   const { sessions, online: engineOnline } = useTerminalSessions();
   const { kanban, dispatch: kanbanDispatch } = useKanban();
   useKanbanDispatcher(kanban, kanbanDispatch, workspace.projects, sessions);
+  // Com as Configurações abertas nenhuma pane está na tela, então nada pode ser marcado como visto.
+  const { items: attention, countByWorkspace } = useAttention(
+    sessions,
+    workspaces,
+    activeWorkspaceId,
+    view === "workspace"
+  );
+
+  useAttentionNotifier(attention, settings.notifyAttention);
+
+  function focusSession(item: AttentionItem) {
+    dispatch({
+      type: "FOCUS_SESSION",
+      workspaceId: item.workspaceId,
+      projectId: item.projectId,
+      sessionId: item.sessionId,
+      title: item.sessionName,
+    });
+    setView("workspace");
+  }
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -39,6 +61,9 @@ export function App() {
           void Promise.allSettled(closing).then(() => dispatch({ type: "CLOSE_WORKSPACE", workspaceId }));
         }}
         onRenameWorkspace={(workspaceId, name) => dispatch({ type: "RENAME_WORKSPACE", workspaceId, name })}
+        attention={attention}
+        attentionByWorkspace={countByWorkspace}
+        onFocusSession={focusSession}
         projects={workspace.projects}
         activeProjectId={workspace.activeProjectId}
         activeProjectPath={activeProject?.path ?? null}
@@ -135,7 +160,7 @@ export function App() {
             <WorkspaceView
               project={activeProject}
               engineOnline={engineOnline}
-              sessions={sessions}
+              attention={attention}
               fileSaveMode={settings.fileSaveMode}
               kanban={kanban}
               kanbanDispatch={kanbanDispatch}

@@ -58,8 +58,9 @@ describe("AgentConnections", () => {
   it("separa conectado, instalado sem login e ausente", async () => {
     listAgentClis.mockResolvedValue([
       agent({ id: "claude", label: "Claude", authenticated: true }),
-      agent({ id: "gemini", label: "Gemini", command: "gemini", authenticated: false }),
-      agent({ id: "cursor", label: "Cursor", command: "cursor-agent", path: null, available: false, authenticated: false }),
+      // Cursor é o provider sem isolamento de config dir: é ele que mantém o botão único "Entrar".
+      agent({ id: "cursor", label: "Cursor", command: "cursor-agent", authenticated: false }),
+      agent({ id: "codex", label: "Codex", command: "codex", path: null, available: false, authenticated: false }),
     ]);
 
     render(<AgentConnections />);
@@ -68,9 +69,12 @@ describe("AgentConnections", () => {
     expect(screen.getByText("sem login")).toBeInTheDocument();
     expect(screen.getByText(/não encontrada no PATH/i)).toBeInTheDocument();
 
-    // Providers sem isolamento de config dir mantêm o botão único de login.
+    // Provider sem isolamento de config dir (cursor) mantém o botão único de login.
     expect(screen.getByRole("button", { name: "Entrar" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Não instalado" })).toBeDisabled();
+    // Provider com isolamento (codex) mostra "+ Conta", desabilitado enquanto a CLI não existe.
+    // Escopo na linha do codex: o claude também tem "+ Conta", só que habilitado.
+    const codexRow = screen.getByText("Codex").closest("div.py-3") as HTMLElement;
+    expect(within(codexRow).getByRole("button", { name: "+ Conta" })).toBeDisabled();
   });
 
   it("mostra o caminho resolvido, não só o nome do comando", async () => {

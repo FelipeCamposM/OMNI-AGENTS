@@ -18,7 +18,6 @@ interface AgentLauncherProps {
 const FALLBACK_AGENTS: AgentCliStatus[] = [
   { id: "claude", label: "Claude", command: "claude", path: null, available: false, authenticated: false },
   { id: "codex", label: "Codex", command: "codex", path: null, available: false, authenticated: false },
-  { id: "gemini", label: "Gemini", command: "gemini", path: null, available: false, authenticated: false },
   { id: "cursor", label: "Cursor", command: "cursor-agent", path: null, available: false, authenticated: false },
 ];
 

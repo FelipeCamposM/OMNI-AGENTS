@@ -38,6 +38,9 @@ export interface AppSettings {
 
   /** Como o painel de arquivos salva edições: sozinho com debounce, ou só no Ctrl+S. */
   fileSaveMode: "auto" | "manual";
+
+  /** Toast do Windows + piscar na barra quando um agente pede atenção com o app fora de foco. */
+  notifyAttention: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -52,4 +55,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   animations: "completas",
 
   fileSaveMode: "auto",
+
+  notifyAttention: true,
 };

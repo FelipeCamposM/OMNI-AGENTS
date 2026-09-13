@@ -26,12 +26,27 @@ fn git_available() -> bool {
 fn run_git(cwd: &str, args: &[&str]) -> Result<String, String> {
     let output = hidden(&mut Command::new("git"))
         .args(args)
+        // O app não tem console: se o git resolvesse pedir usuário/senha no terminal, ficaria
+        // pendurado pra sempre e o botão travava em "ocupado". Com isto ele falha na hora com
+        // uma mensagem. Não atrapalha o credential helper (GCM), que é GUI e não é "prompt de
+        // terminal".
+        .env("GIT_TERMINAL_PROMPT", "0")
         .current_dir(cwd)
         .output()
         .map_err(|error| format!("git não encontrado no PATH: {error}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() { "git falhou sem mensagem de erro".into() } else { stderr });
+        if !stderr.is_empty() {
+            return Err(stderr);
+        }
+        // Alguns comandos (push incluído) escrevem a explicação no stdout e só o código de saída
+        // no status. Sem isto a falha chegava na UI como "git falhou sem mensagem de erro".
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        return Err(if stdout.is_empty() {
+            format!("`git {}` falhou sem dizer por quê ({})", args.join(" "), output.status)
+        } else {
+            stdout
+        });
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
@@ -122,6 +137,21 @@ pub fn git_unstage(project_path: String, files: Vec<String>) -> Result<(), Strin
 #[tauri::command]
 pub fn git_commit(project_path: String, message: String) -> Result<(), String> {
     run_git(&project_path, &["commit", "-m", &message]).map(|_| ())
+}
+
+/// Branch nova nunca tem upstream, e aí `git push` puro falha mandando configurar. Em vez de
+/// checar o texto do stderr (frágil, muda com idioma/versão — mesma razão do comentário em
+/// `git_status`), pergunta direto se existe `@{u}`: sem upstream, publica a branch com `-u`.
+#[tauri::command]
+pub fn git_push(project_path: String) -> Result<(), String> {
+    if run_git(&project_path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).is_ok() {
+        return run_git(&project_path, &["push"]).map(|_| ());
+    }
+    let branch = run_git(&project_path, &["rev-parse", "--abbrev-ref", "HEAD"])?.trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        return Err("HEAD destacado: faça checkout de uma branch antes de dar push.".into());
+    }
+    run_git(&project_path, &["push", "--set-upstream", "origin", &branch]).map(|_| ())
 }
 
 #[derive(Serialize)]

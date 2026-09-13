@@ -108,4 +108,9 @@ export type WorkspacesAction =
   | { type: "SELECT_WORKSPACE"; workspaceId: string }
   | { type: "CLOSE_WORKSPACE"; workspaceId: string }
   | { type: "RENAME_WORKSPACE"; workspaceId: string; name: string }
+  /** Pula pra uma sessão que pode estar em OUTRO workspace: troca o ativo, seleciona o projeto
+   *  e abre a aba. Precisa viver aqui, no nível da coleção — as ações de `WorkspaceAction` são
+   *  roteadas só pro workspace ativo (`workspacesReducer`), que é exatamente o que impede
+   *  alcançar um agente de outro workspace. */
+  | { type: "FOCUS_SESSION"; workspaceId: string; projectId: string; sessionId: string; title: string }
   | WorkspaceAction;

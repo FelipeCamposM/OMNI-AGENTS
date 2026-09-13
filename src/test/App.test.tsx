@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "../App";
 
@@ -50,10 +50,11 @@ describe("App shell", () => {
     await userEvent.click(screen.getByRole("button", { name: /adicionar projeto/i }));
 
     await userEvent.click(screen.getByRole("button", { name: /nova tab/i }));
+    await userEvent.click(screen.getByRole("menuitem", { name: /novo terminal/i }));
     expect(screen.getAllByRole("tab")).toHaveLength(2);
-    expect(screen.getByRole("tab", { name: /new agent/i })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /novo terminal/i })).toHaveAttribute("aria-selected", "true");
 
-    await userEvent.click(screen.getByRole("button", { name: /fechar tab new agent/i }));
+    await userEvent.click(screen.getByRole("button", { name: /fechar tab novo terminal/i }));
     expect(screen.getAllByRole("tab")).toHaveLength(1);
   });
 
@@ -64,10 +65,7 @@ describe("App shell", () => {
     await userEvent.click(screen.getByRole("button", { name: /adicionar projeto/i }));
     expect(screen.getAllByText("workspace-um").length).toBeGreaterThan(0);
 
-    await userEvent.click(screen.getByRole("button", { name: "Workspace 1" }));
-    await userEvent.click(
-      within(screen.getByRole("dialog", { name: /workspaces/i })).getByRole("button", { name: /criar workspace/i })
-    );
+    await userEvent.click(screen.getByRole("button", { name: /criar workspace/i }));
 
     expect(screen.getByText(/nenhum projeto ainda/i)).toBeInTheDocument();
     mockOpen.mockResolvedValueOnce("C:\\dev\\workspace-dois");
@@ -80,10 +78,7 @@ describe("App shell", () => {
     expect(screen.getByRole("button", { name: "Workspace 2" })).toBeInTheDocument();
     expect(screen.getAllByText("workspace-dois").length).toBeGreaterThan(0);
 
-    await userEvent.click(screen.getByRole("button", { name: "Workspace 2" }));
-    await userEvent.click(
-      within(screen.getByRole("dialog", { name: /workspaces/i })).getByRole("button", { name: "Workspace 1" })
-    );
+    await userEvent.click(screen.getByRole("button", { name: "Workspace 1" }));
 
     expect(screen.getAllByText("workspace-um").length).toBeGreaterThan(0);
   });

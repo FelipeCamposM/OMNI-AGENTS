@@ -41,6 +41,27 @@ export function workspacesReducer(state: WorkspaceCollection, action: Workspaces
         ),
       };
     }
+    case "FOCUS_SESSION": {
+      const target = state.workspaces.find((workspace) => workspace.id === action.workspaceId);
+      // Sem o projeto dentro do workspace alvo, o SELECT_PROJECT abaixo viraria no-op e o
+      // ATTACH_TERMINAL grudaria a sessão no projeto errado — o bug que essa ação existe pra matar.
+      if (!target?.projects.some((project) => project.id === action.projectId)) return state;
+      const selected = workspaceReducer(target, { type: "SELECT_PROJECT", projectId: action.projectId });
+      // Ordem importa: ATTACH_TERMINAL passa por `updateActiveProject`, então só acha a pane certa
+      // depois que o projeto alvo já é o ativo.
+      const focused = workspaceReducer(selected, {
+        type: "ATTACH_TERMINAL",
+        sessionId: action.sessionId,
+        title: action.title,
+      });
+      return {
+        ...state,
+        activeWorkspaceId: action.workspaceId,
+        workspaces: state.workspaces.map((workspace) =>
+          workspace.id === action.workspaceId ? focused : workspace
+        ),
+      };
+    }
     default: {
       if (!state.activeWorkspaceId) return state;
       return {

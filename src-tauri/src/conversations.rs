@@ -131,7 +131,7 @@ pub fn begin_conversation(
         let command = format!("{command} --session-id {session_id}");
         (Some(session_id), transcript, command)
     } else {
-        // Codex e Gemini não deixam escolher o id da sessão; o trecho nasce sem transcript e só
+        // Codex não deixa escolher o id da sessão; o trecho nasce sem transcript e só
         // resolve depois, se alguém precisar.
         (None, None, command)
     };

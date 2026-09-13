@@ -122,9 +122,15 @@ async fn main() -> Result<()> {
         id_sequence: AtomicU64::new(1),
     });
 
-    let listener = TcpListener::bind(("127.0.0.1", DEFAULT_ENGINE_PORT))
+    // Mesma variável que o cliente lê (`engine_client::engine_port`): sem ela, app instalado e app
+    // de dev disputam a porta fixa e o segundo acaba conversando com o engine do primeiro.
+    let port: u16 = std::env::var("OMNI_ENGINE_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(DEFAULT_ENGINE_PORT);
+    let listener = TcpListener::bind(("127.0.0.1", port))
         .await
-        .with_context(|| format!("engine already running or port {DEFAULT_ENGINE_PORT} unavailable"))?;
+        .with_context(|| format!("engine already running or port {port} unavailable"))?;
 
     mobile::start(state.clone());
 
@@ -378,6 +384,7 @@ fn spawn_terminal_inner(
         cols: cols.max(1),
         initial_command: initial_command.clone(),
         input_locked: false,
+        notice: None,
         env: origin.env,
         provider: origin.provider,
         profile_id: origin.profile_id,
@@ -489,6 +496,9 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
                 let mut meta = session.meta.lock().map_err(|_| anyhow!("session metadata poisoned"))?;
                 meta.pid = pid;
                 meta.state = SessionState::Working;
+            // O parser é zerado no restart, mas um restart sem nenhuma saída nova nunca
+            // chamaria `append_output` — sem isto o aviso velho ficaria colado na sessão.
+            meta.notice = None;
                 meta.last_activity_at_ms = now_ms();
                 meta.clone()
             };
@@ -523,7 +533,7 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
 }
 
 /// Substrings that commonly precede a CLI agent waiting on a yes/no approval.
-/// ponytail: hardcoded phrase list tuned against Claude Code/Codex/Cursor/Gemini — a
+/// ponytail: hardcoded phrase list tuned against Claude Code/Codex/Cursor — a
 /// CLI outside this set, or one running in another language, gives a false negative.
 /// Upgrade path: providers emitting a structured "needs approval" signal instead of text.
 const APPROVAL_PROMPT_PATTERNS: [&str; 4] = ["(y/n)", "do you want to", "allow?", "permitir?"];
@@ -531,6 +541,41 @@ const APPROVAL_PROMPT_PATTERNS: [&str; 4] = ["(y/n)", "do you want to", "allow?"
 fn looks_like_approval_prompt(chunk: &str) -> bool {
     let lower = chunk.to_ascii_lowercase();
     APPROVAL_PROMPT_PATTERNS.iter().any(|pattern| lower.contains(pattern))
+}
+
+/// Motivos de parada que `state` não distingue: o agente fica ocioso (logo, `Answered`) tanto
+/// quando terminou a tarefa quanto quando bateu no limite da conta ou levou erro da API.
+/// ponytail: lista de frases em inglês colada contra as mensagens do Claude Code/Codex — outro
+/// CLI, outro idioma, ou uma troca de texto pelo provider vira falso negativo (o item ainda
+/// aparece como "terminou", só perde o rótulo). Upgrade path: sinal estruturado do provider.
+const USAGE_LIMIT_PATTERNS: [&str; 4] = [
+    "usage limit reached",  // Claude Code: "Claude usage limit reached. Your limit will reset at ..."
+    "hit your usage limit", // Codex: "You've hit your usage limit."
+    "5-hour limit reached",
+    "rate limit exceeded",
+];
+const API_ERROR_PATTERNS: [&str; 5] = [
+    "api error:", // "API Error: 529 {\"type\":\"overloaded_error\"}"
+    "overloaded_error",
+    "authentication_error",
+    "invalid_api_key",
+    "credit balance is too low",
+];
+
+/// Lê a TELA (vt100), não o chunk: a mensagem some sozinha quando sai de vista, então não existe
+/// código de limpeza espalhado por write/stop/restart, e uma frase partida entre duas leituras de
+/// 8 KB continua sendo reconhecida — bug que a varredura por chunk tem de graça.
+fn detect_notice(screen_text: &str) -> Option<String> {
+    let lower = screen_text.to_ascii_lowercase();
+    // Limite antes de erro: "rate limit exceeded" casa nos dois, e "estourou o limite" é a
+    // informação acionável (esperar o reset); "erro de API" só mandaria tentar de novo.
+    if USAGE_LIMIT_PATTERNS.iter().any(|pattern| lower.contains(pattern)) {
+        return Some("usage_limit".into());
+    }
+    if API_ERROR_PATTERNS.iter().any(|pattern| lower.contains(pattern)) {
+        return Some("api_error".into());
+    }
+    None
 }
 
 fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) {
@@ -543,6 +588,7 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
     if session.meta.lock().expect("metadata poisoned").pid != watched_pid { return; }
     interaction.parser.process(bytes);
     let approval_requested = looks_like_approval_prompt(&data);
+    let notice = detect_notice(&interaction.parser.screen().contents());
     if let Ok(mut output) = session.output.lock() {
         let sequence = output.next_seq;
         output.next_seq += 1;
@@ -559,6 +605,7 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
             meta.output_seq = output.next_seq;
             meta.last_activity_at_ms = now_ms();
             meta.state = if approval_requested { SessionState::ApprovalRequired } else { SessionState::Working };
+            meta.notice = notice;
         }
     }
 }
@@ -794,6 +841,15 @@ mod tests {
         assert!(looks_like_approval_prompt("Do You Want To continue? (y/n)"));
         assert!(looks_like_approval_prompt("Allow?"));
         assert!(!looks_like_approval_prompt("just some regular output"));
+    }
+
+    #[test]
+    fn notice_distinguishes_usage_limit_from_api_error() {
+        assert_eq!(detect_notice("Claude usage limit reached. Resets at 3pm").as_deref(), Some("usage_limit"));
+        assert_eq!(detect_notice("API Error: 529 {\"type\":\"overloaded_error\"}").as_deref(), Some("api_error"));
+        // "rate limit exceeded" casa nas duas listas; o limite vence porque é o acionável.
+        assert_eq!(detect_notice("Rate limit exceeded").as_deref(), Some("usage_limit"));
+        assert_eq!(detect_notice("compiling api error handling module"), None);
     }
 
     #[test]

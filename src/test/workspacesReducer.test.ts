@@ -65,6 +65,54 @@ describe("workspacesReducer", () => {
     expect(state.activeWorkspaceId).toBe(state.workspaces[0].id);
   });
 
+  it("FOCUS_SESSION alcança um workspace inativo e anexa a sessão no projeto certo", () => {
+    let state = collection();
+    state = workspacesReducer(state, { type: "ADD_PROJECT", path: "C:\dev\alvo" });
+    const alvo = state.workspaces[0];
+    const projetoAlvo = alvo.projects[0];
+
+    // Segundo workspace passa a ser o ativo — é daqui que o usuário clica no aviso.
+    state = workspacesReducer(state, { type: "ADD_WORKSPACE", name: "Outro" });
+    state = workspacesReducer(state, { type: "ADD_PROJECT", path: "C:\dev\outro" });
+    expect(state.activeWorkspaceId).toBe(state.workspaces[1].id);
+
+    state = workspacesReducer(state, {
+      type: "FOCUS_SESSION",
+      workspaceId: alvo.id,
+      projectId: projetoAlvo.id,
+      sessionId: "sessao-1",
+      title: "Claude",
+    });
+
+    expect(state.activeWorkspaceId).toBe(alvo.id);
+    const focado = state.workspaces.find((workspace) => workspace.id === alvo.id)!;
+    expect(focado.activeProjectId).toBe(projetoAlvo.id);
+    const projeto = focado.projects.find((item) => item.id === projetoAlvo.id)!;
+    const pane = projeto.layout.type === "pane" ? projeto.layout : null;
+    expect(pane?.tabs.some((tab) => tab.resourceId === "sessao-1")).toBe(true);
+    // O workspace de onde o clique partiu não pode ter ganhado a aba.
+    const outro = state.workspaces.find((workspace) => workspace.id !== alvo.id)!;
+    const outroProjeto = outro.projects[0];
+    const outraPane = outroProjeto.layout.type === "pane" ? outroProjeto.layout : null;
+    expect(outraPane?.tabs.some((tab) => tab.resourceId === "sessao-1")).toBe(false);
+  });
+
+  it("FOCUS_SESSION ignora projeto que não existe no workspace alvo", () => {
+    let state = collection();
+    state = workspacesReducer(state, { type: "ADD_PROJECT", path: "C:\dev\alvo" });
+    const antes = state;
+
+    state = workspacesReducer(state, {
+      type: "FOCUS_SESSION",
+      workspaceId: antes.workspaces[0].id,
+      projectId: "projeto-inexistente",
+      sessionId: "sessao-1",
+      title: "Claude",
+    });
+
+    expect(state).toBe(antes);
+  });
+
   it("migra a chave legada de workspace único pra lista nova", () => {
     localStorage.setItem(
       WORKSPACE_STORAGE_KEY,

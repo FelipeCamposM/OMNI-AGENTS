@@ -1,6 +1,6 @@
-import type { Project, WorkspaceAction } from "../../types/workspace";
+import type { Project, WorkspacesAction } from "../../types/workspace";
 import type { KanbanAction, KanbanState } from "../../types/kanban";
-import type { TerminalSession } from "../terminal/terminalService";
+import type { AttentionItem } from "../terminal/useAttention";
 import { LayoutPresetPicker } from "./LayoutPresetPicker";
 import { PaneTree } from "./PaneTree";
 import { useWorkspaceKeymap } from "./useWorkspaceKeymap";
@@ -8,23 +8,23 @@ import { useWorkspaceKeymap } from "./useWorkspaceKeymap";
 interface WorkspaceViewProps {
   project: Project | null;
   engineOnline: boolean;
-  sessions: TerminalSession[];
+  attention: AttentionItem[];
   fileSaveMode: "auto" | "manual";
   kanban: KanbanState;
   kanbanDispatch: React.Dispatch<KanbanAction>;
-  dispatch: React.Dispatch<WorkspaceAction>;
+  dispatch: React.Dispatch<WorkspacesAction>;
 }
 
 export function WorkspaceView({
   project,
   engineOnline,
-  sessions,
+  attention,
   fileSaveMode,
   kanban,
   kanbanDispatch,
   dispatch,
 }: WorkspaceViewProps) {
-  useWorkspaceKeymap(project, sessions, dispatch);
+  useWorkspaceKeymap(project, attention, dispatch);
 
   if (!project) {
     return (
