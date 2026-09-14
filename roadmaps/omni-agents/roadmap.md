@@ -1211,3 +1211,6 @@ PC, falhava no celular sem explicação.
 - Build de produção compilado. O empacotamento MSI falhou ao executar `light.exe`; a distribuição utiliza NSIS, como as releases anteriores, via `npx tauri build --bundles nsis`.
 - Publicação prevista em `v0.4.0` com instalador Windows x64, assinatura do updater e `latest.json`.
 - Acesso por celular real/4G e instalação interativa não foram revalidados nesta preparação.
+- Publicação concluída: https://github.com/FelipeCamposM/OMNI-AGENTS/releases/tag/v0.4.0 (commit `6e07e4f401f256b30bdbf2379cf3382df943072f`), release normal e mais recente.
+- NSIS assinado gerado com sucesso; assinatura Ed25519 validada com a chave pública do updater. SHA-256 local e remoto: `0aff9282cc29b51679e9732c4c289c4034d93e37c7d961c90748e65de6fbce0c`.
+- Os três assets foram publicados; `latest.json` baixado do GitHub é idêntico ao manifesto local da 0.4.0.
