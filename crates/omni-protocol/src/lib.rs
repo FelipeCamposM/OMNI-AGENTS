@@ -3,6 +3,17 @@ use std::{fs, io, path::Path};
 
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const DEFAULT_ENGINE_PORT: u16 = 47_321;
+/// Porta do engine quando o app roda em desenvolvimento (`npm run dev`).
+///
+/// **Existe para o dev nunca encostar no app instalado.** Com a mesma porta, a mesma pasta e o
+/// mesmo token, `npm run dev` conversava com o engine instalado — e o `build-engine.mjs`, ao achar
+/// o binário travado, mandava `shutdown` para ele, derrubando o app e todas as sessões abertas.
+pub const DEV_ENGINE_PORT: u16 = 47_341;
+
+/// Pasta de dados do engine (token, sessões, conversas, perfis). Separada por modo pelo mesmo
+/// motivo da porta: um token diferente faz o engine instalado recusar qualquer pedido do dev.
+pub const DATA_DIR: &str = "com.omni.agents";
+pub const DEV_DATA_DIR: &str = "com.omni.agents.dev";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -83,7 +94,10 @@ pub fn read_json_or_default<T: DeserializeOwned + Default>(path: &Path) -> T {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EngineRequest {
     AccountUsage { token: String, profile_id: String, refresh: bool },
-    MobileSettings { token: String, config: Option<MobileConfig> },
+    MobileSettings { token: String, config: Option<MobileConfig>, #[serde(default)] rotate: bool },
+    PublishWorkspace { token: String, projects: Vec<PublishedProject>, agents: Vec<PublishedAgent> },
+    /// Testa se o próprio servidor do celular atende. `listening` só prova que o bind deu certo.
+    MobileCheck { token: String },
     Ping { token: String },
     ListSessions { token: String },
     SpawnTerminal {
@@ -129,7 +143,10 @@ impl EngineRequest {
 
     pub fn token(&self) -> &str {
         match self {
-            Self::AccountUsage { token, .. } | Self::MobileSettings { token, .. } => token,
+            Self::AccountUsage { token, .. }
+            | Self::MobileSettings { token, .. }
+            | Self::PublishWorkspace { token, .. }
+            | Self::MobileCheck { token } => token,
             Self::Ping { token }
             | Self::ListSessions { token }
             | Self::SpawnTerminal { token, .. }
@@ -149,7 +166,20 @@ impl EngineRequest {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EngineResponse {
     AccountUsage { usage: omni_core::usage::AccountUsage },
-    MobileSettings { config: MobileConfig, listening: Option<String>, error: Option<String> },
+    MobileSettings {
+        config: MobileConfig,
+        listening: Option<String>,
+        error: Option<String>,
+        #[serde(default)] qr: Option<String>,
+        /// Endereço que o celular usa de fato: o do `tailscale serve` quando ligado, senão o bind.
+        #[serde(default)] public_url: Option<String>,
+        /// Nome MagicDNS deste PC, quando o Tailscale está no ar.
+        #[serde(default)] magic_dns: Option<String>,
+        /// Link para habilitar o Serve na conta, quando ele ainda não está habilitado.
+        #[serde(default)] serve_hint: Option<String>,
+    },
+    /// Resultado do autoteste: `ok` diz se passou, `message` é texto para a tela.
+    MobileCheck { ok: bool, message: String },
     Pong { protocol_version: u16, engine_pid: u32 },
     Sessions { sessions: Vec<TerminalSession> },
     Session { session: TerminalSession },
@@ -158,8 +188,38 @@ pub enum EngineResponse {
     Error { code: String, message: String },
 }
 
+/// Projeção do workspace do desktop que o celular precisa. **Não** leva a árvore de layout, abas nem
+/// git: o celular só precisa saber "qual projeto", e o engine só precisa do `path` para abrir uma
+/// sessão lá dentro. Menos campo publicado é menos coisa exposta no HTTP.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PublishedProject { pub id: String, pub name: String, pub path: String }
+
+/// CLI de agente que o desktop confirmou existir no PATH. O celular escolhe **desta lista** —
+/// nunca digita um binário.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PublishedAgent { pub id: String, pub label: String, pub command: String, pub resume: Option<String> }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PublishedWorkspace {
+    #[serde(default)] pub projects: Vec<PublishedProject>,
+    #[serde(default)] pub agents: Vec<PublishedAgent>,
+    /// Quando o desktop publicou pela última vez. O celular mostra a idade e quem decide se a
+    /// lista ainda vale é quem está lendo — sem expiração automática no Rust.
+    #[serde(default)] pub published_at_ms: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct MobileConfig { pub enabled: bool, pub bind: String }
+pub struct MobileConfig {
+    pub enabled: bool,
+    pub bind: String,
+    /// Segredo que o celular manda em `X-Omni-Token`. Quem gera é só o engine — o desktop nunca
+    /// escolhe. `default` para o `mobile.json` gravado antes desta versão continuar carregando.
+    #[serde(default)] pub token: String,
+    /// Publicar pelo `tailscale serve` em vez de escutar no IP do Tailscale. Com isso o servidor
+    /// fica **só em 127.0.0.1** e quem atende na rede é o tailscaled, com certificado TLS de
+    /// verdade e nome MagicDNS fixo.
+    #[serde(default)] pub serve: bool,
+}
 impl Default for MobileConfig {
-    fn default() -> Self { Self { enabled: false, bind: "127.0.0.1:47322".into() } }
+    fn default() -> Self { Self { enabled: false, bind: "127.0.0.1:47322".into(), token: String::new(), serve: false } }
 }

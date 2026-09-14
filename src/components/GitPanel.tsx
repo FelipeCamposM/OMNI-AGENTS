@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { iconForPath } from "../features/files/fileIcons";
 import {
   gitCommit,
   gitPush,
@@ -198,10 +199,18 @@ function GitFileGroup({
             <span className="mr-1.5 font-mono text-[10px] text-text-muted" aria-hidden="true">
               {entry.x === "?" ? "??" : `${entry.x}${entry.y}`}
             </span>
+            {/* Ícone ao lado do status, não no lugar dele: "M" e "??" dizem o que mudou, e isso
+                o tipo de arquivo não conta. */}
+            <FileIconDoCaminho path={entry.path} />
             {entry.path}
           </button>
         </div>
       ))}
     </div>
   );
+}
+
+function FileIconDoCaminho({ path }: { path: string }) {
+  const Icone = iconForPath(path);
+  return <Icone className="mr-1.5 inline-block h-3 w-3 shrink-0 align-[-2px] text-text-muted" aria-hidden />;
 }

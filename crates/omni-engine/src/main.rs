@@ -172,7 +172,9 @@ async fn serve_client(stream: TcpStream, state: Arc<EngineState>) -> Result<()> 
 fn handle_request(request: EngineRequest, state: &Arc<EngineState>) -> EngineResponse {
     let result = match request {
         EngineRequest::AccountUsage { profile_id, refresh, .. } => interaction::account_usage(state, &profile_id, refresh),
-        EngineRequest::MobileSettings { config, .. } => mobile::settings(state, config),
+        EngineRequest::MobileSettings { config, rotate, .. } => mobile::settings(state, config, rotate),
+        EngineRequest::PublishWorkspace { projects, agents, .. } => mobile::publish(state, projects, agents),
+        EngineRequest::MobileCheck { .. } => mobile::check(state),
         EngineRequest::Ping { .. } => {
             return EngineResponse::Pong {
                 protocol_version: PROTOCOL_VERSION,
@@ -331,12 +333,12 @@ fn spawn_reader_thread(state: Arc<EngineState>, session: Arc<LiveSession>, mut r
 /// Quem a sessão é, do ponto de vista de conta e conversa. Agrupado num struct porque
 /// `spawn_terminal_inner` já estava no limite de argumentos.
 #[derive(Debug, Clone, Default)]
-struct SessionOrigin {
-    env: Vec<(String, String)>,
-    provider: Option<String>,
-    profile_id: Option<String>,
-    conversation_id: Option<String>,
-    external_session_id: Option<String>,
+pub(crate) struct SessionOrigin {
+    pub env: Vec<(String, String)>,
+    pub provider: Option<String>,
+    pub profile_id: Option<String>,
+    pub conversation_id: Option<String>,
+    pub external_session_id: Option<String>,
 }
 
 impl SessionOrigin {
@@ -354,7 +356,7 @@ impl SessionOrigin {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_terminal_inner(
+pub(crate) fn spawn_terminal_inner(
     state: &Arc<EngineState>,
     id: String,
     project_id: String,
@@ -694,9 +696,15 @@ fn snapshot(state: &EngineState, session_id: &str, since: u64) -> Result<EngineR
     Ok(EngineResponse::Snapshot { session: session_meta, from_seq, next_seq: output.next_seq, data })
 }
 
+/// Quem decide a pasta é **quem lança** o engine (`engine_client::spawn_engine` passa
+/// `OMNI_DATA_DIR`), não o perfil com que este binário foi compilado. Assim um engine de release
+/// aberto pelo app de dev continua isolado do app instalado, e vice-versa.
 fn engine_dir() -> Result<PathBuf> {
+    if let Some(dir) = env::var_os("OMNI_DATA_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
     let base = env::var_os("LOCALAPPDATA").ok_or_else(|| anyhow!("LOCALAPPDATA is unavailable"))?;
-    Ok(PathBuf::from(base).join("com.omni.agents").join("engine"))
+    Ok(PathBuf::from(base).join(omni_protocol::DATA_DIR).join("engine"))
 }
 
 fn load_or_create_token(path: &Path) -> Result<String> {
@@ -706,11 +714,16 @@ fn load_or_create_token(path: &Path) -> Result<String> {
             return Ok(token.to_owned());
         }
     }
-    let mut bytes = [0_u8; 32];
-    rand::rng().fill_bytes(&mut bytes);
-    let token: String = bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    let token = random_token();
     fs::write(path, &token)?;
     Ok(token)
+}
+
+/// 32 bytes aleatórios em hex. Usado pelo token do engine e pelo token de dispositivo do celular.
+pub(crate) fn random_token() -> String {
+    let mut bytes = [0_u8; 32];
+    rand::rng().fill_bytes(&mut bytes);
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn load_historical_sessions(path: &Path) -> HashMap<String, SessionEntry> {

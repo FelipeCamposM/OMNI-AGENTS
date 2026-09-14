@@ -129,6 +129,32 @@ export const AGENT_RESUME_FLAG: Partial<Record<AgentCliId, string>> = {
   codex: "resume --last",
 };
 
+export interface PublishedProject {
+  id: string;
+  name: string;
+  path: string;
+}
+
+/**
+ * Publica no engine a lista de projetos abertos e as CLIs disponíveis, para o celular poder
+ * escolher entre elas. O engine não tem tabela de projetos — isso só existe no `localStorage`
+ * daqui — e nunca aceita caminho vindo do telefone: ele resolve o `cwd` por esta lista.
+ *
+ * Os agentes são montados aqui, e não no Rust, porque `AGENT_RESUME_FLAG` mora neste arquivo.
+ */
+export async function publishWorkspace(projects: PublishedProject[]) {
+  const clis = await listAgentClis();
+  const agents = clis
+    .filter((cli) => cli.available)
+    .map((cli) => ({
+      id: cli.id,
+      label: cli.label,
+      command: cli.command,
+      resume: AGENT_RESUME_FLAG[cli.id] ?? null,
+    }));
+  await invoke("publish_workspace", { projects, agents });
+}
+
 /** Pré-aprova o diálogo de "trust this folder" do CLI antes de abrir a PTY (equivalente ao
  * `ensureTrusted` do Maestrus). Não bloqueia o spawn se falhar — só deixa de pular o diálogo. */
 export async function ensureAgentTrust(agentId: AgentCliId, cwd: string, profileId?: string) {

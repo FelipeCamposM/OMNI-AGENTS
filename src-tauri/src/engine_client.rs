@@ -1,4 +1,4 @@
-use omni_protocol::{EngineRequest, EngineResponse, DEFAULT_ENGINE_PORT};
+use omni_protocol::{EngineRequest, EngineResponse, DATA_DIR, DEFAULT_ENGINE_PORT, DEV_DATA_DIR, DEV_ENGINE_PORT};
 use std::{
     env,
     fs,
@@ -321,7 +321,14 @@ pub(crate) fn authenticated_request(build: impl FnOnce(String) -> EngineRequest)
 /// app de dev na mesma máquina brigam pela porta fixa, e o segundo a subir acaba falando com o
 /// engine do primeiro (versão velha, sem os campos novos do protocolo).
 pub(crate) fn engine_port() -> u16 {
-    env::var("OMNI_ENGINE_PORT").ok().and_then(|value| value.parse().ok()).unwrap_or(DEFAULT_ENGINE_PORT)
+    env::var("OMNI_ENGINE_PORT").ok().and_then(|value| value.parse().ok()).unwrap_or(if cfg!(debug_assertions) {
+        // `npm run dev` nunca pode falar com o engine do app instalado. Com a porta compartilhada,
+        // o dev usava o engine instalado (versão velha, sem os campos novos) e o `build-engine.mjs`
+        // chegava a derrubar ele com todas as sessões abertas.
+        DEV_ENGINE_PORT
+    } else {
+        DEFAULT_ENGINE_PORT
+    })
 }
 
 /// Conexão ociosa guardada entre requisições.
@@ -402,7 +409,29 @@ fn send_request(request: EngineRequest) -> Result<EngineResponse, String> {
     let mut connection = connect()?;
     let response = exchange(&mut connection, &request, timeout).map_err(|error| error.message)?;
     *guard = Some(connection);
-    Ok(response)
+    Ok(outdated_engine_hint(response))
+}
+
+/// Um engine mais antigo que o app responde `INVALID_REQUEST: unknown variant ...` para qualquer
+/// comando que ele não conheça. A mensagem crua não diz nada a quem usa, e a tela de Celular
+/// engolia isso calada — foi o que fez o acesso pelo celular parecer "não implementado" por uma
+/// versão inteira, quando na verdade o instalador tinha deixado um `omni-engine.exe` velho para
+/// trás (o engine roda destacado e sobrevive à instalação, então o NSIS não consegue substituir).
+fn outdated_engine_hint(response: EngineResponse) -> EngineResponse {
+    match response {
+        EngineResponse::Error { code, message }
+            if code == "INVALID_REQUEST" && message.contains("unknown variant") =>
+        {
+            EngineResponse::Error {
+                code: "ENGINE_OUTDATED".into(),
+                message: "O OMNI Engine em execução é mais antigo que o app e não conhece este \
+comando. Feche o OMNI, encerre o processo omni-engine.exe no Gerenciador de Tarefas e abra o app \
+de novo."
+                    .into(),
+            }
+        }
+        other => other,
+    }
 }
 
 fn spawn_engine() -> Result<(), String> {
@@ -412,6 +441,9 @@ fn spawn_engine() -> Result<(), String> {
     }
     let mut command = Command::new(executable);
     command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    // O engine usa a identidade de quem o lançou, não a do perfil com que foi compilado: sem isto
+    // um engine de release aberto pelo app de dev voltaria para a porta e a pasta do instalado.
+    command.env("OMNI_ENGINE_PORT", engine_port().to_string()).env("OMNI_DATA_DIR", engine_dir()?);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -448,16 +480,43 @@ fn engine_executable() -> Result<PathBuf, String> {
     Ok(development)
 }
 
+/// Pasta de dados do engine. Em dev é `com.omni.agents.dev`: token próprio significa que, mesmo que
+/// algo errado mire a porta do app instalado, o engine instalado recusa o pedido como não
+/// autorizado. Porta separada e token separado são duas travas independentes.
 pub(crate) fn engine_dir() -> Result<PathBuf, String> {
+    if let Some(dir) = env::var_os("OMNI_DATA_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+    let nome = if cfg!(debug_assertions) { DEV_DATA_DIR } else { DATA_DIR };
     env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
-        .map(|path| path.join("com.omni.agents").join("engine"))
+        .map(|path| path.join(nome).join("engine"))
         .ok_or_else(|| "LOCALAPPDATA unavailable".into())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// O engine velho recusa comandos novos com `unknown variant`. Sem a tradução, a tela de
+    /// Celular mostrava isso (ou nada) e o recurso parecia não existir.
+    #[test]
+    fn engine_velho_vira_mensagem_acionavel() {
+        let bruto = EngineResponse::Error {
+            code: "INVALID_REQUEST".into(),
+            message: "unknown variant `mobile_settings`, expected one of `ping`".into(),
+        };
+        let EngineResponse::Error { code, message } = outdated_engine_hint(bruto) else {
+            panic!("deveria continuar sendo erro");
+        };
+        assert_eq!(code, "ENGINE_OUTDATED");
+        assert!(message.contains("omni-engine.exe"), "a mensagem tem de dizer o que fazer: {message}");
+
+        // Erro comum de negócio não pode ser reescrito como "engine velho".
+        let outro = EngineResponse::Error { code: "ENGINE_ERROR".into(), message: "session not found".into() };
+        let EngineResponse::Error { code, .. } = outdated_engine_hint(outro) else { panic!() };
+        assert_eq!(code, "ENGINE_ERROR");
+    }
 
     /// Prova que o cliente reaproveita a conexão: um servidor de mentira conta quantas vezes
     /// aceitou. Sem o cache, cada requisição abriria um socket novo — que é o que esgotava as

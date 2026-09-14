@@ -18,6 +18,8 @@ pub fn run() {
             engine_client::engine_status,
             account_usage::account_usage,
             mobile::mobile_settings,
+            mobile::publish_workspace,
+            mobile::mobile_check,
             engine_client::ensure_engine,
             engine_client::terminal_sessions,
             engine_client::agent_cli_statuses,

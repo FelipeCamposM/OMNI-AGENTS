@@ -29,6 +29,36 @@ pub fn read_index(dir: &Path) -> Vec<Conversation> {
         .and_then(|b| serde_json::from_slice::<Store>(&b).ok()).map(|s| s.conversations).unwrap_or_default()
 }
 
+/// Grava o índice inteiro. Escrita atômica via `.tmp` + rename, igual ao resto dos stores.
+///
+/// **Dois escritores agora**: desktop e engine (uma sessão aberta pelo celular nasce no engine).
+/// Não há lock entre processos, então um spawn pelo telefone exatamente durante uma troca de conta
+/// no PC pode perder um segmento. Aceitável: as duas escritas são raras e o índice é reconstruível a
+/// partir dos transcripts.
+/// ponytail: sem lock; se isso passar a doer, centralizar toda escrita no engine.
+pub fn write_index(dir: &Path, conversations: &[Conversation]) -> std::io::Result<()> {
+    let path = dir.join("conversations.json");
+    let encoded = serde_json::to_vec_pretty(&serde_json::json!({"version":1,"conversations":conversations}))?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, encoded)?;
+    std::fs::rename(temporary, path)
+}
+
+/// Nome do diretório onde o Claude Code guarda os transcripts de um projeto: o caminho absoluto
+/// com todo caractere não-alfanumérico virando `-`, caixa preservada.
+/// `D:\PROGRAMACAO\...\OMNI-AGENTS` -> `D--PROGRAMACAO-...-OMNI-AGENTS`
+pub fn claude_project_slug(cwd: &str) -> String {
+    cwd.trim_end_matches(['\\', '/'])
+        .chars()
+        .map(|character| if character.is_ascii_alphanumeric() { character } else { '-' })
+        .collect()
+}
+
+/// Onde o transcript de uma sessão do Claude vai parar, dado o config dir daquela conta.
+pub fn claude_transcript_path(config_dir: &Path, cwd: &str, session_id: &str) -> PathBuf {
+    config_dir.join("projects").join(claude_project_slug(cwd)).join(format!("{session_id}.jsonl"))
+}
+
 fn timestamp(value: &Value) -> Option<u64> {
     chrono::DateTime::parse_from_rfc3339(value.as_str()?).ok()
         .and_then(|d| u64::try_from(d.timestamp_millis()).ok())
@@ -122,5 +152,22 @@ mod tests {
         assert_eq!(second.messages.len(),5); assert!(second.next_cursor.is_none());
         let wrong = crate::Profile{config_dir:dir.path().join("other").to_string_lossy().into_owned(),..profile};
         assert_eq!(timeline(&conversation,&[wrong],0,100).unavailable_segments,vec![0,1]);
+    }
+}
+
+#[cfg(test)]
+mod slug_tests {
+    use super::*;
+
+    #[test]
+    fn slug_matches_the_layout_claude_uses_on_disk() {
+        // Conferido contra ~/.claude/projects nesta máquina.
+        assert_eq!(
+            claude_project_slug(r"D:\PROGRAMACAO\PROJETOS\PROJETOS_REACT\OMNI-AGENTS"),
+            "D--PROGRAMACAO-PROJETOS-PROJETOS-REACT-OMNI-AGENTS"
+        );
+        assert_eq!(claude_project_slug(r"C:\Users\Felipe Campos"), "C--Users-Felipe-Campos");
+        // Barra final não pode gerar um sufixo a mais.
+        assert_eq!(claude_project_slug(r"C:\Users\dev\"), "C--Users-dev");
     }
 }

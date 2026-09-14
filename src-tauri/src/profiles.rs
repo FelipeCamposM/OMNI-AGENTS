@@ -11,15 +11,9 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-/// Env var que cada CLI lê para trocar de diretório de configuração. `None` = o provider não
-/// suporta isolamento, então só existe o profile padrão dele.
-pub fn config_dir_var(provider: &str) -> Option<&'static str> {
-    match provider {
-        "claude" => Some("CLAUDE_CONFIG_DIR"),
-        "codex" => Some("CODEX_HOME"),
-        _ => None,
-    }
-}
+/// Reexportado do `omni-core`: o engine precisa da mesma tabela para abrir sessão pedida pelo
+/// celular, e duas cópias divergiriam no dia em que um provider novo entrasse.
+pub use omni_core::{config_dir_var, env_for};
 
 /// Arquivo que o CLI grava no config dir depois do login, e a env var de API key que dispensa
 /// login interativo.
@@ -176,14 +170,7 @@ pub fn preferred(provider: &str) -> Option<Profile> {
 
 /// Env vars que isolam a conta. Vazio quando o provider não suporta isolamento ou o profile é o
 /// padrão — nesse caso o CLI já usa o diretório nativo sozinho.
-pub fn env_for(profile: &Profile) -> Vec<(String, String)> {
-    match config_dir_var(&profile.provider) {
-        Some(variable) if !profile.builtin => {
-            vec![(variable.to_owned(), profile.config_dir.clone())]
-        }
-        _ => Vec::new(),
-    }
-}
+
 
 #[tauri::command]
 pub fn create_profile(provider: String, name: String) -> Result<Profile, String> {

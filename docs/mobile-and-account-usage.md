@@ -29,7 +29,19 @@ a versão do Claude instalada deve ser feita numa sessão existente, sem criar u
 1. Instale e conecte o Tailscale no PC e no celular, na mesma conta.
 2. No desktop, abra **Configurações → Celular**.
 3. Informe o IP do PC mostrado pelo Tailscale, com a porta, por exemplo `100.x.x.x:47322`.
-4. Clique **Ativar / aplicar** e abra o endereço apresentado no navegador do celular.
+4. Clique **Ativar / aplicar** e aponte a câmera do celular para o QR que aparece — ele já leva
+   o token de acesso no fragmento da URL.
+
+Se a página abrir no navegador do PC mas der tempo esgotado no celular, falta liberar a porta de
+entrada no firewall do Windows. O engine é sidecar sem janela, então o prompt do firewall nunca
+aparece; rode uma vez, como administrador:
+
+```
+netsh advfirewall firewall add rule name="OMNI AGENTS mobile" dir=in action=allow protocol=TCP localport=47322 localip=100.x.x.x
+```
+
+Use sempre o **IP** do Tailscale, nunca o nome MagicDNS: o `Host` precisa bater exatamente com o
+bind configurado, e o nome recebe `403`. Isso é a defesa contra CSRF e DNS rebinding.
 
 O PC precisa estar ligado, sem suspensão, com o engine e o Tailscale ativos. Fechar a janela
 desktop não encerra o servidor HTTP. O acesso começa desativado; `127.0.0.1:47322` permite
@@ -38,11 +50,19 @@ Não há fallback para `0.0.0.0`. Se o Tailscale não estiver disponível, a fal
 configurações e o engine desktop continua funcionando; aplique novamente após conectar.
 
 Configuração: `%LOCALAPPDATA%/com.omni.agents/engine/mobile.json`. O TCP privilegiado continua
-somente em `127.0.0.1:47321`. A autorização de dispositivos pertence ao Tailscale; o OMNI não
-adiciona login, domínio, relay, túnel ou credencial no navegador. Não há PWA/push.
+somente em `127.0.0.1:47321`. O OMNI não adiciona domínio, relay nem túnel: quem dá conectividade
+é o Tailscale. Não há PWA/push.
 
-O celular lista conversas, mostra mensagens e permite responder ou permitir/negar um pedido
-reconhecido. Não é um terminal. Sem sessão viva, a conversa permanece consultável, mas o envio
+**Token de dispositivo.** Além do Tailscale, toda rota de API exige o header `X-Omni-Token`. O
+token é gerado **pelo engine** (o desktop nunca escolhe o segredo), guardado no `mobile.json` e
+entregue ao celular pelo fragmento da URL do QR (`#t=…`) — fragmento não é enviado ao servidor nem
+entra em log ou `Referer`. O celular guarda em `localStorage` e um `401` o descarta sozinho.
+Só `/` e `/assets/` dispensam o token, porque o bundle precisa carregar antes de haver token; todo
+o resto é negado por padrão, então rota nova nasce protegida. **Gerar novo código** rotaciona o
+token e desconecta os celulares já pareados.
+
+O celular lista projetos, conversas, mostra mensagens, permite responder, permitir/negar um
+pedido reconhecido e **abrir sessão nova** num projeto conhecido. Não é um terminal. Sem sessão viva, a conversa permanece consultável, mas o envio
 fica desativado. Os adaptadores de escrita são conservadores e verificam processos Windows;
 menus desconhecidos exigem intervenção no desktop. O rótulo “Possível aprovação pendente”
 vem da heurística antiga; sozinho não habilita o botão de aprovação.
@@ -58,8 +78,17 @@ UI e API usam a mesma origem, com validação de `Host`, `Origin` nos POSTs e co
 | `POST /conversas/:id/prompt` | `{ "texto": "..." }`, até 16000 bytes; sem slash command ou controles de terminal. |
 | `POST /conversas/:id/aprovar` | `{ "permitir": true }` ou `false`; apenas escolha de uso único reconhecida. |
 | `GET /atencao` | Sessões esperando entrada e possíveis pedidos de aprovação. |
+| `GET /projetos` | Projetos publicados pelo desktop unidos aos das conversas, CLIs disponíveis, contas e a idade da publicação. |
+| `POST /sessoes` | `{ "project_id", "provider", "profile_id?", "titulo?" }` — abre sessão. `deny_unknown_fields`: um `cwd` no corpo vira `422`. |
 
-Ambos os POSTs exigem `Idempotency-Key` e `If-Match` com a revisão retornada nas capacidades.
+`POST /sessoes` é o único caminho de criação de processo pelo HTTP, e ele **não aceita caminho
+nem binário do celular**: `project_id` tem de existir na lista conhecida (e o `cwd` sai de lá),
+`provider` tem de estar entre as CLIs que o desktop publicou (e o comando sai de lá), e
+`profile_id` tem de existir em `profiles.json` para aquele provider. Projeto, CLI ou conta
+desconhecidos respondem `409`; passar de 16 sessões vivas responde `429`. Exige
+`Idempotency-Key`, mas não `If-Match` — não há tela viva para ficar obsoleta.
+
+Os POSTs de prompt e aprovação exigem `Idempotency-Key` e `If-Match` com a revisão das capacidades.
 Respondem `202` com a ação. A fila do engine revalida sessão, processo, tela e revisão antes de
 escrever; não inicia processos. Os estados são `queued`, `executing`, `sent` e `rejected`.
 `sent` confirma a escrita na PTY, não a conclusão do trabalho pelo agente.

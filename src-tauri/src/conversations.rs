@@ -67,21 +67,9 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
-/// Nome do diretório onde o Claude Code guarda os transcripts de um projeto: o caminho absoluto
-/// com todo caractere não-alfanumérico virando `-`, caixa preservada.
-/// `D:\PROGRAMACAO\...\OMNI-AGENTS` -> `D--PROGRAMACAO-...-OMNI-AGENTS`
-fn claude_project_slug(cwd: &str) -> String {
-    cwd.trim_end_matches(['\\', '/'])
-        .chars()
-        .map(|character| if character.is_ascii_alphanumeric() { character } else { '-' })
-        .collect()
-}
-
-/// Onde o transcript de uma sessão do Claude vai parar, dado o config dir daquela conta.
-/// Confirmado contra o `projectsDirectory` que `claude auth status` reporta.
-fn claude_transcript_path(config_dir: &Path, cwd: &str, session_id: &str) -> PathBuf {
-    config_dir.join("projects").join(claude_project_slug(cwd)).join(format!("{session_id}.jsonl"))
-}
+/// Reexportados do `omni-core`: o engine calcula o mesmo caminho ao abrir uma sessão pedida
+/// pelo celular, e um transcript em lugar divergente é uma timeline vazia no telefone.
+use omni_core::conversations::claude_transcript_path;
 
 fn find_mut<'a>(
     store: &'a mut ConversationStore,
@@ -410,18 +398,6 @@ fn tail_within_budget(turns: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn slug_matches_the_layout_claude_uses_on_disk() {
-        // Conferido contra ~/.claude/projects nesta máquina.
-        assert_eq!(
-            claude_project_slug(r"D:\PROGRAMACAO\PROJETOS\PROJETOS_REACT\OMNI-AGENTS"),
-            "D--PROGRAMACAO-PROJETOS-PROJETOS-REACT-OMNI-AGENTS"
-        );
-        assert_eq!(claude_project_slug(r"C:\Users\Felipe Campos"), "C--Users-Felipe-Campos");
-        // Barra final não pode gerar um sufixo a mais.
-        assert_eq!(claude_project_slug(r"C:\Users\dev\"), "C--Users-dev");
-    }
 
     #[test]
     fn transcript_parser_keeps_text_and_drops_tool_traffic() {

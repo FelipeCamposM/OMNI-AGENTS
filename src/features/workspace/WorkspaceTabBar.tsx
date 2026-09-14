@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../../components/ui";
+import { ChatIcon, KanbanIcon, ListIcon, TerminalIcon, GitBranchIcon } from "../../components/ui/PixelIcon";
+import { iconForPath } from "../files/fileIcons";
 import type { PaneKind, PaneNode, WorkspaceAction } from "../../types/workspace";
 import { TAB_DRAG_TYPE, readDraggedTab } from "./tabDrag";
 import { startFileTabDrag } from "./fileTabDrag";
@@ -72,7 +74,12 @@ export function WorkspaceTabBar({ pane, dispatch, onCloseTab, dirtyTabIds }: Wor
                 : "text-text-muted hover:text-text-secondary",
             ].join(" ")}
           >
-            <span className="uppercase text-[9px] mr-2 text-accent">{item.kind}</span>
+            {/* Ícone no lugar do rótulo do kind: "MARKDOWN" comia 8 caracteres de uma aba que já
+                é estreita, e o tipo do ARQUIVO diz mais do que o tipo do painel. */}
+            <TabIcon
+              item={item}
+              className="mr-1.5 inline-block h-3 w-3 shrink-0 align-[-2px] text-accent"
+            />
             {item.title}
             {dirtyTabIds?.has(item.id) && (
               <span className="ml-1.5 text-accent" title="Alterações não salvas" aria-label="Alterações não salvas">•</span>
@@ -178,4 +185,23 @@ function NewTabMenu({ onCreate }: { onCreate: (kind: PaneKind, title: string) =>
       )}
     </>
   );
+}
+
+/** Aba de arquivo mostra o ícone do arquivo; aba sem caminho (agente, terminal, kanban) mostra o
+ *  do tipo de painel. */
+const ICONE_POR_KIND: Partial<Record<PaneNode["tabs"][number]["kind"], React.ComponentType<{ className?: string }>>> = {
+  agent: ChatIcon,
+  terminal: TerminalIcon,
+  command: ListIcon,
+  kanban: KanbanIcon,
+  "git-graph": GitBranchIcon,
+  "git-diff": GitBranchIcon,
+};
+
+function TabIcon({ item, className }: { item: PaneNode["tabs"][number]; className?: string }) {
+  const doKind = ICONE_POR_KIND[item.kind];
+  // git-diff carrega `staged::<caminho>` no resourceId, e não um caminho puro — usar o ícone do
+  // kind nesses casos evita inventar extensão a partir de um prefixo.
+  const Icone = doKind ?? iconForPath(item.resourceId ?? item.title);
+  return <Icone className={className} aria-hidden />;
 }

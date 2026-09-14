@@ -20,6 +20,10 @@ describe("PixelIcon", () => {
       "BookIcon", "GitBranchIcon", "KanbanIcon", "ChevronDownIcon",
       "CloseIcon", "CopyIcon", "ReloadIcon",
       "PlayIcon", "AlertIcon", "WarningIcon", "CircleIcon", "ZapOffIcon",
+      // Base do mapa de tipos de arquivo (`src/features/files/fileIcons.ts`). Os demais são
+      // cobertos lá por um teste que confere o mapa inteiro contra este módulo.
+      "FileIcon", "FileTextIcon", "ImageIcon", "VideoIcon", "MusicIcon", "ArchiveIcon",
+      "PackageIcon", "CodeIcon", "ReactIcon", "NpmIcon",
     ];
     expect(Object.keys(PixelIcon)).toEqual(expect.arrayContaining(required));
   });

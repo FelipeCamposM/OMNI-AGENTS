@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import gsap from "gsap";
+import { iconForEntry } from "../features/files/fileIcons";
 import {
   baseName,
   copyIntoProject,
@@ -379,6 +380,7 @@ function FileTreeNode({
   const [draftName, setDraftName] = useState(entry.name);
   const isDropTarget = entry.isDirectory && dragOverPath === entry.path;
   const iconRef = useRef<HTMLSpanElement>(null);
+  const ItemIcon = iconForEntry(entry.name, entry.isDirectory);
 
   useEffect(() => {
     if (isRenaming) setDraftName(entry.name);
@@ -428,8 +430,15 @@ function FileTreeNode({
             className="w-full py-1 pr-3 text-left text-xs text-text-secondary hover:text-text-primary truncate cursor-default"
             title={entry.path}
           >
-            <span ref={iconRef} className="mr-1.5 inline-block" aria-hidden="true">
-              {entry.isDirectory ? (isOpen ? "▾" : "▸") : "·"}
+            {/* Seta e ícone são coisas diferentes agora: a seta é a affordance de expandir
+                (só pasta tem), o ícone é a identidade do item. O arquivo fica com o espaço da
+                seta como recuo, pra que os ícones aliem numa coluna só. */}
+            <span className="mr-0.5 inline-block w-3 text-center text-text-muted" aria-hidden="true">
+              {entry.isDirectory ? (isOpen ? "▾" : "▸") : ""}
+            </span>
+            {/* `iconRef` fica no ícone (e não na seta): é a PASTA que pulsa ao virar alvo de drop. */}
+            <span ref={iconRef} className="mr-1.5 inline-block align-[-2px]" aria-hidden="true">
+              <ItemIcon className="h-3 w-3" aria-hidden />
             </span>
             {entry.name}
           </button>

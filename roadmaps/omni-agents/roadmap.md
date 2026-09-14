@@ -1015,6 +1015,157 @@ Verificado: `npm run typecheck` limpo, `npm run test` 151/151 (2 testes novos do
 `npm run build:engine` refeito. **Falta rodar o app por horas e conferir o `TIME_WAIT` parado** —
 a prova final e medir `netstat -ano | findstr :47321` depois de um dia aberto.
 
+## Icones por tipo de arquivo na arvore (2026-09-13)
+
+Antes: a arvore desenhava TEXTO — `.` para qualquer arquivo e `>`/`v` para pasta
+(`FileTree.tsx:431-433`). Uma pasta com 40 itens virava 40 pontinhos iguais.
+
+- [x] **76 icones novos** no gerador (`scripts/gen-pixel-icons.mjs`), total 101. Script npm novo:
+  `npm run icons`.
+- [x] **`src/features/files/fileIcons.ts`**: cascata pasta-conhecida -> pasta -> nome-exato ->
+  extensao -> generico. ~180 chaves no total.
+- [x] Ligado em **quatro lugares**: arvore (`FileTree.tsx`), abas (`WorkspaceTabBar.tsx`, no lugar
+  do rotulo textual do kind), painel do Git (ao lado do status, nao no lugar dele) e Skills.
+- [x] Testes: `src/test/fileIcons.test.ts` (10) + lista de contrato ampliada em `PixelIcon.test.tsx`.
+
+### Monocromatico muda a estrategia de escolha dos icones
+
+O usuario escolheu **sem cor** (tudo herda `currentColor`). No Material Icon Theme metade do
+reconhecimento vem da cor; aqui a FORMA e o unico diferenciador — e o `pixelarticons` **nao tem
+icone de linguagem nenhuma** (so marcas: npm, docker, react, github). Mandar 70 extensoes para um
+`code` generico entregaria 70 desenhos iguais, ou seja, nada. Por isso linguagens irmas recebem
+glifos diferentes de proposito: `braces` (ts/json), `brackets-angle` (html/xml), `brackets`
+(vue/svelte), `cpu` (rs), `algorithm` (py), `binary` (c/cpp), `terminal` (sh/ps1), `hash` (cs).
+`src/test/fileIcons.test.ts` tem um teste que **trava essa decisao**: minimo de 30 formas distintas
+e nenhum icone cobrindo mais de 15% das extensoes. Se alguem no futuro simplificar o mapa jogando
+tudo em `CodeIcon`, o teste reprova.
+
+### Armadilhas do pipeline de icones
+
+- `src/components/ui/PixelIcon.tsx` e **gerado** — editar a mao e perder o trabalho no proximo
+  `npm run icons`. Adicionar icone = linha no objeto `ICONS` do script.
+- `PixelIcon.test.tsx` impoe duas regras que limitam a escolha: path **sem curvas**
+  (`/[CcSsQqTtAa]/`) e **nenhum path duplicado** entre exports. Os 76 escolhidos foram conferidos
+  em massa ANTES de entrar (script descartavel comparando os `d` de 104 candidatos): zero curvas,
+  zero duplicatas, inclusive contra os 25 que ja existiam. Dois tipos que compartilham desenho tem
+  de compartilhar o mesmo export.
+- `makeIcon` devolve sempre `function Icon`, entao **todo icone tem o mesmo `.name`** — comparar
+  icones por nome colapsa tudo em um. Comparar por referencia (custou um teste vermelho aqui).
+- Nao existe `folder-open` no pacote: a seta ao lado ja indica aberto/fechado, e dois indicadores
+  do mesmo estado seriam redundancia.
+- Na arvore, seta e icone agora sao elementos separados. **O `iconRef` do GSAP ficou no icone**, nao
+  na seta — e a pasta que pulsa ao virar alvo de arrasto (`FileTree.tsx:392-396`).
+
+Verificado: `npm run typecheck` limpo, `npm run test` 163/163. **Falta a conferencia visual** —
+se algum glifo ficou ilegivel em 12px (`h-3 w-3`) so olhando o app.
+
+## Celular: a causa raiz era um engine velho no instalador (2026-09-13)
+
+O acesso pelo celular nunca funcionou — e **não era código faltando**. O engine em execução,
+instalado junto com a 0.3.1, era de **09/09** e respondia a qualquer comando novo com
+`INVALID_REQUEST: unknown variant 'mobile_settings', expected one of 'ping', 'list_sessions', ...`.
+Ele não conhecia nem `mobile_settings` nem `account_usage`.
+
+Por que um engine velho sob um app novo: **o engine roda destacado e sobrevive ao instalador**. O
+NSIS não consegue substituir um `omni-engine.exe` em uso e segue em frente sem reclamar. App de
+10/09, engine de 09/09, e a tela de Celular deixava clicar em Ativar sem nada acontecer.
+
+- [x] `src-tauri/installer-hooks.nsh` + `bundle.windows.nsis.installerHooks`: `taskkill` no engine
+  antes de copiar os arquivos. É o conserto de verdade — sem ele a próxima release repete tudo.
+- [x] `engine_client.rs::outdated_engine_hint()` traduz `unknown variant` em `ENGINE_OUTDATED` com
+  instrução do que fazer. Cobre qualquer comando futuro, não só este.
+- [x] Banner "Beta — ainda não funciona" fora de `MobileSettings.tsx`; quem fala agora é
+  `status.listening` / `status.error`, que já existiam.
+
+### Token de dispositivo + QR
+
+- [x] `MobileConfig.token` (`#[serde(default)]`, então `mobile.json` antigo carrega). Gerado **só**
+  pelo engine: o `token` que vem do desktop é descartado em `settings()`, então uma tela de
+  configuração não planta segredo escolhido por ela. `rotate` troca e reinicia o listener.
+- [x] Validação dentro do `same_origin` que já existia, deny-by-default com allow-list de duas
+  entradas (`/` e `/assets/`) — rota nova nasce protegida. Comparação em tempo constante, 3 linhas,
+  sem dependência.
+- [x] Entrega pelo **fragmento** (`#t=…`), não query: não vai no request, não entra em log nem em
+  `Referer`. O celular grava em `localStorage`, limpa a barra e descarta sozinho no `401`.
+- [x] QR desenhado no desktop com a lib npm `qrcode` a partir do link que o **engine** monta.
+
+### Projetos publicados
+
+- [x] `EngineRequest::PublishWorkspace` + `GET /projetos`. Projeção mínima (`id`, `name`, `path`) —
+  sem árvore de layout, sem abas, sem git. Gravado em `engine/workspace.json` para sobreviver a
+  reinício do engine com o desktop fechado, que é justamente quando o celular é a única via.
+- [x] União com o `conversations.json`: projeto que já teve conversa aparece mesmo sem publicação.
+- [x] `useWorkspace.ts` publica com a **projeção serializada como debounce** — arrastar aba ou
+  mexer em split não gera IPC nenhum. Teste em `src/test/useWorkspace.test.tsx`.
+
+### Abrir sessão pelo celular
+
+- [x] `POST /sessoes` com `deny_unknown_fields`: `cwd` contrabandeado no corpo vira **422**, não um
+  campo ignorado em silêncio. O `cwd` sai do projeto conhecido, o comando sai da CLI publicada e o
+  `env` do perfil — o celular só escolhe ids dentro de listas fechadas. Teto de 16 sessões vivas.
+- [x] Reusa a fila existente (`ActionKind::Spawn`), com idempotência e expiração, pulando
+  `capabilities`/`If-Match` porque não há tela viva para ficar obsoleta.
+- [x] Movidos para o `omni-core` (o engine precisa deles com o desktop fechado, e duas cópias
+  divergiriam): `config_dir_var`, `env_for`, `write_index`, `claude_project_slug`,
+  `claude_transcript_path` — o teste do slug foi junto.
+
+### Pendente: validar no celular de verdade
+
+Nada disto foi testado num telefone. **O engine em execução precisa ser reiniciado** para valer, e
+isso mata as sessões vivas. Passos em `docs/mobile-and-account-usage.md`.
+
+### Gotcha novo: `act()` engolindo `findBy*`
+
+`await act(async () => { await userEvent.click(await screen.findByRole(...)) })` nunca acha o
+elemento: esperar dentro do `act` impede o React de aplicar o estado que faria ele aparecer. O
+`findBy*` fica **fora**, e só o clique dentro. Custou uma depuração inteira em `MobileApp.test.tsx`.
+
+## `npm run dev` derrubava o OMNI instalado (2026-09-13)
+
+**Sintoma:** todo `npm run dev` matava o app instalado e todas as sessões abertas nele.
+
+**Causa, em duas camadas:**
+1. `scripts/build-engine.mjs::shutdownRunningEngine()` — quando o binário de dev estava travado,
+   mandava `shutdown` para `127.0.0.1:47321` com o token de `%LOCALAPPDATA%\com.omni.agents`. Esse
+   endereço e esse token são **do app instalado**. O script matava o engine errado.
+2. Dev e instalado tinham a mesma identidade: mesma porta, mesma pasta de dados, mesmo token. O
+   `OMNI_ENGINE_PORT` existia, mas ninguém definia — a colisão era o padrão. De quebra, o app de
+   dev conversava com o engine instalado (versão velha).
+
+**Conserto:**
+- [x] `omni-protocol`: `DEV_ENGINE_PORT = 47341` e `DEV_DATA_DIR = "com.omni.agents.dev"`.
+- [x] `engine_client.rs`: `engine_port()` e `engine_dir()` devolvem a identidade de dev quando
+  `cfg!(debug_assertions)`. São os dois únicos pontos — conversas, perfis e uso já passavam por eles.
+- [x] `spawn_engine()` repassa `OMNI_ENGINE_PORT` e `OMNI_DATA_DIR` ao engine que abre. **Quem lança
+  decide a identidade**, não o perfil com que o binário foi compilado — um engine de release aberto
+  pelo app de dev continua isolado.
+- [x] Engine honra `OMNI_DATA_DIR`.
+- [x] `build-engine.mjs` mira só porta e token de dev. Porta e token são travas independentes: mesmo
+  com a porta colidindo, o engine instalado recusa um token que não é o dele. Travado sem resposta,
+  o script **para com erro** em vez de matar às cegas.
+- [x] `src/test/devIsolation.test.ts` trava o espelho JS↔Rust das constantes e proíbe a porta e a
+  pasta do instalado no código do script. Validado por mutação: voltar a porta para 47321 reprova.
+- [x] Prova empírica: build com o binário de dev travado de propósito — o engine instalado manteve o
+  mesmo pid antes e depois.
+
+**Consequência visível:** o dev agora começa com pasta de dados vazia (`com.omni.agents.dev`) —
+sem perfis, conversas nem sessões do app instalado. É o isolamento funcionando.
+
+## QR apontava para 127.0.0.1 e falhava no 4G (2026-09-14)
+
+O modo direto nascia com o bind padrão `127.0.0.1:47322` e a tela gerava QR com ele: abria no
+PC, falhava no celular sem explicação.
+
+- [x] `mobile.rs::preferir_ip()` — no modo direto, loopback vira o IP do Tailscale mantendo a porta.
+  Aplicado ao salvar **e na subida do servidor**, então `mobile.json` antigo se corrige sozinho.
+  Validado ao vivo: o engine de dev reabriu escutando em `100.94.187.72:47322` sem nenhum clique.
+- [x] Loopback nunca vira `public_url`/QR. Sem Tailscale a tela explica que o endereço só abre no PC.
+- [x] Modo direto virou o padrão ("funciona na hora"); HTTPS pelo Serve fica como opção que pede
+  liberar uma vez na conta. Endereço manual escondido em "avançado".
+- [x] A tela continua consultando enquanto o Serve publica em segundo plano.
+- Teste: `modo_direto_troca_loopback_pelo_ip_do_tailscale` (troca; sem Tailscale não troca; Serve
+  não troca; endereço já escolhido não é sobrescrito).
+
 ## Gotchas
 
 - **Bug real encontrado em 2026-08-27 (usuário travado com "tela preta")**: no caso sem split
@@ -1051,3 +1202,12 @@ a prova final e medir `netstat -ano | findstr :47321` depois de um dia aberto.
   persistente das Fases 2 e 3.
 - A documentação `README.md`, `RESUME.md` e partes antigas de `CLAUDE.md` ainda descrevem
   CAMPS-UTILS e precisam de uma limpeza editorial própria.
+
+## Release 0.4.0 (2026-09-14)
+
+- Versão sincronizada em `VERSION`, `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `Cargo.lock` e `src-tauri/tauri.conf.json`.
+- Novidades registradas em `src/lib/changelog.ts`: acesso pelo celular, ícones de arquivos, terminais, isolamento do desenvolvimento e atualização do engine no instalador.
+- Validação: 169 testes frontend, TypeScript e 39 testes Rust aprovados; fixture manual de navegador ignorado.
+- Build de produção compilado. O empacotamento MSI falhou ao executar `light.exe`; a distribuição utiliza NSIS, como as releases anteriores, via `npx tauri build --bundles nsis`.
+- Publicação prevista em `v0.4.0` com instalador Windows x64, assinatura do updater e `latest.json`.
+- Acesso por celular real/4G e instalação interativa não foram revalidados nesta preparação.

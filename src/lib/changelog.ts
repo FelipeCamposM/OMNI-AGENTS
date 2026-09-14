@@ -14,6 +14,18 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.4.0",
+    date: "2026-09-14",
+    changes: [
+      "Acesso pelo celular com configuração guiada e conexão pelo Tailscale.",
+      "Melhorias no carregamento das conversas e na reconexão pelo celular.",
+      "Novos ícones para identificar arquivos e pastas com mais facilidade.",
+      "Correções na criação de terminais e na troca de abas do workspace.",
+      "O ambiente de desenvolvimento deixa de interromper as sessões do app instalado.",
+      "O instalador atualiza corretamente o serviço que mantém os terminais e o acesso pelo celular.",
+    ],
+  },
+  {
     version: "0.3.1",
     date: "2026-09-10",
     beta: "Versão beta. A conexão com o celular ainda não está funcionando — a tela existe e você consegue ativar, mas o acesso pelo telefone não vai abrir. Não conte com ela ainda.",

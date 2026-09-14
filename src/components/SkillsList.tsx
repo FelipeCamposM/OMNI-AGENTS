@@ -1,4 +1,5 @@
 import { joinPath } from "../features/files/filesService";
+import { BookIcon } from "./ui/PixelIcon";
 import { useProjectSkills } from "../features/skills/useProjectSkills";
 
 interface SkillsListProps {
@@ -24,7 +25,10 @@ export function SkillsList({ projectPath, onOpenFile }: SkillsListProps) {
           className="w-full px-6 py-1.5 text-left truncate hover:bg-overlay/[0.07]"
           title={skill.description || skill.name}
         >
-          <span className="block text-xs text-text-secondary hover:text-text-primary truncate">{skill.name}</span>
+          <span className="block text-xs text-text-secondary hover:text-text-primary truncate">
+            <BookIcon className="mr-1.5 inline-block h-3 w-3 shrink-0 align-[-2px]" aria-hidden />
+            {skill.name}
+          </span>
           {skill.description && (
             <span className="block text-[10px] text-text-muted truncate">{skill.description}</span>
           )}

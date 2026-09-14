@@ -1,6 +1,6 @@
 {
   "productName": "OMNI AGENTS",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "identifier": "com.omni.agents",
   "build": {
     "frontendDist": "../dist",
@@ -45,7 +45,12 @@
     "createUpdaterArtifacts": true,
     "externalBin": [
       "binaries/omni-engine"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "installer-hooks.nsh"
+      }
+    }
   },
   "plugins": {
     "updater": {

@@ -4,7 +4,18 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { resolve } from "node:path";
 
-const ENGINE_PORT = 47_321;
+// Identidade do engine de DESENVOLVIMENTO — espelha `DEV_ENGINE_PORT` e `DEV_DATA_DIR` do
+// omni-protocol. **Nunca a do app instalado.**
+//
+// O único processo capaz de travar `src-tauri/binaries/omni-engine-*.exe` é um engine aberto pelo
+// app de dev; o instalado roda de `AppData\Local\OMNI AGENTS`. Esta função antes mirava a porta
+// 47321 com o token de `com.omni.agents`, que são do app instalado: toda vez que o binário de dev
+// estava em uso, `npm run dev` derrubava o OMNI instalado e todas as sessões abertas nele.
+//
+// Porta e token de dev são duas travas independentes: mesmo que a porta um dia colida, o engine
+// instalado recusa um token que não é o dele.
+const DEV_ENGINE_PORT = 47_341;
+const DEV_DATA_DIR = "com.omni.agents.dev";
 
 function digest(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
@@ -18,12 +29,12 @@ async function shutdownRunningEngine() {
   const localAppData = process.env.LOCALAPPDATA;
   if (!localAppData) return;
 
-  const tokenPath = resolve(localAppData, "com.omni.agents", "engine", "engine.token");
+  const tokenPath = resolve(localAppData, DEV_DATA_DIR, "engine", "engine.token");
   if (!existsSync(tokenPath)) return;
 
   const token = readFileSync(tokenPath, "utf8").trim();
   await new Promise((resolveShutdown) => {
-    const socket = createConnection({ host: "127.0.0.1", port: ENGINE_PORT });
+    const socket = createConnection({ host: "127.0.0.1", port: DEV_ENGINE_PORT });
     const finish = () => {
       socket.destroy();
       resolveShutdown();
@@ -61,7 +72,14 @@ async function copyEngine(source, destination) {
       await delay(100);
     }
   }
-  throw new Error(`Não foi possível atualizar o OMNI Engine bloqueado em ${destination}.`);
+  // Parar aqui é o comportamento certo, não uma falha a contornar: o processo que trava o binário
+  // não respondeu ao shutdown de dev, e a alternativa seria matar às cegas — que é justamente o que
+  // derrubava o app instalado.
+  throw new Error(
+    `Não foi possível atualizar o OMNI Engine de desenvolvimento em ${destination}: outro processo ` +
+      `está usando o arquivo. O app instalado não foi tocado. Feche o app de dev ` +
+      `(ou encerre omni-engine-x86_64-pc-windows-msvc.exe) e rode de novo.`,
+  );
 }
 
 const release = process.argv.includes("--release");

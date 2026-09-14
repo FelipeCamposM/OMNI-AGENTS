@@ -1,7 +1,7 @@
 use super::*;
 use axum::{Router, Json, extract::{State, Path as RoutePath, Query, DefaultBodyLimit, Request},
     http::{StatusCode, HeaderMap}, response::{IntoResponse, Response}, routing::{get,post}, middleware::{self, Next}};
-use omni_protocol::MobileConfig;
+use omni_protocol::{MobileConfig, PublishedAgent, PublishedProject, PublishedWorkspace};
 use serde::{Serialize, Deserialize};
 use serde_json::{Value, json};
 use std::net::{SocketAddr, IpAddr};
@@ -12,6 +12,14 @@ static ASSETS: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST
 
 pub struct MobileRuntime {
     config: Mutex<MobileConfig>,
+    workspace: Mutex<PublishedWorkspace>,
+    /// Nome MagicDNS resolvido na última leitura das configurações. Cacheado porque o
+    /// `same_origin` roda em **toda** requisição e não pode disparar a CLI do Tailscale.
+    magic_dns: Mutex<Option<String>>,
+    /// `(url pública, link para habilitar o Serve na conta)`. Preenchido pela tarefa do servidor,
+    /// nunca pela tela: `tailscale serve` pode levar dezenas de segundos e não pode segurar as
+    /// Configurações esperando.
+    serve_state: Mutex<(Option<String>,Option<String>)>,
     status: Mutex<(Option<String>,Option<String>)>,
     changed: Notify,
     actions: Mutex<VecDeque<Action>>,
@@ -26,37 +34,171 @@ struct Action {
     #[serde(skip)] kind: ActionKind,
 }
 #[derive(Clone, PartialEq)]
-enum ActionKind { Prompt(String), Approval(bool) }
+enum ActionKind { Prompt(String), Approval(bool), Spawn(SpawnPlan) }
+
+/// Tudo já resolvido **no servidor** antes de entrar na fila. O corpo do request não contribui com
+/// nenhum caminho nem binário: o `cwd` vem do projeto conhecido, o `command` da lista de CLIs que o
+/// desktop publicou, e o `env` do perfil gravado em `profiles.json`.
+#[derive(Clone, PartialEq)]
+struct SpawnPlan {
+    project_id: String,
+    cwd: String,
+    title: String,
+    provider: String,
+    profile_id: Option<String>,
+    command: String,
+    env: Vec<(String,String)>,
+    external_session_id: Option<String>,
+    transcript_path: Option<String>,
+}
 
 impl MobileRuntime {
     pub fn new(dir: &Path) -> Self {
         Self { config: Mutex::new(omni_protocol::read_json_or_default(&dir.join("mobile.json"))),
+            // Em disco, não só em memória: o engine reinicia sem o desktop aberto (update, crash), e
+            // aí a lista sumiria justamente quando o celular é a única via de acesso.
+            workspace: Mutex::new(omni_protocol::read_json_or_default(&dir.join("workspace.json"))),
+            magic_dns: Mutex::new(None),
+            serve_state: Mutex::new((None,None)),
             status: Mutex::new((None,None)),changed: Notify::new(),actions: Mutex::new(VecDeque::new()),pending: Notify::new() }
     }
 }
 
-fn tailscale_ip() -> Option<IpAddr> {
+/// Roda a CLI do Tailscale e devolve (sucesso, stdout+stderr). Timeout curto: o cliente pode estar
+/// travado e a tela de Configurações não pode ficar pendurada esperando por ele.
+fn tailscale(args: &[&str], segundos: u64) -> Option<(bool,String)> {
     let path = if cfg!(windows) { PathBuf::from("C:/Program Files/Tailscale/tailscale.exe") } else { PathBuf::from("tailscale") };
     let mut command = std::process::Command::new(path);
-    command.args(["ip","-4"]).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    command.args(args).stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
     #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
-    // The installed Tailscale client is the authority, not a guess based on a 100.x address.
-    command.stdout(std::process::Stdio::piped());
     let mut child = command.spawn().ok()?;
     let started = std::time::Instant::now();
     loop {
         if child.try_wait().ok()?.is_some() { break; }
-        if started.elapsed() > std::time::Duration::from_secs(2) { let _ = child.kill(); let _ = child.wait(); return None; }
+        if started.elapsed() > std::time::Duration::from_secs(segundos) { let _ = child.kill(); let _ = child.wait(); return None; }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
     let output = child.wait_with_output().ok()?;
-    if !output.status.success() { return None; }
-    String::from_utf8(output.stdout).ok()?.trim().parse().ok()
+    let mut texto = String::from_utf8_lossy(&output.stdout).into_owned();
+    texto.push_str(&String::from_utf8_lossy(&output.stderr));
+    Some((output.status.success(),texto))
+}
+
+fn tailscale_ip() -> Option<IpAddr> {
+    // The installed Tailscale client is the authority, not a guess based on a 100.x address.
+    let (ok,saida) = tailscale(&["ip","-4"],2)?;
+    ok.then(|| saida.trim().lines().next()?.trim().parse().ok()).flatten()
+}
+
+/// Nome MagicDNS deste PC (`pc-felipe.tail68f850.ts.net`). É o endereço que o `tailscale serve`
+/// publica, e ele não muda quando o IP do tailnet muda.
+fn magic_dns() -> Option<String> {
+    let (ok,saida) = tailscale(&["status","--json"],3)?;
+    if !ok { return None }
+    let valor: Value = serde_json::from_str(&saida).ok()?;
+    let nome = valor["Self"]["DNSName"].as_str()?.trim_end_matches('.').to_string();
+    (!nome.is_empty()).then_some(nome)
+}
+
+/// Publica a porta local pelo `tailscale serve`. Devolve `Err(link)` quando o Serve ainda não foi
+/// habilitado na conta — é uma ação de uma vez só, por tailnet, e a UI mostra o link como botão.
+fn serve_start(porta: u16) -> Result<(),String> {
+    let Some((ok,saida)) = tailscale(&["serve","--bg",&porta.to_string()],45) else {
+        return Err("O Tailscale não respondeu.".into());
+    };
+    if ok { return Ok(()) }
+    // A CLI imprime o link de habilitação junto da recusa; extrair é melhor do que mandar o
+    // usuário procurar no painel.
+    let link = saida.split_whitespace().find(|palavra| palavra.starts_with("https://login.tailscale.com/"));
+    Err(link.map(str::to_owned).unwrap_or_else(|| saida.trim().to_owned()))
+}
+
+fn serve_reset() { let _ = tailscale(&["serve","reset"],15); }
+
+/// Resolve MagicDNS e publica (ou despublica) pelo Serve. Roda na tarefa do servidor, fora do
+/// caminho da tela, porque a CLI do Tailscale pode levar dezenas de segundos para responder.
+async fn publicar(state: &Arc<EngineState>, config: &MobileConfig) {
+    let serve = config.serve;
+    let porta: u16 = config.bind.rsplit(':').next().and_then(|p|p.parse().ok()).unwrap_or(0);
+    let resultado = tokio::task::spawn_blocking(move || {
+        let nome = magic_dns();
+        if !serve { serve_reset(); return (nome,Ok(())) }
+        let publicado = serve_start(porta);
+        (nome,publicado)
+    }).await;
+    let Ok((nome,publicado)) = resultado else { return };
+
+    *state.mobile.magic_dns.lock().expect("magic poisoned") = nome.clone();
+    *state.mobile.serve_state.lock().expect("serve poisoned") = match publicado {
+        Ok(()) if serve => (nome.map(|n| format!("https://{n}")),None),
+        Ok(()) => (None,None),
+        Err(motivo) if motivo.starts_with("https://login.tailscale.com/") => (None,Some(motivo)),
+        Err(motivo) => (None,Some(motivo)),
+    };
+}
+
+
+/// Bate na porta do próprio servidor e conta o que aconteceu, em português.
+///
+/// Existe porque `listening` só prova que o `bind` deu certo — não prova que alguém consegue
+/// chegar. Era exatamente esse o buraco: a tela dizia "no ar" e o celular dava tempo esgotado, sem
+/// nada para diferenciar um problema de rede de um servidor que nunca subiu.
+///
+/// TCP cru e um GET de uma linha em vez de um cliente HTTP: são 15 linhas contra uma dependência
+/// nova no engine.
+pub fn check(state: &EngineState) -> Result<EngineResponse> {
+    use std::io::{Read as _, Write as _};
+    let config = state.mobile.config.lock().map_err(|_|anyhow!("config poisoned"))?.clone();
+    if !config.enabled { return Ok(EngineResponse::MobileCheck{ok:false,message:"Acesso pelo celular está desativado.".into()}); }
+
+    let address: SocketAddr = config.bind.parse().context("Endereço inválido")?;
+    let Ok(mut fluxo) = std::net::TcpStream::connect_timeout(&address,std::time::Duration::from_secs(3)) else {
+        return Ok(EngineResponse::MobileCheck{ok:false,
+            message:format!("Nada atendeu em {}. O servidor não chegou a subir — desative e ative de novo.",config.bind)});
+    };
+    fluxo.set_read_timeout(Some(std::time::Duration::from_secs(3)))?;
+    write!(fluxo,"GET /conversas HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",config.bind)?;
+    let mut resposta = String::new();
+    let _ = fluxo.take(256).read_to_string(&mut resposta);
+
+    // 401 é o resultado **bom**: prova que o servidor atendeu e que o token está sendo exigido.
+    Ok(if resposta.contains(" 401") {
+        EngineResponse::MobileCheck{ok:true,message:"Servidor no ar e exigindo o código de acesso, como deve ser.".into()}
+    } else if resposta.contains(" 200") {
+        EngineResponse::MobileCheck{ok:false,message:"Servidor no ar, mas respondeu sem exigir código — desative e ative de novo.".into()}
+    } else {
+        EngineResponse::MobileCheck{ok:false,
+            message:format!("Resposta inesperada do servidor: {}",resposta.lines().next().unwrap_or("(vazia)"))}
+    })
+}
+
+/// `127.0.0.1` nunca é alcançável pelo celular. No modo direto, se o Tailscale está no ar, troca o
+/// loopback pelo IP dele mantendo a porta. Devolve se trocou.
+///
+/// Sem isto a tela gerava um QR apontando para `127.0.0.1:47322`: abria no PC, e no 4G falhava sem
+/// explicação nenhuma. O IP vem injetado para o teste não depender de um Tailscale de verdade.
+fn preferir_ip(config: &mut MobileConfig, tailscale: Option<IpAddr>) -> bool {
+    if config.serve { return false } // o Serve exige loopback de propósito
+    let Ok(endereco) = config.bind.parse::<SocketAddr>() else { return false };
+    let Some(ip) = tailscale.filter(|_| endereco.ip().is_loopback()) else { return false };
+    config.bind = SocketAddr::new(ip,endereco.port()).to_string();
+    true
+}
+
+fn preferir_tailscale(config: &mut MobileConfig) -> bool {
+    if config.serve || !config.bind.starts_with("127.") { return false }
+    preferir_ip(config,tailscale_ip())
 }
 
 fn validate(config: &MobileConfig) -> Result<SocketAddr> {
     let address: SocketAddr = config.bind.parse().context("Use IP:porta, por exemplo 100.x.x.x:47322")?;
     if address.port() == 0 || address.port() == DEFAULT_ENGINE_PORT { return Err(anyhow!("Porta HTTP inválida")); }
+    // No modo serve quem atende a rede é o tailscaled; escutar num IP roteável além disso só
+    // aumentaria a superfície exposta sem serventia.
+    if config.serve && address.ip() != IpAddr::V4(std::net::Ipv4Addr::LOCALHOST) {
+        return Err(anyhow!("Com o Tailscale Serve ligado, use 127.0.0.1 no endereço"));
+    }
     if address.ip() == IpAddr::V4(std::net::Ipv4Addr::LOCALHOST) { return Ok(address); }
     if address.ip().is_unspecified() || Some(address.ip()) != tailscale_ip() {
         return Err(anyhow!("Escolha 127.0.0.1 ou o IP da interface Tailscale instalada neste PC"));
@@ -64,16 +206,36 @@ fn validate(config: &MobileConfig) -> Result<SocketAddr> {
     Ok(address)
 }
 
-pub fn settings(state: &EngineState, config: Option<MobileConfig>) -> Result<EngineResponse> {
-    if let Some(config) = config {
-        if config.enabled { validate(&config)?; }
+pub fn settings(state: &EngineState, config: Option<MobileConfig>, rotate: bool) -> Result<EngineResponse> {
+    if let Some(mut config) = config {
+        // O `token` que veio do desktop é descartado: quem guarda o segredo é o engine. Assim uma
+        // tela de configuração não consegue plantar um token escolhido por ela.
+        let atual = state.mobile.config.lock().map_err(|_|anyhow!("config poisoned"))?.token.clone();
+        config.token = if rotate || (config.enabled && atual.is_empty()) { random_token() } else { atual };
+        if config.enabled { preferir_tailscale(&mut config); validate(&config)?; }
         atomic_write_json(&state.state_file.with_file_name("mobile.json"),&config)?;
         *state.mobile.config.lock().map_err(|_|anyhow!("config poisoned"))? = config;
+        // Rotacionar reinicia o listener junto: é o que derruba quem estava com o token antigo.
         state.mobile.changed.notify_one();
     }
     let config = state.mobile.config.lock().map_err(|_|anyhow!("config poisoned"))?.clone();
     let (listening,error) = state.mobile.status.lock().map_err(|_|anyhow!("status poisoned"))?.clone();
-    Ok(EngineResponse::MobileSettings { config,listening,error })
+    let magic = state.mobile.magic_dns.lock().map_err(|_|anyhow!("magic poisoned"))?.clone();
+    let (serve_url,serve_hint) = state.mobile.serve_state.lock().map_err(|_|anyhow!("serve poisoned"))?.clone();
+
+    // No modo Serve o endereço público só existe quando o Tailscale confirmou a publicação; até
+    // lá a tela mostra "ligando" em vez de um link de loopback que o celular não alcança.
+    let public_url = if config.serve {
+        serve_url
+    } else {
+        // Loopback só abre neste PC: não vira QR. Sem Tailscale, a tela explica em vez de gerar um
+        // código que falha no celular.
+        listening.clone().filter(|_| !config.bind.starts_with("127."))
+    };
+
+    // O link do QR só existe quando há endereço público; sem isso o celular leria um endereço morto.
+    let qr = public_url.as_ref().map(|url| format!("{url}/#t={}",config.token));
+    Ok(EngineResponse::MobileSettings { config,listening,error,qr,public_url,magic_dns:magic,serve_hint })
 }
 
 pub fn start(state: Arc<EngineState>) {
@@ -99,8 +261,22 @@ pub fn start(state: Arc<EngineState>) {
             let config = state.mobile.config.lock().expect("config poisoned").clone();
             *state.mobile.status.lock().expect("status poisoned") = (None,None);
             if !config.enabled { state.mobile.changed.notified().await; continue; }
-            let checked = config.clone();
-            let address = tokio::task::spawn_blocking(move || validate(&checked)).await;
+            let mut checked = config.clone();
+            let resultado = tokio::task::spawn_blocking(move || {
+                let trocou = preferir_tailscale(&mut checked);
+                (validate(&checked),checked,trocou)
+            }).await;
+            let (address,config) = match resultado {
+                Ok((address,atualizada,trocou)) => {
+                    if trocou {
+                        // Configuração gravada com loopback (a padrão) se corrige sozinha na subida.
+                        let _ = atomic_write_json(&state.state_file.with_file_name("mobile.json"),&atualizada);
+                        *state.mobile.config.lock().expect("config poisoned") = atualizada.clone();
+                    }
+                    (Ok(address),atualizada)
+                }
+                Err(e) => (Err(e),config),
+            };
             let listener = match address {
                 Ok(Ok(address)) => TcpListener::bind(address).await.map_err(|e|e.to_string()),
                 Ok(Err(e)) => Err(e.to_string()), Err(e) => Err(e.to_string()),
@@ -108,6 +284,7 @@ pub fn start(state: Arc<EngineState>) {
             match listener {
                 Ok(listener) => {
                     *state.mobile.status.lock().expect("status poisoned") = (Some(format!("http://{}",config.bind)),None);
+                    publicar(&state,&config).await;
                     let shutdown = state.clone();
                     let _ = axum::serve(listener,router(state.clone())).with_graceful_shutdown(async move { shutdown.mobile.changed.notified().await; }).await;
                 }
@@ -119,10 +296,12 @@ pub fn start(state: Arc<EngineState>) {
 
 fn router(state: Arc<EngineState>) -> Router {
     Router::new().route("/conversas",get(conversations))
+        .route("/projetos",get(projects))
         .route("/conversas/{id}/timeline",get(timeline))
         .route("/conversas/{id}/prompt",post(prompt))
         .route("/conversas/{id}/aprovar",post(approve))
         .route("/atencao",get(attention))
+        .route("/sessoes",post(create_session))
         .fallback(get(asset)).layer(DefaultBodyLimit::max(32 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(),same_origin)).with_state(state)
 }
@@ -130,19 +309,55 @@ fn router(state: Arc<EngineState>) -> Router {
 type ApiError = (StatusCode, Json<Value>);
 fn error(status: StatusCode, message: &str) -> ApiError { (status,Json(json!({"error":message}))) }
 
+/// Comparação de tempo constante: `==` em string sai no primeiro byte diferente, e isso vaza o
+/// prefixo correto para quem conseguir medir. Três linhas resolvem sem dependência nova.
+fn token_confere(recebido: &str, esperado: &str) -> bool {
+    recebido.len() == esperado.len()
+        && recebido.bytes().zip(esperado.bytes()).fold(0_u8,|acumulado,(a,b)| acumulado | (a ^ b)) == 0
+}
+
+/// Hosts aceitos. No modo serve o `Host` que chega é o nome MagicDNS, não o bind de loopback —
+/// mas o nome continua sendo uma lista fechada, não um curinga: o check existe para barrar CSRF e
+/// DNS rebinding, e aceitar qualquer `Host` desfaria exatamente isso.
+fn hosts_aceitos(state: &EngineState) -> (Vec<String>, Vec<String>) {
+    let config = state.mobile.config.lock().expect("config poisoned").clone();
+    let mut hosts = vec![config.bind.clone()];
+    let mut origens = vec![format!("http://{}",config.bind)];
+    if config.serve {
+        if let Some(nome) = state.mobile.magic_dns.lock().expect("magic poisoned").clone() {
+            // O serve termina TLS na 443, então o `Host` chega sem porta.
+            hosts.push(nome.clone());
+            origens.push(format!("https://{nome}"));
+        }
+    }
+    (hosts,origens)
+}
+
 async fn same_origin(State(state): State<Arc<EngineState>>, request: Request, next: Next) -> Response {
-    let bind = state.mobile.config.lock().expect("config poisoned").bind.clone();
-    if request.headers().get("host").and_then(|v|v.to_str().ok()) != Some(bind.as_str()) {
+    let (hosts,origens) = hosts_aceitos(&state);
+    let bind = hosts[0].clone();
+    let host = request.headers().get("host").and_then(|v|v.to_str().ok()).unwrap_or("");
+    if !hosts.iter().any(|aceito| aceito == host) {
         // A mensagem nomeia a causa real: o Host tem que bater com o bind literal, então abrir pelo
         // nome MagicDNS do Tailscale cai aqui. Afrouxar a checagem não é opção — ela é a defesa
         // contra CSRF e DNS rebinding.
         return error(StatusCode::FORBIDDEN,"Host não permitido; abra pelo IP do Tailscale (100.x.x.x:porta), não pelo nome MagicDNS").into_response();
     }
     if request.method() != axum::http::Method::GET {
-        let origin = format!("http://{bind}");
-        if request.headers().get("origin").and_then(|v|v.to_str().ok()) != Some(origin.as_str()) {
+        let origin = request.headers().get("origin").and_then(|v|v.to_str().ok()).unwrap_or("");
+        if !origens.iter().any(|aceita| aceita == origin) {
             return error(StatusCode::FORBIDDEN,"Origem não permitida").into_response();
         }
+    }
+    // Token de dispositivo, em cima do Tailscale. Deny-by-default com uma allow-list de duas
+    // entradas: o bundle precisa carregar antes de existir token na mão do celular, e todo o resto
+    // é API. Rota nova nasce protegida sem ninguém lembrar de protegê-la.
+    let token = state.mobile.config.lock().expect("config poisoned").token.clone();
+    let path = request.uri().path();
+    let publico = path == "/" || path.starts_with("/assets/");
+    if !publico && !token.is_empty()
+        && !token_confere(request.headers().get("x-omni-token").and_then(|v|v.to_str().ok()).unwrap_or(""),&token) {
+        return error(StatusCode::UNAUTHORIZED,"Dispositivo não autorizado; leia o QR de novo no PC").into_response();
     }
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
@@ -186,6 +401,42 @@ fn summaries(state: &EngineState) -> Vec<Value> {
     }).collect()
 }
 
+pub fn publish(state: &EngineState, projects: Vec<PublishedProject>, agents: Vec<PublishedAgent>) -> Result<EngineResponse> {
+    let published = PublishedWorkspace { projects, agents, published_at_ms: now_ms() };
+    atomic_write_json(&state.state_file.with_file_name("workspace.json"),&published)?;
+    *state.mobile.workspace.lock().map_err(|_|anyhow!("workspace poisoned"))? = published;
+    Ok(EngineResponse::Ok)
+}
+
+/// Projetos que o celular pode escolher: os publicados pelo desktop, **mais** os que aparecem em
+/// conversas já registradas. A união é o que faz o celular continuar útil quando o desktop nunca
+/// publicou (instalação antiga) ou está fechado há muito tempo.
+fn known_projects(state: &EngineState) -> Vec<PublishedProject> {
+    let dir = state.state_file.parent().unwrap();
+    let mut projects = state.mobile.workspace.lock().expect("workspace poisoned").projects.clone();
+    for conversation in omni_core::conversations::read_index(dir) {
+        if projects.iter().any(|p| p.id == conversation.project_id) { continue }
+        let name = Path::new(&conversation.cwd).file_name().map(|n|n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| conversation.cwd.clone());
+        projects.push(PublishedProject { id: conversation.project_id.clone(), name, path: conversation.cwd.clone() });
+    }
+    projects
+}
+
+async fn projects(State(state): State<Arc<EngineState>>) -> Json<Value> {
+    Json(tokio::task::spawn_blocking(move || {
+        let dir = state.state_file.parent().unwrap();
+        let (agents,published_at_ms) = {
+            let workspace = state.mobile.workspace.lock().expect("workspace poisoned");
+            (workspace.agents.clone(),workspace.published_at_ms)
+        };
+        // `config_dir` fica de fora de propósito: é caminho de credencial e o celular não precisa.
+        let profiles: Vec<_> = omni_core::profiles(dir).into_iter()
+            .map(|p| json!({"id":p.id,"provider":p.provider,"name":p.name})).collect();
+        json!({"published_at_ms":published_at_ms,"projects":known_projects(&state),"agents":agents,"profiles":profiles})
+    }).await.unwrap_or(json!({"published_at_ms":0,"projects":[],"agents":[],"profiles":[]})))
+}
+
 async fn conversations(State(state): State<Arc<EngineState>>) -> Json<Value> {
     Json(tokio::task::spawn_blocking(move || json!(summaries(&state))).await.unwrap_or(json!([])))
 }
@@ -214,6 +465,75 @@ async fn prompt(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<
 async fn approve(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, headers: HeaderMap, Json(body): Json<ApprovalBody>) -> Result<(StatusCode,Json<Value>),ApiError> {
     enqueue_async(state,id,headers,ActionKind::Approval(body.permitir)).await
 }
+/// `deny_unknown_fields` é peça de segurança, não capricho: um `cwd` contrabandeado no corpo vira
+/// **400**, em vez de um campo ignorado em silêncio que dá a falsa impressão de ter sido aceito.
+#[derive(Deserialize)] #[serde(deny_unknown_fields)]
+struct SpawnBody { project_id: String, provider: String, profile_id: Option<String>, #[serde(default)] titulo: Option<String> }
+
+/// Teto de sessões vivas abertas pelo celular somadas às do desktop. Sem ele, um toque repetido no
+/// botão enche o PC de PTYs.
+/// ponytail: número fixo; se incomodar, vira configuração na tela de Celular.
+const MAX_SESSOES: usize = 16;
+
+/// Resolve o pedido do celular contra o que o servidor já conhece. Nada aqui sai do corpo do
+/// request além de escolhas dentro de listas fechadas.
+fn resolve_spawn(state: &Arc<EngineState>, body: &SpawnBody) -> Result<SpawnPlan, ApiError> {
+    let dir = state.state_file.parent().unwrap();
+
+    let project = known_projects(state).into_iter().find(|p| p.id == body.project_id)
+        .ok_or_else(||error(StatusCode::CONFLICT,"Projeto desconhecido; abra o app no PC uma vez para publicar a lista"))?;
+    if !Path::new(&project.path).is_dir() {
+        return Err(error(StatusCode::CONFLICT,"A pasta do projeto não existe mais neste PC"));
+    }
+
+    // O comando vem da lista publicada: o celular escolhe um id, nunca nomeia um binário.
+    let agent = state.mobile.workspace.lock().expect("workspace poisoned").agents.iter()
+        .find(|a| a.id == body.provider).cloned()
+        .ok_or_else(||error(StatusCode::CONFLICT,"CLI não publicada pelo desktop; abra o app no PC uma vez"))?;
+
+    let profiles = omni_core::profiles(dir);
+    let profile = match &body.profile_id {
+        Some(id) => Some(profiles.iter().find(|p| &p.id == id && p.provider == body.provider)
+            .ok_or_else(||error(StatusCode::CONFLICT,"Conta desconhecida para este agente"))?.clone()),
+        None => profiles.iter().find(|p| p.provider == body.provider && p.builtin).cloned(),
+    };
+
+    let titulo = body.titulo.clone().unwrap_or_else(|| format!("{} · celular",agent.label));
+    if titulo.len() > 120 || titulo.chars().any(|c| c.is_control()) {
+        return Err(error(StatusCode::BAD_REQUEST,"Título inválido"));
+    }
+
+    if state.sessions.lock().expect("sessions poisoned").values()
+        .filter(|entry| matches!(entry,SessionEntry::Live(_))).count() >= MAX_SESSOES {
+        return Err(error(StatusCode::TOO_MANY_REQUESTS,"Muitas sessões abertas neste PC; feche alguma antes"));
+    }
+
+    // Fixar o `--session-id` do Claude aqui é o que torna o caminho do transcript conhecido de
+    // imediato — sem isso a timeline do celular ficaria vazia até alguém descobrir o arquivo.
+    let (command,external_session_id,transcript_path) = if body.provider == "claude" {
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let path = profile.as_ref().map(|p| omni_core::conversations::claude_transcript_path(
+            Path::new(&p.config_dir),&project.path,&session_id).to_string_lossy().into_owned());
+        (format!("{} --session-id {session_id}",agent.command),Some(session_id),path)
+    } else {
+        (agent.command.clone(),None,None)
+    };
+
+    Ok(SpawnPlan {
+        project_id: project.id, cwd: project.path, title: titulo, provider: body.provider.clone(),
+        profile_id: profile.as_ref().map(|p| p.id.clone()),
+        env: profile.as_ref().map(omni_core::env_for).unwrap_or_default(),
+        command, external_session_id, transcript_path,
+    })
+}
+
+async fn create_session(State(state): State<Arc<EngineState>>, headers: HeaderMap, Json(body): Json<SpawnBody>) -> Result<(StatusCode,Json<Value>),ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let plan = resolve_spawn(&state,&body)?;
+        enqueue(&state,"",&headers,ActionKind::Spawn(plan))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha na fila"))?
+}
+
 async fn enqueue_async(state: Arc<EngineState>,id:String,headers:HeaderMap,kind:ActionKind) -> Result<(StatusCode,Json<Value>),ApiError> {
     tokio::task::spawn_blocking(move || enqueue(&state,&id,&headers,kind)).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha na fila"))?
 }
@@ -229,10 +549,20 @@ fn enqueue(state:&Arc<EngineState>,id:&str,headers:&HeaderMap,kind:ActionKind) -
     if actions.len() >= 1024 || actions.iter().filter(|a|a.state == "queued").count() >= 128 {
         return Err(error(StatusCode::TOO_MANY_REQUESTS,"Fila cheia; aguarde"));
     }
+    // Spawn não tem tela viva para ficar obsoleta: pula `capabilities` e `If-Match`, mas mantém
+    // idempotência, limite de fila e expiração — o que impede um toque repetido de abrir duas PTYs.
+    if let ActionKind::Spawn(plan) = &kind {
+        let action = Action { id: state.next_id(),conversation_id:String::new(),session_id:String::new(),
+            state:"queued".into(),created_at_ms:now_ms(),error:None,key:key.into(),revision:String::new(),
+            kind:ActionKind::Spawn(plan.clone()) };
+        let response = json!(action); actions.push_back(action); drop(actions);
+        state.mobile.pending.notify_one();
+        return Ok((StatusCode::ACCEPTED,Json(response)));
+    }
     let (_,session) = current(state,id)?;
     let session = session.ok_or_else(||error(StatusCode::CONFLICT,"Nenhuma sessão existente para esta conversa"))?;
     let capability = interaction::capabilities(&session);
-    let supported = match kind { ActionKind::Prompt(_) => capability.prompt, ActionKind::Approval(_) => capability.approve };
+    let supported = match kind { ActionKind::Prompt(_) => capability.prompt, ActionKind::Approval(_) => capability.approve, ActionKind::Spawn(_) => false };
     if !supported { return Err(error(StatusCode::CONFLICT,"Sessão ocupada ou tela não reconhecida; atualize o status")); }
     if headers.get("if-match").and_then(|h|h.to_str().ok()) != Some(capability.revision.as_str()) {
         return Err(error(StatusCode::PRECONDITION_FAILED,"O contexto mudou; atualize antes de responder"));
@@ -245,7 +575,66 @@ fn enqueue(state:&Arc<EngineState>,id:&str,headers:&HeaderMap,kind:ActionKind) -
 }
 
 fn execute(state:&Arc<EngineState>, action:&Action) -> Result<()> {
-    execute_checked(state,action,interaction::provider_running)
+    match &action.kind {
+        ActionKind::Spawn(plan) => spawn_from_mobile(state,action,plan),
+        _ => execute_checked(state,action,interaction::provider_running),
+    }
+}
+
+/// Abre a sessão que o celular pediu e registra a conversa que vai dar a timeline dela.
+///
+/// A conversa é criada **aqui** e não no desktop porque a janela pode estar fechada — é justamente
+/// esse o caso de uso. Sem a conversa, a sessão existiria mas o celular não teria o que ler.
+fn spawn_from_mobile(state:&Arc<EngineState>, action:&Action, plan:&SpawnPlan) -> Result<()> {
+    if now_ms().saturating_sub(action.created_at_ms) >= 60_000 { return Err(anyhow!("Ação expirada")); }
+    let dir = state.state_file.parent().unwrap().to_path_buf();
+
+    let conversation = omni_core::conversations::Conversation {
+        id: format!("conv-{}",uuid::Uuid::new_v4()),
+        project_id: plan.project_id.clone(),
+        cwd: plan.cwd.clone(),
+        title: plan.title.clone(),
+        created_at_ms: now_ms(),
+        segments: vec![omni_core::conversations::Segment {
+            provider: plan.provider.clone(),
+            profile_id: plan.profile_id.clone(),
+            external_session_id: plan.external_session_id.clone(),
+            transcript_path: plan.transcript_path.clone(),
+            terminal_session_id: None,
+            started_at_ms: now_ms(),
+            ended_at_ms: None,
+        }],
+    };
+
+    let session = spawn_terminal_inner(
+        state,
+        state.next_id(),
+        plan.project_id.clone(),
+        plan.title.clone(),
+        plan.cwd.clone(),
+        None,
+        Some(plan.command.clone()),
+        // A PTY nasce sem ninguém olhando; o desktop redimensiona quando anexar a aba.
+        // ponytail: tamanho fixo, suficiente até alguém reclamar.
+        30,
+        120,
+        now_ms(),
+        SessionOrigin {
+            env: plan.env.clone(),
+            provider: Some(plan.provider.clone()),
+            profile_id: plan.profile_id.clone(),
+            conversation_id: Some(conversation.id.clone()),
+            external_session_id: plan.external_session_id.clone(),
+        },
+    )?;
+
+    // Grava a conversa só depois do spawn dar certo: falhou, não fica conversa órfã na lista.
+    let mut index = omni_core::conversations::read_index(&dir);
+    let mut conversation = conversation;
+    conversation.segments[0].terminal_session_id = Some(session.id.clone());
+    index.push(conversation);
+    omni_core::conversations::write_index(&dir,&index)?;
+    Ok(())
 }
 
 fn execute_checked(state:&Arc<EngineState>, action:&Action, is_running: impl Fn(Option<u32>, &str) -> bool) -> Result<()> {
@@ -304,7 +693,7 @@ mod tests {
     #[ignore = "Run explicitly while checking the mobile UI in a browser (3 minutes)"]
     async fn browser_fixture() {
         let (_dir,state) = fixture();
-        *state.mobile.config.lock().unwrap() = MobileConfig{enabled:true,bind:"127.0.0.1:47329".into()};
+        *state.mobile.config.lock().unwrap() = MobileConfig{enabled:true,bind:"127.0.0.1:47329".into(),token:"fixture-token".into(),serve:false};
         let listener = TcpListener::bind("127.0.0.1:47329").await.unwrap();
         let stop = Arc::new(Notify::new());
         let notify = stop.clone();
@@ -316,6 +705,50 @@ mod tests {
     fn req(method:&str, uri:&str, origin:&str, body:&str) -> Request {
         Request::builder().method(method).uri(uri).header("host","127.0.0.1:47322").header("origin",origin)
             .header("content-type","application/json").header("idempotency-key","test-key").body(Body::from(body.to_owned())).unwrap()
+    }
+
+    /// O celular pode abrir sessão, mas **só** escolhendo dentro de listas que o servidor já
+    /// conhece. Cada asserção aqui corresponde a uma forma de tentar escapar disso.
+    #[tokio::test] async fn http_so_abre_sessao_dentro_do_que_ja_e_conhecido() {
+        let (_dir,state) = fixture();
+        publish(&state,
+            vec![PublishedProject{id:"p".into(),name:"Teste".into(),path:"C:/test".into()}],
+            vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:None}],
+        ).unwrap();
+        let app = router(state.clone());
+        let post = |corpo:&str| req("POST","/sessoes","http://127.0.0.1:47322",corpo);
+
+        // Caminho vindo do celular: recusado como campo desconhecido, não ignorado em silêncio.
+        // 422 é o que o axum devolve quando o corpo não desserializa — o que importa é que
+        // `deny_unknown_fields` transforma o `cwd` contrabandeado em recusa, não em campo ignorado.
+        assert_eq!(app.clone().oneshot(post(r#"{"project_id":"p","provider":"claude","cwd":"C:/Windows"}"#)).await.unwrap().status(),
+            StatusCode::UNPROCESSABLE_ENTITY);
+        // Binário escolhido pelo celular: só vale o que o desktop publicou.
+        assert_eq!(app.clone().oneshot(post(r#"{"project_id":"p","provider":"bash"}"#)).await.unwrap().status(),
+            StatusCode::CONFLICT);
+        // Projeto que o servidor não conhece.
+        assert_eq!(app.clone().oneshot(post(r#"{"project_id":"inventado","provider":"claude"}"#)).await.unwrap().status(),
+            StatusCode::CONFLICT);
+        // Conta que não existe para esse agente.
+        assert_eq!(app.clone().oneshot(post(r#"{"project_id":"p","provider":"claude","profile_id":"nao-existe"}"#)).await.unwrap().status(),
+            StatusCode::CONFLICT);
+
+        assert!(state.sessions.lock().unwrap().is_empty(),"nenhuma recusa pode ter aberto PTY");
+    }
+
+    #[test] fn o_plano_de_spawn_tira_o_caminho_do_registro_do_servidor() {
+        let (_dir,state) = fixture();
+        publish(&state,
+            vec![PublishedProject{id:"p".into(),name:"Teste".into(),path:".".into()}],
+            vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:None}],
+        ).unwrap();
+        let plan = resolve_spawn(&state,&SpawnBody{
+            project_id:"p".into(),provider:"claude".into(),profile_id:None,titulo:None,
+        }).expect("deveria resolver");
+        assert_eq!(plan.cwd,".","o cwd sai do projeto publicado");
+        assert!(plan.command.starts_with("claude --session-id "),
+            "o comando sai da CLI publicada e ja fixa o id da sessao: {}",plan.command);
+        assert!(plan.external_session_id.is_some(),"sem id fixo a timeline do celular nasceria vazia");
     }
 
     #[tokio::test] async fn concurrent_readers_and_no_privileged_http_surface() {
@@ -348,10 +781,121 @@ mod tests {
         action.created_at_ms = now_ms().saturating_sub(60_001);
         assert!(execute(&state,&action).unwrap_err().to_string().contains("expirada"));
     }
+    /// O bundle tem de carregar antes de o celular ter token; a API, não. Se esta asserção inverter,
+    /// ou o celular não consegue nem abrir a página, ou qualquer um na tailnet lê as conversas.
+    #[tokio::test] async fn token_de_dispositivo_protege_a_api_e_libera_o_bundle() {
+        let (_dir,state) = fixture();
+        state.mobile.config.lock().unwrap().token = "segredo".into();
+        let app = router(state);
+        let com_token = |valor:&str| {
+            Request::builder().method("GET").uri("/conversas").header("host","127.0.0.1:47322")
+                .header("x-omni-token",valor).body(Body::empty()).unwrap()
+        };
+        assert_eq!(app.clone().oneshot(req("GET","/conversas","","")).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+        assert_eq!(app.clone().oneshot(com_token("segred")).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+        assert_eq!(app.clone().oneshot(com_token("segredx")).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+        assert_eq!(app.clone().oneshot(com_token("segredo")).await.unwrap().status(),StatusCode::OK);
+        assert_ne!(app.oneshot(req("GET","/","","")).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+    }
+
+    #[test] fn habilitar_gera_token_e_o_desktop_nao_escolhe_o_segredo() {
+        let (_dir,state) = fixture();
+        let forjado = MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:"escolhido-pelo-desktop".into(),serve:false};
+        settings(&state,Some(forjado),false).unwrap();
+        let gerado = state.mobile.config.lock().unwrap().token.clone();
+        assert_eq!(gerado.len(),64,"32 bytes em hex");
+        assert_ne!(gerado,"escolhido-pelo-desktop");
+
+        // Salvar de novo preserva o token: só `rotate` troca, senão todo "Aplicar" desparearia o celular.
+        settings(&state,Some(MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:false}),false).unwrap();
+        assert_eq!(state.mobile.config.lock().unwrap().token,gerado);
+        settings(&state,Some(MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:false}),true).unwrap();
+        assert_ne!(state.mobile.config.lock().unwrap().token,gerado);
+    }
+
+    /// A união com o `conversations.json` é o que mantém o celular útil quando o desktop nunca
+    /// publicou ou está fechado há muito tempo. Sem ela, um app recém-instalado mostraria zero
+    /// projetos até alguém abrir a janela no PC.
+    #[tokio::test] async fn projetos_publicados_se_unem_aos_das_conversas() {
+        let (_dir,state) = fixture();
+        publish(&state,
+            vec![PublishedProject{id:"publicado".into(),name:"Publicado".into(),path:"C:/pub".into()}],
+            vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:Some("--continue".into())}],
+        ).unwrap();
+
+        let response = router(state).oneshot(req("GET","/projetos","","")).await.unwrap();
+        assert_eq!(response.status(),StatusCode::OK);
+        let data:Value = serde_json::from_slice(&to_bytes(response.into_body(),1_000_000).await.unwrap()).unwrap();
+
+        let ids:Vec<_> = data["projects"].as_array().unwrap().iter().map(|p|p["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&"publicado"));
+        assert!(ids.contains(&"p"),"o projeto da conversa do fixture tem de entrar: {ids:?}");
+        assert!(data["published_at_ms"].as_u64().unwrap() > 0);
+        assert_eq!(data["agents"][0]["resume"],"--continue");
+    }
+
+    #[test] fn publicacao_sobrevive_ao_reinicio_do_engine() {
+        let (dir,state) = fixture();
+        publish(&state,vec![PublishedProject{id:"p1".into(),name:"Um".into(),path:"C:/um".into()}],vec![]).unwrap();
+        // Um `MobileRuntime` novo é o que o engine monta ao subir de novo.
+        let renascido = MobileRuntime::new(dir.path());
+        assert_eq!(renascido.workspace.lock().unwrap().projects[0].id,"p1");
+    }
+
+    /// Com o Serve ligado o `Host` que chega é o nome MagicDNS, não o bind. Aceitar esse nome não
+    /// pode virar "aceitar qualquer Host": a checagem existe para barrar CSRF e DNS rebinding.
+    #[tokio::test] async fn serve_aceita_o_nome_magicdns_e_mais_nenhum() {
+        let (_dir,state) = fixture();
+        *state.mobile.config.lock().unwrap() =
+            MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:true};
+        *state.mobile.magic_dns.lock().unwrap() = Some("pc.tail0000.ts.net".into());
+        let app = router(state);
+        let get = |host:&str| Request::builder().method("GET").uri("/conversas")
+            .header("host",host).body(Body::empty()).unwrap();
+
+        assert_eq!(app.clone().oneshot(get("pc.tail0000.ts.net")).await.unwrap().status(),StatusCode::OK);
+        assert_eq!(app.clone().oneshot(get("127.0.0.1:47322")).await.unwrap().status(),StatusCode::OK);
+        assert_eq!(app.clone().oneshot(get("evil.example")).await.unwrap().status(),StatusCode::FORBIDDEN);
+        // Sufixo parecido não basta: a comparação é igualdade, não "termina com".
+        assert_eq!(app.oneshot(get("mal.pc.tail0000.ts.net")).await.unwrap().status(),StatusCode::FORBIDDEN);
+    }
+
+    #[test] fn serve_exige_loopback_no_bind() {
+        // Escutar num IP roteável **e** publicar pelo Serve dobraria a superfície sem serventia.
+        assert!(validate(&MobileConfig{enabled:true,bind:"100.64.0.1:47322".into(),token:String::new(),serve:true}).is_err());
+        assert!(validate(&MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:true}).is_ok());
+    }
+
+    /// O QR com `127.0.0.1` abria no PC e falhava no 4G. Com Tailscale no ar, o modo direto troca o
+    /// loopback pelo IP dele; nos outros casos não mexe em nada.
+    #[test] fn modo_direto_troca_loopback_pelo_ip_do_tailscale() {
+        let ts: IpAddr = "100.94.187.72".parse().unwrap();
+        let config = |bind:&str,serve:bool| MobileConfig{enabled:true,bind:bind.into(),token:String::new(),serve};
+
+        let mut padrao = config("127.0.0.1:47322",false);
+        assert!(preferir_ip(&mut padrao,Some(ts)));
+        assert_eq!(padrao.bind,"100.94.187.72:47322","troca o IP e mantém a porta");
+
+        // Sem Tailscale não há para onde trocar: fica em loopback e a tela explica.
+        let mut sem_tailscale = config("127.0.0.1:47322",false);
+        assert!(!preferir_ip(&mut sem_tailscale,None));
+        assert_eq!(sem_tailscale.bind,"127.0.0.1:47322");
+
+        // O Serve exige loopback de propósito.
+        let mut serve = config("127.0.0.1:47322",true);
+        assert!(!preferir_ip(&mut serve,Some(ts)));
+        assert_eq!(serve.bind,"127.0.0.1:47322");
+
+        // Endereço já roteável escolhido pela pessoa não é sobrescrito.
+        let mut escolhido = config("100.64.0.9:47322",false);
+        assert!(!preferir_ip(&mut escolhido,Some(ts)));
+        assert_eq!(escolhido.bind,"100.64.0.9:47322");
+    }
+
     #[test] fn loopback_default_and_no_wildcard() {
         let config = MobileConfig::default(); assert!(!config.enabled); assert!(validate(&config).is_ok());
-        assert!(validate(&MobileConfig{enabled:true,bind:"0.0.0.0:47322".into()}).is_err());
-        assert!(validate(&MobileConfig{enabled:true,bind:"127.0.0.1:47321".into()}).is_err());
+        assert!(validate(&MobileConfig{enabled:true,bind:"0.0.0.0:47322".into(),token:String::new(),serve:false}).is_err());
+        assert!(validate(&MobileConfig{enabled:true,bind:"127.0.0.1:47321".into(),token:String::new(),serve:false}).is_err());
     }
 
     #[cfg(windows)]
