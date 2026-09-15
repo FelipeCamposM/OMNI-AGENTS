@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import type { LayoutNode, Project, WorkspaceState } from "../../types/workspace";
-import type { TerminalSession } from "./terminalService";
+import type { TerminalSession, TerminalState } from "./terminalService";
 
 /** Motivo pelo qual um agente quer atenção. `usage_limit`/`api_error` vêm do `notice` do engine —
  *  são rótulos melhores pro mesmo estado ocioso, não estados novos (ver `notice` no protocolo). */
@@ -39,6 +39,8 @@ export interface AttentionItem {
   sessionId: string;
   sessionName: string;
   reason: AttentionReason;
+  state: TerminalState;
+  attentionSeq: number;
   projectId: string;
   projectName: string;
   workspaceId: string;
@@ -84,7 +86,7 @@ export function useAttention(
   workspaces: WorkspaceState[],
   activeWorkspaceId: string | null,
   paneVisible = true
-): { items: AttentionItem[]; countByWorkspace: Record<string, number> } {
+): { items: AttentionItem[]; all: AttentionItem[]; countByWorkspace: Record<string, number> } {
   // ponytail: mapa em memória — recarregar o app rebadgeia tudo que continua pendente, que é o
   // comportamento certo (o usuário não triou nada). Persistir exigiria podar ids mortos e lidar
   // com o `output_seq`, que reinicia em 0 a cada restart do engine.
@@ -116,25 +118,31 @@ export function useAttention(
     }
   }
 
+  // `all` ignora o "já visto": é o que o notificador precisa. Com o filtro, um redesenho do CLI
+  // depois de visto trazia o item de volta e soltava toast de um evento antigo.
+  const all: AttentionItem[] = [];
   const items: AttentionItem[] = [];
   for (const session of sessions) {
     const reason = (session.notice ?? session.state) as AttentionReason;
     if (!ATTENTION_ORDER.includes(reason)) continue;
-    // Já visto: nada mudou desde a última vez que essa sessão esteve na tela.
-    if (seen.current[session.id] === session.output_seq) continue;
     // Sessão de um projeto que não está em workspace nenhum (projeto fechado, sessão viva no
     // engine) não tem onde ser mostrada.
     const place = locate.get(session.project_id);
     if (!place) continue;
-    items.push({
+    const item: AttentionItem = {
       sessionId: session.id,
       sessionName: session.name,
       reason,
+      state: session.state,
+      attentionSeq: session.attention_seq ?? 0,
       projectId: session.project_id,
       projectName: place.projectName,
       workspaceId: place.workspaceId,
       workspaceName: place.workspaceName,
-    });
+    };
+    all.push(item);
+    // Já visto: nada mudou desde a última vez que essa sessão esteve na tela.
+    if (seen.current[session.id] !== session.output_seq) items.push(item);
   }
 
   items.sort((a, b) => ATTENTION_ORDER.indexOf(a.reason) - ATTENTION_ORDER.indexOf(b.reason));
@@ -145,5 +153,5 @@ export function useAttention(
     countByWorkspace[item.workspaceId] = (countByWorkspace[item.workspaceId] ?? 0) + 1;
   }
 
-  return { items, countByWorkspace };
+  return { items, all, countByWorkspace };
 }

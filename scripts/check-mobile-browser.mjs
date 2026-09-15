@@ -17,7 +17,8 @@ let socket;
 try {
   let serverReady = false;
   for (let i = 0; i < 120; i++) {
-    try { const response = await fetch("http://127.0.0.1:47329/conversas"); serverReady = response.ok; if (serverReady) break; }
+    // O fixture exige o código de acesso como o engine real (`browser_fixture` usa `fixture-token`).
+    try { const response = await fetch("http://127.0.0.1:47329/conversas", { headers: { "X-Omni-Token": "fixture-token" } }); serverReady = response.ok; if (serverReady) break; }
     catch { /* Rust fixture is still compiling/starting. */ }
     await delay(500);
   }
@@ -57,17 +58,25 @@ try {
   await command("Runtime.enable"); await command("Page.enable");
   for (const width of [320,390,768]) {
     await command("Emulation.setDeviceMetricsOverride",{width,height:844,deviceScaleFactor:1,mobile:true});
-    await command("Page.navigate",{url:"http://127.0.0.1:47329"});
+    // Entra pelo link do QR: exercita o token vindo do fragmento, igual ao celular de verdade.
+    // `?w=` força recarga: mudar só o fragmento não recarrega, e o app ficaria na tela da largura anterior.
+    await command("Page.navigate",{url:`http://127.0.0.1:47329/?w=${width}#t=fixture-token`});
     let loaded = false;
-    for (let i = 0; i < 60; i++) { if (await evaluate("document.body.innerText.includes('Abrir conversa')")) { loaded = true; break; } await delay(100); }
-    assert.ok(loaded,`Mobile conversation list did not load: ${await evaluate("document.body.innerText")}`);
+    for (let i = 0; i < 60; i++) { if (await evaluate("document.body.innerText.includes('Abrir projeto')")) { loaded = true; break; } await delay(100); }
+    assert.ok(loaded,`Mobile project list did not load: ${await evaluate("document.body.innerText")}`);
     const layout = await evaluate("({width:innerWidth,scroll:document.documentElement.scrollWidth,buttons:[...document.querySelectorAll('button')].map(b=>({text:b.innerText,height:b.getBoundingClientRect().height,right:b.getBoundingClientRect().right}))})");
     assert.ok(layout.scroll <= width,`Horizontal overflow at ${width}: ${JSON.stringify(layout)}`);
     assert.ok(layout.buttons.every(b=>b.height >= 44 && b.right <= width),`Inaccessible button at ${width}`);
     await writeFile(resolve("target",`mobile-${width}.png`),Buffer.from((await command("Page.captureScreenshot",{format:"png"})).data,"base64"));
+    await evaluate("[...document.querySelectorAll('button')].find(b=>b.innerText==='Abrir projeto').click()");
+    for (let i = 0; i < 50; i++) { if (await evaluate("document.body.innerText.includes('Abrir conversa')")) break; await delay(100); }
     await evaluate("[...document.querySelectorAll('button')].find(b=>b.innerText==='Abrir conversa').click()");
     for (let i = 0; i < 50; i++) { if (await evaluate("!!document.querySelector('textarea')")) break; await delay(100); }
-    assert.ok(await evaluate("[...document.querySelectorAll('button')].find(b=>b.innerText==='Enviar resposta')?.disabled"),"Inactive sessions must not accept prompts");
+    // O botão de envio é uma seta; o nome acessível é que diz o que ele faz.
+    assert.ok(await evaluate("document.querySelector('button[aria-label=\"Enviar resposta\"]')?.disabled"),"Inactive sessions must not accept prompts");
+    const detalhe = await evaluate("({scroll:document.documentElement.scrollWidth,buttons:[...document.querySelectorAll('button')].map(b=>({text:b.innerText||b.getAttribute('aria-label'),height:b.getBoundingClientRect().height,width:b.getBoundingClientRect().width,right:b.getBoundingClientRect().right}))})");
+    assert.ok(detalhe.scroll <= width,`Horizontal overflow in chat at ${width}: ${JSON.stringify(detalhe)}`);
+    assert.ok(detalhe.buttons.every(b=>b.height >= 44 && b.right <= width),`Inaccessible chat button at ${width}: ${JSON.stringify(detalhe.buttons)}`);
     await writeFile(resolve("target",`mobile-detail-${width}.png`),Buffer.from((await command("Page.captureScreenshot",{format:"png"})).data,"base64"));
     console.log(`Mobile ${width}px: list, detail, touch targets and empty session validated`);
   }

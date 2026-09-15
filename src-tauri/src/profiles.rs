@@ -45,8 +45,18 @@ pub fn native_config_dir(provider: &str) -> Option<PathBuf> {
 pub fn credential_present(provider: &str, config_dir: &Path) -> bool {
     let Some((credential_file, api_key_var)) = credential_rule(provider) else { return false };
     config_dir.join(credential_file).is_file()
+        || (cfg!(target_os = "macos") && provider == "claude" && claude_oauth_account(config_dir))
         || (!api_key_var.is_empty()
             && env::var_os(api_key_var).is_some_and(|value| !value.is_empty()))
+}
+
+/// No macOS o Claude Code guarda o token no Keychain, não em `.credentials.json`. O que fica em disco
+/// é o `oauthAccount` do `.claude.json`: dentro do config dir quando `CLAUDE_CONFIG_DIR` está setado,
+/// ao lado dele (`~/.claude.json`) no perfil nativo.
+fn claude_oauth_account(config_dir: &Path) -> bool {
+    [Some(config_dir.join(".claude.json")), config_dir.parent().map(|home| home.join(".claude.json"))]
+        .into_iter().flatten()
+        .any(|state| fs::read_to_string(state).is_ok_and(|text| text.contains("\"oauthAccount\"")))
 }
 
 pub use omni_core::Profile;
@@ -69,9 +79,11 @@ fn store_path() -> Result<PathBuf, String> {
 
 /// Raiz dos config dirs criados pelo OMNI, conforme spec §9.3.
 fn profiles_root() -> Result<PathBuf, String> {
+    // `APPDATA` só existe no Windows; macOS/Linux caem na pasta de dados local do usuário.
     env::var_os("APPDATA")
         .map(PathBuf::from)
-        .ok_or_else(|| "APPDATA indisponível".to_string())
+        .or_else(omni_protocol::local_data_root)
+        .ok_or_else(|| "pasta de dados do usuário indisponível".to_string())
         .map(|base| base.join("OMNI-AGENTS").join("profiles"))
 }
 

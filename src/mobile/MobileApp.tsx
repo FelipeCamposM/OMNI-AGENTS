@@ -1,6 +1,7 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/Button";
-import { request, actionKey, ApiError, type Conversation, type Projects, type Timeline } from "./api";
+import { request, actionKey, ApiError, salvarToken, type Conversation, type Projects, type Timeline } from "./api";
+import { AgentWorking, MessageBubble, PairingScreen } from "./Chat";
 import { usePoll } from "./usePoll";
 
 const STATES: Record<string,string> = { working: "Trabalhando", answered: "Resposta disponível", approval_required: "Possível aprovação pendente", stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido" };
@@ -99,31 +100,71 @@ function ConversationList({ conversations, select }: { conversations: Conversati
     </article>)}</div>;
 }
 
+/** Prompt mandado daqui que ainda não apareceu no transcript. Some quando o texto chega. */
+interface Enviado { texto: string; em: number; acao: string | null }
+
+/** Ritmo do polling com o agente ativo. 5 s faz a conversa parecer travada; 1,5 s parece ao vivo. */
+const POLL_ATIVO_MS = 1_500;
+
 function ConversationDetail({ conversation, refresh }: { conversation: Conversation; refresh: () => Promise<void> }) {
   const [data, setData] = useState<Timeline | null>(null);
   const [text, setText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  // Separado de `error`: o polling limpa `error` a cada ciclo bem-sucedido, e uma recusa da fila
+  // aparecia e sumia no mesmo instante. Este só limpa no próximo envio.
+  const [falhaEnvio, setFalhaEnvio] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [cursor, setCursor] = useState(0);
+  const [enviado, setEnviado] = useState<Enviado | null>(null);
   const pending = useRef<{ signature: string; key: string; revision: string } | null>(null);
-  const load = useCallback(async () => { setData(await request<Timeline>(`/conversas/${encodeURIComponent(conversation.id)}/timeline?cursor=${cursor}`)); }, [conversation.id, cursor]);
+  const trabalhandoDesde = useRef<number | null>(null);
+  const fim = useRef<HTMLDivElement>(null);
+
+  const trabalhando = conversation.state === "working";
+  const ativo = trabalhando || enviado !== null;
+  if (ativo && trabalhandoDesde.current === null) trabalhandoDesde.current = enviado?.em ?? Date.now();
+  if (!ativo) trabalhandoDesde.current = null;
+
+  const url = `/conversas/${encodeURIComponent(conversation.id)}/timeline?cursor=${cursor}`;
+  const load = useCallback(async () => { setData(await request<Timeline>(url)); }, [url]);
   usePoll(async () => {
-    const result = await request<Timeline>(`/conversas/${encodeURIComponent(conversation.id)}/timeline?cursor=${cursor}`);
+    const result = await request<Timeline>(url);
     setData(result); setError(null);
-  }, reason => setError(String(reason)), [conversation.id,cursor]);
+    // Com o agente ativo o estado da conversa também precisa andar rápido, senão o "trabalhando"
+    // fica na tela até o próximo ciclo lento da lista.
+    if (ativo) await refresh();
+  }, reason => setError(String(reason)), [url, ativo], ativo ? POLL_ATIVO_MS : undefined);
+
+  const mensagens = data?.timeline.messages ?? [];
+
+  // O prompt otimista sai quando chega de verdade no transcript, ou quando a fila o recusa.
+  useEffect(() => {
+    if (!enviado) return;
+    if (mensagens.some(m => m.role === "user" && m.text.trim() === enviado.texto.trim())) { setEnviado(null); return; }
+    const acao = data?.actions.find(a => a.id === enviado.acao);
+    if (acao?.state === "rejected") {
+      setEnviado(null);
+      setFalhaEnvio(`Não foi enviado: ${acao.error ?? "o agente recusou a entrada"}`);
+    }
+  }, [data, enviado, mensagens]);
+
+  // Chat rola para a mensagem mais nova.
+  useEffect(() => { fim.current?.scrollIntoView?.({ block: "end" }); }, [mensagens.length, ativo]);
+
   async function send(kind: "prompt" | "aprovar", permitir?: boolean) {
     const capability = conversation.capabilities;
     if (!capability || busy) return;
     const body = kind === "prompt" ? { texto: text } : { permitir };
     const signature = JSON.stringify([kind,body]);
     if (pending.current?.signature !== signature) pending.current = { signature,key:actionKey(),revision:capability.revision };
-    setBusy(true); setError(null); setNotice(null);
+    setBusy(true); setError(null); setFalhaEnvio(null);
     try {
-      await request(`/conversas/${encodeURIComponent(conversation.id)}/${kind}`, { method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":pending.current.key,"If-Match":pending.current.revision},body:JSON.stringify(body) });
+      const acao = await request<{ id?: string }>(`/conversas/${encodeURIComponent(conversation.id)}/${kind}`, { method:"POST",headers:{"Content-Type":"application/json","Idempotency-Key":pending.current.key,"If-Match":pending.current.revision},body:JSON.stringify(body) });
       pending.current = null;
-      if (kind === "prompt") setText("");
-      setNotice("Ação enfileirada. Acompanhe a confirmação abaixo.");
+      if (kind === "prompt") {
+        setEnviado({ texto: text, em: Date.now(), acao: acao?.id ?? null });
+        setText("");
+      }
       await Promise.all([load(),refresh()]);
     } catch (reason) {
       // A network timeout has an unknown outcome: reuse the key on retry, even after refresh.
@@ -132,23 +173,48 @@ function ConversationDetail({ conversation, refresh }: { conversation: Conversat
     }
     finally { setBusy(false); }
   }
-  return <section>
-    <h2 className="text-lg font-semibold">{conversation.title}</h2>
-    <p className="text-sm text-text-secondary">{[conversation.provider, STATES[conversation.state ?? ""] ?? "Sem sessão ativa"].filter(Boolean).join(" · ")}</p>
-    <div aria-label="Mensagens">{data?.timeline.messages.map(message => <article className="mobile-card" key={message.id}>
-      <p className="text-xs text-accent mb-2">{message.role === "user" ? "Você" : message.provider}</p><p className="mobile-message">{message.text}</p>
-    </article>)}</div>
+
+  const estado = STATES[conversation.state ?? ""] ?? "Sem sessão ativa";
+  return <section className="chat-tela">
+    <header className="mb-2">
+      <h2 className="text-lg font-semibold">{conversation.title}</h2>
+      <p className="chat-state"><span className={`chat-state-dot${ativo ? " ativo" : ""}`} aria-hidden />
+        {[conversation.provider, estado].filter(Boolean).join(" · ")}</p>
+    </header>
+
+    {(cursor > 0 || data?.timeline.next_cursor != null) && <div className="flex gap-2 my-3">
+      {cursor > 0 && <Button variant="ghost" onClick={() => setCursor(Math.max(0,cursor - 100))}>Anteriores</Button>}
+      {data?.timeline.next_cursor != null && <Button variant="ghost" onClick={() => setCursor(data.timeline.next_cursor!)}>Próximas mensagens</Button>}
+    </div>}
     {!!data?.timeline.unavailable_segments.length && <p className="text-warning text-sm">Parte do histórico está indisponível; nenhum transcript foi associado por aproximação.</p>}
-    <div className="flex gap-2 my-3">{cursor > 0 && <Button onClick={() => setCursor(Math.max(0,cursor - 100))}>Anteriores</Button>}{data?.timeline.next_cursor != null && <Button onClick={() => setCursor(data.timeline.next_cursor!)}>Próximas mensagens</Button>}</div>
-    {conversation.capabilities?.approve && <div className="mobile-card"><h3 className="font-semibold">Aprovação pendente</h3><p className="mobile-message my-3">{conversation.capabilities.approval_text}</p><div className="flex gap-3"><Button disabled={busy} onClick={() => void send("aprovar",true)}>Permitir</Button><Button variant="danger" disabled={busy} onClick={() => void send("aprovar",false)}>Negar</Button></div></div>}
-    <form onSubmit={event => { event.preventDefault(); void send("prompt"); }} className="space-y-3">
-      <label htmlFor="reply">Sua resposta</label><textarea id="reply" className="mobile-composer" value={text} onChange={event => setText(event.target.value)} maxLength={16000} placeholder="Responda ao agente…" />
-      <Button type="submit" disabled={busy || !text.trim() || !conversation.capabilities?.prompt}>Enviar resposta</Button>
+
+    <div className="chat" aria-label="Mensagens">
+      {data && mensagens.length === 0 && !enviado && !ativo && !data.timeline.unavailable_segments.length && cursor === 0 &&
+        <p className="text-sm text-text-secondary text-center my-6">Nenhuma mensagem ainda. Mande o primeiro prompt abaixo.</p>}
+      {mensagens.map(message => <MessageBubble key={message.id} lado={message.role === "user" ? "user" : "agent"}
+        autor={message.role === "user" ? "Você" : message.provider}>{message.text}</MessageBubble>)}
+      {enviado && <MessageBubble lado="user" autor="Você" pendente>{enviado.texto}</MessageBubble>}
+      {conversation.capabilities?.approve && <div className="bubble bubble-agent">
+        <p className="bubble-author">Aprovação pendente</p>
+        <p className="mobile-message my-2">{conversation.capabilities.approval_text}</p>
+        <div className="flex gap-3"><Button disabled={busy} onClick={() => void send("aprovar",true)}>Permitir</Button><Button variant="danger" disabled={busy} onClick={() => void send("aprovar",false)}>Negar</Button></div>
+      </div>}
+      {ativo && !conversation.capabilities?.approve && <AgentWorking desde={trabalhandoDesde.current ?? Date.now()} />}
+      <div ref={fim} />
+    </div>
+
+    {(falhaEnvio || error) && <p role="alert" className="text-danger text-sm my-2">{falhaEnvio ?? error}</p>}
+    {/* O motivo genérico só aparece com o agente parado: trabalhando, o "ocupado" é esperado e o
+        indicador acima já explica. */}
+    {!ativo && conversation.capabilities?.reason && <p className="text-xs text-text-muted my-2">{conversation.capabilities.reason}</p>}
+
+    <form onSubmit={event => { event.preventDefault(); void send("prompt"); }} className="chat-composer">
+      <label htmlFor="reply" className="sr-only">Sua resposta</label>
+      <textarea id="reply" rows={1} value={text} onChange={event => setText(event.target.value)} maxLength={16000}
+        placeholder={trabalhando ? "Espere o agente terminar…" : "Mensagem para o agente…"} />
+      <Button type="submit" className="chat-send" aria-label="Enviar resposta"
+        disabled={busy || !text.trim() || !conversation.capabilities?.prompt}>↑</Button>
     </form>
-    {conversation.capabilities?.reason && <p className="text-sm text-text-secondary mt-3">{conversation.capabilities.reason}</p>}
-    {notice && <p role="status" className="text-sm mt-3">{notice}</p>}
-    {error && <p role="alert" className="text-danger mt-3">{error}</p>}
-    {data?.actions.slice(-5).map(action => <p key={action.id} className="text-sm text-text-secondary mt-2">{({ queued:"Na fila", executing:"Enviando", sent:"Enviado ao CLI", rejected:"Não enviado" } as Record<string,string>)[action.state] ?? action.state}{action.error ? `: ${action.error}` : ""}</p>)}
   </section>;
 }
 
@@ -160,6 +226,9 @@ export function MobileApp() {
   const [selected, setSelected] = useState<string | null>(null);
   const [onlyAttention, setOnlyAttention] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Sem acesso = o servidor respondeu 401. Acontece sempre na primeira abertura do app da tela
+  // inicial do iPhone, que não enxerga o token que o QR gravou no Safari.
+  const [semAcesso, setSemAcesso] = useState(false);
 
   const refresh = useCallback(async () => {
     const [all,waiting,projetos] = await Promise.all([
@@ -180,7 +249,19 @@ export function MobileApp() {
     setAttention(Array.isArray(waiting) ? waiting : []);
     setError(null);
   },[]);
-  usePoll(refresh, reason => setError(String(reason)), [refresh]);
+  usePoll(refresh, reason => {
+    if (reason instanceof ApiError && reason.status === 401) { setSemAcesso(true); return; }
+    setError(String(reason));
+  }, [refresh]);
+
+  async function parear(codigo: string) {
+    const { token } = await request<{ token: string }>("/parear", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ codigo }),
+    });
+    salvarToken(token);
+    setSemAcesso(false); setError(null);
+    await refresh();
+  }
 
   const conversation = conversations.find(c => c.id === selected);
   const aberto = catalog?.projects.find(p => p.id === project) ?? null;
@@ -192,6 +273,8 @@ export function MobileApp() {
     if (selected) { setSelected(null); return; }
     setProject(null);
   }
+
+  if (semAcesso) return <main className="mobile-shell"><PairingScreen parear={parear} /></main>;
 
   return <main className="mobile-shell">
     <header className="flex items-center justify-between gap-3 mb-5">

@@ -34,11 +34,11 @@ function newPane(title: string): PaneNode {
   return { type: "pane", id: nextId("pane"), tabs: [tab], activeTabId: tab.id };
 }
 
-export function createProject(path: string): Project {
+export function createProject(path: string, id = nextId("project")): Project {
   const name = projectName(path);
   const pane = newPane(name);
   return {
-    id: nextId("project"),
+    id,
     name,
     path,
     gitRoot: null,
@@ -200,7 +200,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
         (project) => project.path.toLocaleLowerCase() === action.path.toLocaleLowerCase()
       );
       if (existing) return { ...state, activeProjectId: existing.id };
-      const project = createProject(action.path);
+      const project = createProject(action.path, action.id);
       return {
         ...state,
         projects: [...state.projects, project],

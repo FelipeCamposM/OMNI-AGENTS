@@ -73,6 +73,8 @@ interface SidebarProps {
   onPathDeleted: (path: string) => void;
   terminalSessions: TerminalSession[];
   showSettings: boolean;
+  showHistory: boolean;
+  onOpenHistory: () => void;
   onHome: () => void;
   onAddProject: (path: string) => void;
   onSelectProject: (projectId: string) => void;
@@ -106,6 +108,8 @@ export function Sidebar({
   onPathDeleted,
   terminalSessions,
   showSettings,
+  showHistory,
+  onOpenHistory,
   onHome,
   onAddProject,
   onSelectProject,
@@ -278,6 +282,12 @@ export function Sidebar({
 
       {/* Footer */}
       <div className="px-2 py-3 border-t border-border-subtle/60 space-y-0.5">
+        <NavItem
+          active={showHistory}
+          onClick={onOpenHistory}
+          icon={<ChatIcon className="w-4 h-4" aria-hidden="true" />}
+          label="Histórico"
+        />
         <NavItem
           active={showSettings}
           onClick={() => onOpenSettings()}

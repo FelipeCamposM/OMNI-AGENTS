@@ -14,6 +14,23 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.4.2",
+    date: "2026-09-15",
+    changes: [
+      "A conversa no celular virou um chat: suas mensagens e as do agente em balões, e um aviso animado enquanto ele trabalha.",
+      "Adicionar o OMNI à tela inicial do celular agora mostra o ícone do app.",
+      "O app da tela inicial do iPhone pode ser liberado com o código de 6 dígitos do Authy, em Configurações → Celular.",
+      "Sessões abertas pelo celular começam a funcionar na hora, sem ficar travadas.",
+      "O endereço do celular usa o Tailscale automaticamente e o botão de liberar o acesso seguro volta a abrir o navegador.",
+      "Nova tela de Histórico: encontre e retome conversas antigas do Claude e do Codex.",
+      "Ctrl+P abre a busca rápida de arquivos do projeto.",
+      "A árvore de arquivos se atualiza sozinha e permite criar arquivos e pastas direto nela.",
+      "Os avisos só aparecem quando o agente termina ou pede aprovação.",
+      "Ajuste de transparência do fundo dos terminais em Configurações.",
+      "Rodar o OMNI em modo de desenvolvimento dentro de um terminal do app instalado não mistura mais os dois.",
+    ],
+  },
+  {
     version: "0.4.0",
     date: "2026-09-14",
     changes: [

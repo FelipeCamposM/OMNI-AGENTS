@@ -41,3 +41,6 @@ installers/
 
 # Briefings de handoff entre agentes: carregam conteudo de conversa, nao versionar.
 .omni/handoff/
+
+# Imagens coladas nos terminais (Ctrl+V) — dado do usuário, nunca código.
+.omni-agents/

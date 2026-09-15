@@ -3,9 +3,12 @@ mod account_usage;
 mod mobile;
 mod engine_client;
 mod git_client;
+mod history;
 mod profiles;
 
 pub fn run() {
+    #[cfg(unix)]
+    engine_client::import_login_shell_path();
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -20,6 +23,7 @@ pub fn run() {
             mobile::mobile_settings,
             mobile::publish_workspace,
             mobile::mobile_check,
+            mobile::mobile_totp,
             engine_client::ensure_engine,
             engine_client::terminal_sessions,
             engine_client::agent_cli_statuses,
@@ -38,6 +42,8 @@ pub fn run() {
             conversations::attach_terminal,
             conversations::handoff_prompt,
             conversations::plan_switch,
+            history::agent_history,
+            history::agent_history_transcript,
             profiles::list_profiles,
             profiles::create_profile,
             profiles::rename_profile,

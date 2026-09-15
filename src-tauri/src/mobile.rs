@@ -1,4 +1,4 @@
-use omni_protocol::{EngineRequest,EngineResponse,MobileConfig,PublishedAgent,PublishedProject};
+use omni_protocol::{EngineRequest,EngineResponse,MobileConfig,PublishedAgent,PublishedProject,TotpAction};
 
 /// `rotate` gera um token de dispositivo novo e invalida os celulares já pareados. O `token` que
 /// vai dentro de `config` é ignorado pelo engine de propósito — o desktop não escolhe o segredo.
@@ -20,6 +20,22 @@ pub async fn mobile_settings(config: Option<MobileConfig>, rotate: Option<bool>)
 pub async fn mobile_check() -> Result<EngineResponse,String> {
     tauri::async_runtime::spawn_blocking(|| {
         match crate::engine_client::authenticated_request(|token| EngineRequest::MobileCheck{token})? {
+            EngineResponse::Error{message,..} => Err(message),
+            response => Ok(response),
+        }
+    }).await.map_err(|e|e.to_string())?
+}
+
+/// Cadastro do Authy: `reset` gera o QR novo, `confirm` valida o primeiro código digitado no PC.
+#[tauri::command]
+pub async fn mobile_totp(action: String, code: Option<String>) -> Result<EngineResponse,String> {
+    let action = match action.as_str() {
+        "reset" => TotpAction::Reset,
+        "confirm" => TotpAction::Confirm { code: code.unwrap_or_default() },
+        outra => return Err(format!("Ação do Authy desconhecida: {outra}")),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        match crate::engine_client::authenticated_request(|token| EngineRequest::MobileTotp{token,action})? {
             EngineResponse::Error{message,..} => Err(message),
             response => Ok(response),
         }

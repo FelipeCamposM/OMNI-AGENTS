@@ -44,6 +44,8 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> 
     onPathDeleted: vi.fn(),
     terminalSessions: [],
     showSettings: false,
+    showHistory: false,
+    onOpenHistory: vi.fn(),
     onHome: vi.fn(),
     onAddProject: vi.fn(),
     onSelectProject: vi.fn(),

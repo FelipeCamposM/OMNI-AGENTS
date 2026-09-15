@@ -95,7 +95,10 @@ export function PaneView({
   return (
     <section
       className={[
-        "relative flex-1 min-w-0 min-h-0 flex flex-col bg-bg-surface/90 border-2",
+        // Terminal pinta o próprio fundo (com a opacidade configurável); o do painel por baixo
+        // cobriria o fundo do app mesmo com o terminal transparente.
+        "relative flex-1 min-w-0 min-h-0 flex flex-col border-2",
+        tab?.kind === "terminal" || tab?.kind === "agent" ? "" : "bg-bg-surface/90",
         active ? "border-accent" : "border-border-subtle",
       ].join(" ")}
       aria-label={`Painel ${tab?.title ?? pane.id}`}

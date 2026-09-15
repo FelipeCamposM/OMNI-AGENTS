@@ -233,6 +233,15 @@ function AparenciaSection({ settings, onChange }: SectionProps) {
             )}
           </>
         )}
+        <SliderField
+          id="terminal-opacity"
+          label="Opacidade dos terminais"
+          unit="%"
+          value={settings.terminalOpacity}
+          min={0}
+          max={100}
+          onChange={(v) => onChange({ terminalOpacity: v })}
+        />
       </Card>
 
       <Card title="Arquivos">

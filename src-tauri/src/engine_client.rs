@@ -29,7 +29,16 @@ pub fn engine_status() -> EngineResponse {
 #[tauri::command]
 pub fn ensure_engine() -> EngineResponse {
     if let Ok(response) = authenticated_request(|token| EngineRequest::Ping { token }) {
-        return response;
+        if !engine_binary_replaced(&response) {
+            return response;
+        }
+        // Atualização trocou o binário com o engine vivo (macOS/Linux; no Windows o NSIS mata antes).
+        // Mesmo efeito do hook do instalador: as sessões abertas caem e o engine novo sobe.
+        let _ = authenticated_request(|token| EngineRequest::Shutdown { token });
+        for _ in 0..30 {
+            if authenticated_request(|token| EngineRequest::Ping { token }).is_err() { break; }
+            thread::sleep(Duration::from_millis(100));
+        }
     }
     if let Err(error) = spawn_engine() {
         return EngineResponse::Error { code: "ENGINE_START_FAILED".into(), message: error };
@@ -153,21 +162,62 @@ pub fn connect_agent_cli(id: String, profile_id: Option<String>) -> Result<(), S
         .find(|candidate| resolve_on_path(candidate).is_some())
         .ok_or_else(|| format!("CLI do {id} não encontrada no PATH"))?;
 
+    // Sem isto o login cairia sempre no config dir nativo, e todo profile novo nasceria vazio.
+    let env = profile_id.as_deref().and_then(crate::profiles::find)
+        .map(|profile| crate::profiles::env_for(&profile)).unwrap_or_default();
+    // Janela visível de propósito: aqui o console *é* a UX de login do provider.
+    open_login_console(command, arguments, &env)
+}
+
+#[cfg(windows)]
+fn open_login_console(command: &str, arguments: &[&str], env: &[(String, String)]) -> Result<(), String> {
     let mut invocation = format!("& {}", quote_powershell(command));
     for argument in arguments {
         invocation.push(' ');
         invocation.push_str(&quote_powershell(argument));
     }
-    // Janela visível de propósito: aqui o console *é* a UX de login do provider.
     let mut console = Command::new("powershell.exe");
-    console.args(["-NoLogo", "-NoExit", "-Command", &invocation]);
-    // Sem isto o login cairia sempre no config dir nativo, e todo profile novo nasceria vazio.
-    if let Some(profile) = profile_id.as_deref().and_then(crate::profiles::find) {
-        for (key, value) in crate::profiles::env_for(&profile) {
-            console.env(key, value);
-        }
-    }
+    console.args(["-NoLogo", "-NoExit", "-Command", &invocation]).envs(env.iter().cloned());
     console.spawn().map(|_| ()).map_err(|error| error.to_string())
+}
+
+/// O terminal do sistema não herda o ambiente de quem o chama (o Terminal.app e o
+/// gnome-terminal abrem a janela a partir de um processo servidor), então as variáveis vão
+/// escritas dentro do script. `exec $SHELL` no fim deixa a janela aberta, como o `-NoExit`.
+#[cfg(not(windows))]
+fn login_script(command: &str, arguments: &[&str], env: &[(String, String)]) -> String {
+    let quote = |value: &str| format!("'{}'", value.replace('\'', r"'\''"));
+    let mut script: String = env.iter().map(|(key, value)| format!("export {key}={}; ", quote(value))).collect();
+    script.push_str(&quote(command));
+    for argument in arguments {
+        script.push(' ');
+        script.push_str(&quote(argument));
+    }
+    script.push_str("; exec \"${SHELL:-/bin/sh}\" -l");
+    script
+}
+
+#[cfg(target_os = "macos")]
+fn open_login_console(command: &str, arguments: &[&str], env: &[(String, String)]) -> Result<(), String> {
+    // String AppleScript: `\` e `"` escapados.
+    let script = login_script(command, arguments, env).replace('\\', r"\\").replace('"', r#"\""#);
+    Command::new("osascript")
+        .args(["-e", &format!("tell application \"Terminal\" to do script \"{script}\""), "-e", "tell application \"Terminal\" to activate"])
+        .spawn().map(|_| ()).map_err(|error| error.to_string())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_login_console(command: &str, arguments: &[&str], env: &[(String, String)]) -> Result<(), String> {
+    let script = login_script(command, arguments, env);
+    // Não há terminal padrão no Linux: tenta os mais comuns, na ordem em que costumam existir.
+    let terminals: [(&str, &[&str]); 5] = [
+        ("x-terminal-emulator", &["-e"]), ("gnome-terminal", &["--"]), ("konsole", &["-e"]),
+        ("xfce4-terminal", &["-x"]), ("xterm", &["-e"]),
+    ];
+    let (terminal, flags) = terminals.into_iter().find(|(name, _)| resolve_on_path(name).is_some())
+        .ok_or("Nenhum terminal encontrado (x-terminal-emulator, gnome-terminal, konsole, xfce4-terminal, xterm)")?;
+    Command::new(terminal).args(flags).args(["sh", "-c", &script])
+        .spawn().map(|_| ()).map_err(|error| error.to_string())
 }
 
 /// Pré-aprova o diálogo de "trust this folder" do CLI de agente antes de abrir a PTY, no mesmo
@@ -239,8 +289,40 @@ fn trust_claude(cwd: &str, profile_id: Option<&str>) -> Result<(), String> {
     fs::write(&config_path, serialized).map_err(|error| error.to_string())
 }
 
+#[cfg(windows)]
 fn quote_powershell(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
+}
+
+/// App aberto pelo Finder/Dock (macOS) ou pelo menu (Linux) herda um PATH mínimo, sem
+/// `/opt/homebrew/bin`, `~/.local/bin` nem o que nvm/volta/asdf põem no `.zshrc`: `claude` e `codex`
+/// "não estariam instalados". Pega o PATH do shell de login interativo do usuário — o mesmo que ele
+/// vê no terminal — antes de qualquer detecção ou spawn do engine (que herda daqui).
+/// ponytail: timeout fixo de 3 s; um `.zshrc` que pede input ou demora mais fica com o PATH mínimo.
+#[cfg(unix)]
+pub fn import_login_shell_path() {
+    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    let Ok(mut child) = Command::new(shell)
+        .args(["-ilc", "printf '\n__OMNI_PATH__%s' \"$PATH\""])
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
+        .spawn() else { return };
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(3) {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let mut output = String::new();
+                let _ = std::io::Read::read_to_string(&mut child.stdout.take().expect("stdout piped"), &mut output);
+                // Marcador: `.zshrc` que imprime banner não pode contaminar o valor.
+                if let Some(path) = output.rsplit("__OMNI_PATH__").next().filter(|_| output.contains("__OMNI_PATH__")) {
+                    if !path.trim().is_empty() { env::set_var("PATH", path.trim()); }
+                }
+                return;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(50)),
+            Err(_) => return,
+        }
+    }
+    let _ = child.kill();
 }
 
 /// Resolve um comando no PATH **sem criar processo**. A versão anterior rodava `where.exe` por
@@ -397,7 +479,9 @@ fn send_request(request: EngineRequest) -> Result<EngineResponse, String> {
         match exchange(&mut connection, &request, timeout) {
             Ok(response) => {
                 *guard = Some(connection);
-                return Ok(response);
+                // A tradução tem de valer aqui também: quase toda requisição reaproveita a conexão, e
+                // só a conexão nova traduzia — o "engine desatualizado" chegava cru na tela.
+                return Ok(outdated_engine_hint(response));
             }
             // Conexão reaproveitada que morreu parada: reenvia só o que comprovadamente não chegou
             // a ser executado, ou o que é seguro repetir (ping, listagem, snapshot).
@@ -434,6 +518,12 @@ de novo."
     }
 }
 
+/// O arquivo que o engine carregou mudou desde que ele subiu. Engine antigo sem o campo: `false`.
+fn engine_binary_replaced(response: &EngineResponse) -> bool {
+    let EngineResponse::Pong { engine_exe: Some(exe), engine_exe_modified_ms: Some(loaded), .. } = response else { return false };
+    omni_protocol::modified_ms(std::path::Path::new(exe)).is_some_and(|current| current != *loaded)
+}
+
 fn spawn_engine() -> Result<(), String> {
     let executable = engine_executable()?;
     if !executable.is_file() {
@@ -460,7 +550,7 @@ fn engine_executable() -> Result<PathBuf, String> {
     let extension = if cfg!(windows) { ".exe" } else { "" };
     let development = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("binaries")
-        .join(format!("omni-engine-x86_64-pc-windows-msvc{extension}"));
+        .join(format!("omni-engine-{}{extension}", env!("OMNI_TARGET_TRIPLE")));
 
     // In a dev build, `target/debug/` is a shared dumping ground for every binary in the
     // workspace — a stray `omni-engine.exe` left there by a plain `cargo build`/`cargo test`
@@ -488,10 +578,9 @@ pub(crate) fn engine_dir() -> Result<PathBuf, String> {
         return Ok(PathBuf::from(dir));
     }
     let nome = if cfg!(debug_assertions) { DEV_DATA_DIR } else { DATA_DIR };
-    env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
+    omni_protocol::local_data_root()
         .map(|path| path.join(nome).join("engine"))
-        .ok_or_else(|| "LOCALAPPDATA unavailable".into())
+        .ok_or_else(|| "pasta de dados do usuário indisponível".into())
 }
 
 #[cfg(test)]
@@ -538,12 +627,16 @@ mod tests {
                 contador.fetch_add(1, Ordering::SeqCst);
                 let leitor = BufReader::new(stream.try_clone().expect("clone"));
                 let mut escritor = stream;
-                // Uma resposta por linha recebida — igual ao `serve_client` do engine.
+                // Uma resposta por linha recebida — igual ao `serve_client` do engine. Responde como um
+                // engine velho, para provar também que a tradução vale na conexão reaproveitada.
                 for linha in leitor.lines() {
                     if linha.is_err() {
                         break;
                     }
-                    let resposta = serde_json::to_vec(&EngineResponse::Ok).expect("json");
+                    let resposta = serde_json::to_vec(&EngineResponse::Error {
+                        code: "INVALID_REQUEST".into(),
+                        message: "unknown variant `mobile_totp`, expected one of `ping`".into(),
+                    }).expect("json");
                     if escritor.write_all(&resposta).is_err() || escritor.write_all(b"\n").is_err() {
                         break;
                     }
@@ -555,9 +648,11 @@ mod tests {
         env::set_var("OMNI_ENGINE_PORT", port.to_string());
         *IDLE_CONNECTION.lock().expect("cache") = None;
 
-        for _ in 0..3 {
+        for tentativa in 1..=3 {
             let resposta = send_request(EngineRequest::Ping { token: "t".into() }).expect("requisição");
-            assert!(matches!(resposta, EngineResponse::Ok));
+            // Da segunda em diante a conexão é reaproveitada: antes, só a primeira vinha traduzida.
+            assert!(matches!(&resposta, EngineResponse::Error { code, .. } if code == "ENGINE_OUTDATED"),
+                "requisição {tentativa} chegou sem tradução: {resposta:?}");
         }
 
         // Solta a conexão pro servidor de mentira encerrar e o teste não ficar preso.

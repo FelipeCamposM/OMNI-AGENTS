@@ -15,6 +15,28 @@ pub const DEV_ENGINE_PORT: u16 = 47_341;
 pub const DATA_DIR: &str = "com.omni.agents";
 pub const DEV_DATA_DIR: &str = "com.omni.agents.dev";
 
+/// Data de modificação em ms desde a época — compartilhada para engine e app medirem igual.
+pub fn modified_ms(path: &Path) -> Option<u64> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    modified.duration_since(std::time::UNIX_EPOCH).ok().map(|duration| duration.as_millis() as u64)
+}
+
+/// Raiz de dados local do usuário, onde `DATA_DIR` fica. Mesmas pastas que o Tauri usa em
+/// `app_local_data_dir`: `%LOCALAPPDATA%` no Windows, `~/Library/Application Support` no macOS e
+/// `$XDG_DATA_HOME` (ou `~/.local/share`) no Linux.
+pub fn local_data_root() -> Option<std::path::PathBuf> {
+    use std::{env::var_os, path::PathBuf};
+    if cfg!(windows) {
+        return var_os("LOCALAPPDATA").map(PathBuf::from);
+    }
+    let home = var_os("HOME").map(PathBuf::from);
+    if cfg!(target_os = "macos") {
+        return home.map(|home| home.join("Library").join("Application Support"));
+    }
+    var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|path| path.is_absolute())
+        .or_else(|| home.map(|home| home.join(".local").join("share")))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionState {
@@ -48,6 +70,10 @@ pub struct TerminalSession {
     /// seguinte de saída.
     #[serde(default)]
     pub notice: Option<String>,
+    /// Sobe 1 a cada evento que merece aviso: Claude/Codex terminou um turno de verdade ou abriu
+    /// diálogo de aprovação. O desktop notifica quando ele muda — nunca por silêncio ou estado.
+    #[serde(default)]
+    pub attention_seq: u64,
     #[serde(default)]
     pub initial_command: Option<String>,
     /// Variáveis de ambiente injetadas no shell da PTY. É por aqui que o isolamento de conta
@@ -98,6 +124,8 @@ pub enum EngineRequest {
     PublishWorkspace { token: String, projects: Vec<PublishedProject>, agents: Vec<PublishedAgent> },
     /// Testa se o próprio servidor do celular atende. `listening` só prova que o bind deu certo.
     MobileCheck { token: String },
+    /// Cadastro do Authy (TOTP) que libera o pareamento de aparelhos sem o QR.
+    MobileTotp { token: String, action: TotpAction },
     Ping { token: String },
     ListSessions { token: String },
     SpawnTerminal {
@@ -146,7 +174,8 @@ impl EngineRequest {
             Self::AccountUsage { token, .. }
             | Self::MobileSettings { token, .. }
             | Self::PublishWorkspace { token, .. }
-            | Self::MobileCheck { token } => token,
+            | Self::MobileCheck { token }
+            | Self::MobileTotp { token, .. } => token,
             Self::Ping { token }
             | Self::ListSessions { token }
             | Self::SpawnTerminal { token, .. }
@@ -177,10 +206,22 @@ pub enum EngineResponse {
         #[serde(default)] magic_dns: Option<String>,
         /// Link para habilitar o Serve na conta, quando ele ainda não está habilitado.
         #[serde(default)] serve_hint: Option<String>,
+        #[serde(default)] totp_confirmed: bool,
+        /// `otpauth://` para o QR do Authy. **Só enquanto o cadastro não foi confirmado**: depois disso
+        /// o segredo não sai mais do engine, nem para o desktop. Refazer = `TotpAction::Reset`.
+        #[serde(default)] totp_uri: Option<String>,
     },
     /// Resultado do autoteste: `ok` diz se passou, `message` é texto para a tela.
     MobileCheck { ok: bool, message: String },
-    Pong { protocol_version: u16, engine_pid: u32 },
+    /// `engine_exe`/`engine_exe_modified_ms`: o binário que este engine carregou e a data dele ao
+    /// iniciar. Se o arquivo em disco mudou desde então, uma atualização trocou o binário por baixo
+    /// de um engine vivo — no Windows o hook do NSIS mata o engine antes, no macOS/Linux ninguém mata.
+    Pong {
+        protocol_version: u16,
+        engine_pid: u32,
+        #[serde(default)] engine_exe: Option<String>,
+        #[serde(default)] engine_exe_modified_ms: Option<u64>,
+    },
     Sessions { sessions: Vec<TerminalSession> },
     Session { session: TerminalSession },
     Snapshot { session: TerminalSession, from_seq: u64, next_seq: u64, data: String },
@@ -219,7 +260,23 @@ pub struct MobileConfig {
     /// fica **só em 127.0.0.1** e quem atende na rede é o tailscaled, com certificado TLS de
     /// verdade e nome MagicDNS fixo.
     #[serde(default)] pub serve: bool,
+    /// Segredo TOTP em base32, compartilhado com o Authy. Como o `token`, só o engine escreve.
+    #[serde(default)] pub totp_secret: String,
+    /// O Authy provou ter o segredo (alguém digitou um código válido no PC). Antes disso o
+    /// pareamento recusa qualquer código.
+    #[serde(default)] pub totp_confirmed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TotpAction {
+    /// Gera segredo novo e invalida o cadastro atual do Authy.
+    Reset,
+    /// Confirma o cadastro com um código atual do Authy.
+    Confirm { code: String },
 }
 impl Default for MobileConfig {
-    fn default() -> Self { Self { enabled: false, bind: "127.0.0.1:47322".into(), token: String::new(), serve: false } }
+    fn default() -> Self {
+        Self { enabled: false, bind: "127.0.0.1:47322".into(), token: String::new(), serve: false, totp_secret: String::new(), totp_confirmed: false }
+    }
 }

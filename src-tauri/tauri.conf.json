@@ -1,6 +1,6 @@
 {
   "productName": "OMNI AGENTS",
-  "version": "0.4.0",
+  "version": "0.4.2",
   "identifier": "com.omni.agents",
   "build": {
     "frontendDist": "../dist",
@@ -50,6 +50,10 @@
       "nsis": {
         "installerHooks": "installer-hooks.nsh"
       }
+    },
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
     }
   },
   "plugins": {

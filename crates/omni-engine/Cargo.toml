@@ -9,6 +9,7 @@ omni-protocol = { path = "../omni-protocol" }
 portable-pty = "0.9"
 rand = "0.9"
 uuid = { version = "1", features = ["v4"] }
+totp-rs = { version = "5", default-features = false, features = ["otpauth", "gen_secret"] }
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

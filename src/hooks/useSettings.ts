@@ -68,6 +68,7 @@ export function useSettings() {
     root.dataset.motion = settings.animations;
     root.style.setProperty("--app-bg-opacity", String(settings.backgroundOpacity / 100));
     root.style.setProperty("--app-bg-blur", `${settings.backgroundBlur}px`);
+    root.style.setProperty("--terminal-opacity", String(settings.terminalOpacity / 100));
 
     if (settings.background === "custom" && settings.backgroundPath) {
       // Aspas simples na url() evitam quebrar o valor com caminhos que tenham ".
@@ -82,6 +83,7 @@ export function useSettings() {
     settings.backgroundPath,
     settings.backgroundOpacity,
     settings.backgroundBlur,
+    settings.terminalOpacity,
     settings.glass,
     settings.animations,
   ]);

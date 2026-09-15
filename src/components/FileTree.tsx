@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -10,6 +10,7 @@ import {
   createDir,
   createFile,
   dirName,
+  fileKind,
   joinPath,
   removePath,
   renamePath,
@@ -62,8 +63,10 @@ interface DragPayload {
   isDirectory: boolean;
 }
 
-function kindFor(name: string): "file" | "markdown" {
-  return /\.(md|markdown)$/i.test(name) ? "markdown" : "file";
+/** Linha de nome em edição dentro da árvore para criar arquivo/pasta em `dirPath`. */
+interface CreatingState {
+  dirPath: string;
+  isDirectory: boolean;
 }
 
 /** Mesma regra usada tanto pra decidir se um alvo aceita o drop quanto pra decidir se ele
@@ -84,6 +87,12 @@ export function FileTree({ projectPath, onOpenFile, onFileRenamed, onPathDeleted
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [dragOverPath, setDragOverPath] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState<CreatingState | null>(null);
+  // Item "na mão" durante o arrasto. A posição vai direto no estilo pelo ref: re-renderizar a
+  // árvore inteira a cada pointermove só pra mover um rótulo travaria em projeto grande.
+  const [dragGhost, setDragGhost] = useState<DragPayload | null>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
+  const pointerRef = useRef({ x: 0, y: 0 });
   // `true` durante e logo depois de um arrasto de verdade (moveu além do limiar) — o botão
   // de abrir/expandir consulta isso pra não disparar no soltar do mouse que terminou o drag.
   const justDraggedRef = useRef(false);
@@ -157,25 +166,24 @@ export function FileTree({ projectPath, onOpenFile, onFileRenamed, onPathDeleted
     setMenu({ path, isDirectory, x: event.clientX, y: event.clientY });
   }
 
-  async function handleCreateFile(dirPath: string) {
+  function startCreate(dirPath: string, isDirectory: boolean) {
     setMenu(null);
-    const name = window.prompt("Nome do arquivo:");
-    if (!name) return;
-    try {
-      await createFile(projectPath!, joinPath(dirPath, name));
-      await refreshDir(dirPath);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    }
+    // Criar dentro de pasta fechada abre a pasta: a linha de nome aparece onde o item vai nascer.
+    if (dirPath !== projectPath && !expanded.has(dirPath)) toggle({ name: baseName(dirPath), path: dirPath, isDirectory: true });
+    setCreating({ dirPath, isDirectory });
   }
 
-  async function handleCreateDir(dirPath: string) {
-    setMenu(null);
-    const name = window.prompt("Nome da pasta:");
-    if (!name) return;
+  async function commitCreate(name: string) {
+    const target = creating;
+    setCreating(null);
+    const trimmed = name.trim();
+    if (!target || !trimmed) return;
+    const path = joinPath(target.dirPath, trimmed);
     try {
-      await createDir(projectPath!, joinPath(dirPath, name));
-      await refreshDir(dirPath);
+      if (target.isDirectory) await createDir(projectPath!, path);
+      else await createFile(projectPath!, path);
+      await refreshDir(target.dirPath);
+      if (!target.isDirectory) onOpenFile(path, fileKind(trimmed));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     }
@@ -249,11 +257,15 @@ export function FileTree({ projectPath, onOpenFile, onFileRenamed, onPathDeleted
     let moved = false;
 
     function onMove(moveEvent: PointerEvent) {
+      pointerRef.current = { x: moveEvent.clientX, y: moveEvent.clientY };
       if (!moved) {
         if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX) return;
         moved = true;
         justDraggedRef.current = true;
+        setDragGhost(source);
+        document.body.style.cursor = "grabbing";
       }
+      ghostRef.current?.style.setProperty("transform", ghostTransform(pointerRef.current));
       const element = document.elementFromPoint(moveEvent.clientX, moveEvent.clientY);
       const target = resolveDropTargetDir(element, projectPath!);
       setDragOverPath(target && !isInvalidDropTarget(source, target) ? target : null);
@@ -273,6 +285,8 @@ export function FileTree({ projectPath, onOpenFile, onFileRenamed, onPathDeleted
         }, 0);
       }
       setDragOverPath(null);
+      setDragGhost(null);
+      document.body.style.cursor = "";
     }
 
     window.addEventListener("pointermove", onMove);
@@ -295,7 +309,10 @@ export function FileTree({ projectPath, onOpenFile, onFileRenamed, onPathDeleted
           {error}
         </p>
       )}
-      {root.length === 0 ? (
+      {creating?.dirPath === projectPath && (
+        <NewEntryInput depth={0} isDirectory={creating.isDirectory} onCommit={commitCreate} onCancel={() => setCreating(null)} />
+      )}
+      {root.length === 0 && creating?.dirPath !== projectPath ? (
         <p className="text-text-muted text-xs px-6 py-1.5">Vazio</p>
       ) : (
         root.map((entry) => (
@@ -314,9 +331,18 @@ export function FileTree({ projectPath, onOpenFile, onFileRenamed, onPathDeleted
             dragOverPath={dragOverPath}
             onStartDrag={startNodeDrag}
             justDraggedRef={justDraggedRef}
+            creating={creating}
+            onCommitCreate={commitCreate}
+            onCancelCreate={() => setCreating(null)}
           />
         ))
       )}
+
+      {dragGhost &&
+        createPortal(
+          <DragGhost ref={ghostRef} entry={dragGhost} transform={ghostTransform(pointerRef.current)} />,
+          document.body
+        )}
 
       {menu &&
         createPortal(
@@ -325,8 +351,8 @@ export function FileTree({ projectPath, onOpenFile, onFileRenamed, onPathDeleted
             onClose={() => setMenu(null)}
             onRevealInFolder={() => void handleRevealInFolder(menu.path)}
             onCopyPath={() => void handleCopyPath(menu.path)}
-            onNewFile={() => void handleCreateFile(menu.isDirectory ? menu.path : dirName(menu.path))}
-            onNewFolder={() => void handleCreateDir(menu.isDirectory ? menu.path : dirName(menu.path))}
+            onNewFile={() => startCreate(menu.isDirectory ? menu.path : dirName(menu.path), false)}
+            onNewFolder={() => startCreate(menu.isDirectory ? menu.path : dirName(menu.path), true)}
             onRename={
               menu.path === projectPath
                 ? undefined
@@ -357,6 +383,9 @@ interface FileTreeNodeProps {
   dragOverPath: string | null;
   onStartDrag: (entry: FileEntry, event: React.PointerEvent) => void;
   justDraggedRef: React.MutableRefObject<boolean>;
+  creating: CreatingState | null;
+  onCommitCreate: (name: string) => void;
+  onCancelCreate: () => void;
 }
 
 function FileTreeNode({
@@ -373,6 +402,9 @@ function FileTreeNode({
   dragOverPath,
   onStartDrag,
   justDraggedRef,
+  creating,
+  onCommitCreate,
+  onCancelCreate,
 }: FileTreeNodeProps) {
   const isOpen = expanded.has(entry.path);
   const nested = childrenByPath.get(entry.path) ?? [];
@@ -424,7 +456,7 @@ function FileTreeNode({
             onClick={() => {
               if (justDraggedRef.current) return;
               if (entry.isDirectory) onToggle(entry);
-              else onOpenFile(entry.path, kindFor(entry.name));
+              else onOpenFile(entry.path, fileKind(entry.name));
             }}
             style={{ paddingLeft: `${depth * 14 + 24}px` }}
             className="w-full py-1 pr-3 text-left text-xs text-text-secondary hover:text-text-primary truncate cursor-default"
@@ -446,6 +478,9 @@ function FileTreeNode({
       </div>
       {entry.isDirectory && isOpen && (
         <div>
+          {creating?.dirPath === entry.path && (
+            <NewEntryInput depth={depth + 1} isDirectory={creating.isDirectory} onCommit={onCommitCreate} onCancel={onCancelCreate} />
+          )}
           {nested.map((child) => (
             <FileTreeNode
               key={child.path}
@@ -462,10 +497,70 @@ function FileTreeNode({
               dragOverPath={dragOverPath}
               onStartDrag={onStartDrag}
               justDraggedRef={justDraggedRef}
+              creating={creating}
+              onCommitCreate={onCommitCreate}
+              onCancelCreate={onCancelCreate}
             />
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Fantasma abaixo e à direita do ponteiro, sem cobrir o alvo. `pointer-events: none` faz o
+ * `elementFromPoint` do arrasto enxergar a árvore por baixo dele. */
+function ghostTransform({ x, y }: { x: number; y: number }) {
+  return `translate(${x + 12}px, ${y + 8}px)`;
+}
+
+const DragGhost = forwardRef<HTMLDivElement, { entry: DragPayload; transform: string }>(function DragGhost({ entry, transform }, ref) {
+  const name = baseName(entry.path);
+  const Icon = iconForEntry(name, entry.isDirectory);
+  return (
+    <div
+      ref={ref}
+      aria-hidden="true"
+      data-testid="file-drag-ghost"
+      style={{ position: "fixed", top: 0, left: 0, transform, pointerEvents: "none" }}
+      className="popover z-50 flex items-center gap-1.5 px-2 py-1 text-xs text-text-primary opacity-90 whitespace-nowrap"
+    >
+      <Icon className="h-3 w-3" aria-hidden />
+      {name}
+    </div>
+  );
+});
+
+/** Nome do item novo, na posição em que ele vai aparecer. Enter ou sair do campo criam; Esc ou
+ * nome vazio cancelam (mesma regra do renomear). */
+function NewEntryInput({ depth, isDirectory, onCommit, onCancel }: { depth: number; isDirectory: boolean; onCommit: (name: string) => void; onCancel: () => void }) {
+  const [name, setName] = useState("");
+  const done = useRef(false);
+  const finish = (commit: boolean) => {
+    if (done.current) return;
+    done.current = true;
+    if (commit) onCommit(name);
+    else onCancel();
+  };
+  const Icon = iconForEntry(name, isDirectory);
+  return (
+    <div className="flex items-center" style={{ paddingLeft: `${depth * 14 + 24}px` }}>
+      <span className="mr-0.5 inline-block w-3" aria-hidden="true" />
+      <span className="mr-1.5 inline-block" aria-hidden="true">
+        <Icon className="h-3 w-3" aria-hidden />
+      </span>
+      <input
+        autoFocus
+        aria-label={isDirectory ? "Nome da nova pasta" : "Nome do novo arquivo"}
+        value={name}
+        onChange={(event) => setName(event.target.value)}
+        onBlur={() => finish(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") finish(true);
+          if (event.key === "Escape") finish(false);
+        }}
+        className="field min-w-0 flex-1 !py-0.5 mr-3 text-xs"
+      />
     </div>
   );
 }

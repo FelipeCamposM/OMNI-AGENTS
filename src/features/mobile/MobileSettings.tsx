@@ -15,6 +15,9 @@ interface Settings {
   magic_dns: string | null;
   /** Link para habilitar o Serve na conta Tailscale, quando ainda não está habilitado. */
   serve_hint: string | null;
+  totp_confirmed: boolean;
+  /** `otpauth://` para o QR do Authy. Só vem enquanto o cadastro não foi confirmado. */
+  totp_uri: string | null;
 }
 
 const PORTA_PADRAO = "47322";
@@ -40,6 +43,11 @@ export function MobileSettings() {
   const [qrImage, setQrImage] = useState<string | null>(null);
   const [copiado, setCopiado] = useState(false);
   const [teste, setTeste] = useState<{ ok: boolean; message: string } | null>(null);
+  const [authyQr, setAuthyQr] = useState<string | null>(null);
+  const [codigoAuthy, setCodigoAuthy] = useState("");
+  const [erroAuthy, setErroAuthy] = useState<string | null>(null);
+  const [confirmarRefazer, setConfirmarRefazer] = useState(false);
+  const [falhouAbrir, setFalhouAbrir] = useState(false);
 
   const carregar = useCallback(async () => invoke<Settings>("mobile_settings", { config: null }), []);
 
@@ -79,6 +87,15 @@ export function MobileSettings() {
     return () => { cancelled = true; };
   }, [status?.qr]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!status?.totp_uri) { setAuthyQr(null); return; }
+    QRCode.toDataURL(status.totp_uri, { margin: 1, width: 200 })
+      .then(url => { if (!cancelled) setAuthyQr(url); })
+      .catch(() => { if (!cancelled) setAuthyQr(null); });
+    return () => { cancelled = true; };
+  }, [status?.totp_uri]);
+
   async function salvar(enabled: boolean, opcoes: { rotate?: boolean; serve?: boolean } = {}) {
     const modoServe = opcoes.serve ?? serve;
     // No modo Serve quem atende a rede é o Tailscale; o servidor fica só em loopback.
@@ -96,6 +113,22 @@ export function MobileSettings() {
     finally { setBusy(false); }
   }
 
+  async function abrirLiberacao(link: string) {
+    setFalhouAbrir(false);
+    // A chamada falhava calada (permissão de abrir URL faltando e erro engolido pelo `void`), e o
+    // botão parecia simplesmente não fazer nada.
+    try { await openUrl(link); } catch { setFalhouAbrir(true); }
+  }
+
+  async function authy(action: "reset" | "confirm") {
+    setBusy(true); setErroAuthy(null);
+    try {
+      const novo = await invoke<Settings>("mobile_totp", { action, code: action === "confirm" ? codigoAuthy : null });
+      setStatus(novo); setCodigoAuthy(""); setConfirmarRefazer(false);
+    } catch (reason) { setErroAuthy(String(reason)); }
+    finally { setBusy(false); }
+  }
+
   async function testar() {
     setBusy(true); setTeste(null);
     try { setTeste(await invoke<{ ok: boolean; message: string }>("mobile_check")); }
@@ -105,6 +138,9 @@ export function MobileSettings() {
 
   const ligado = Boolean(status?.config.enabled && status.listening);
   const pronto = Boolean(status?.public_url);
+  // Só o link de liberação vira botão. Qualquer outra coisa no aviso é erro e aparece como texto —
+  // antes a tela mandava "liberar na conta" até quando o problema era outro.
+  const linkLiberar = status?.serve_hint?.startsWith("https://login.tailscale.com/") ? status.serve_hint : null;
 
   return <section className="space-y-5" aria-label="Acesso pelo celular">
     <div>
@@ -159,14 +195,24 @@ export function MobileSettings() {
 
         {teste && <p role="status" className={`text-xs ${teste.ok ? "text-success" : "text-warning"}`}>{teste.message}</p>}
 
-        {status?.serve_hint && <div className="border border-warning p-3 space-y-2">
+        {linkLiberar && <div className="border border-warning p-3 space-y-2">
           <p className="text-xs text-warning">
             Falta liberar o endereço seguro na sua conta Tailscale. É uma vez só, para a conta
             inteira — depois vale em qualquer PC seu.
           </p>
-          <Button disabled={busy} onClick={() => void openUrl(status.serve_hint!)}>Liberar na conta Tailscale</Button>
-          <p className="text-[10px] text-text-muted">Depois de liberar, clique em Aplicar aqui.</p>
+          <ol className="list-decimal pl-4 text-xs text-text-secondary space-y-1">
+            <li>Clique no botão abaixo. Abre a página do Tailscale no navegador.</li>
+            <li>Entre com a mesma conta do Tailscale deste PC, se pedir.</li>
+            <li>Confirme a liberação na página.</li>
+            <li>Volte aqui e clique em <strong>Aplicar</strong>.</li>
+          </ol>
+          <Button disabled={busy} onClick={() => void abrirLiberacao(linkLiberar)}>Liberar na conta Tailscale</Button>
+          {/* Fallback visível: se o navegador não abrir, o link continua na tela para copiar. */}
+          {falhouAbrir && <p className="text-[10px] text-text-muted break-all">
+            Não consegui abrir o navegador. Copie e cole: <code>{linkLiberar}</code>
+          </p>}
         </div>}
+        {status?.serve_hint && !linkLiberar && <p role="alert" className="text-xs text-warning">{status.serve_hint}</p>}
       </Passo>
 
       <Passo n={3} titulo="Aponte a câmera do celular para o código" feito={pronto}>
@@ -193,6 +239,35 @@ export function MobileSettings() {
         </p> : ligado && serve && !status?.serve_hint ? <p className="text-xs text-text-secondary">
           Publicando pelo Tailscale… isso pode levar alguns segundos.
         </p> : <p className="text-xs text-text-secondary">O código aparece aqui quando o acesso estiver ligado.</p>}
+      </Passo>
+
+      <Passo n={4} titulo="Proteger com o Authy" feito={Boolean(status?.totp_confirmed)}>
+        <p className="text-xs text-text-secondary">
+          É o que libera o <strong>app da tela inicial do iPhone</strong>. Ele não enxerga o acesso que o QR
+          acima guardou no Safari, então pede o código de 6 dígitos do Authy na primeira vez que abre.
+        </p>
+        {status?.totp_confirmed ? <div className="space-y-2">
+          <p className="text-xs text-success">Authy configurado ✓ Qualquer aparelho pareia com o código atual.</p>
+          {confirmarRefazer ? <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-warning">O cadastro atual do Authy para de funcionar. Continuar?</span>
+            <Button variant="ghost" disabled={busy} onClick={() => void authy("reset")}>Sim, refazer</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirmarRefazer(false)}>Cancelar</Button>
+          </div> : <Button variant="ghost" disabled={busy} onClick={() => setConfirmarRefazer(true)}>Refazer cadastro</Button>}
+        </div> : status?.totp_uri ? <div className="space-y-3">
+          <ol className="list-decimal pl-4 text-xs text-text-secondary space-y-1">
+            <li>No Authy, toque em <strong>+</strong> e leia este código.</li>
+            <li>Digite abaixo o código de 6 dígitos que aparecer para <strong>OMNI AGENTS</strong>.</li>
+          </ol>
+          {authyQr && <img src={authyQr} alt="QR code para cadastrar no Authy" className="bg-white p-3" width={200} height={200} />}
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label="Código do Authy" htmlFor="codigo-authy-pc">
+              <Input id="codigo-authy-pc" inputMode="numeric" maxLength={6} value={codigoAuthy} placeholder="000000"
+                onChange={event => setCodigoAuthy(event.target.value.replace(/\D/g, "").slice(0, 6))} />
+            </Field>
+            <Button disabled={busy || codigoAuthy.length !== 6} onClick={() => void authy("confirm")}>Confirmar</Button>
+          </div>
+        </div> : <Button disabled={busy} onClick={() => void authy("reset")}>Configurar Authy</Button>}
+        {erroAuthy && <p role="alert" className="text-xs text-danger">{erroAuthy}</p>}
       </Passo>
     </ol>
 

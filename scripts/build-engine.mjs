@@ -78,7 +78,7 @@ async function copyEngine(source, destination) {
   throw new Error(
     `Não foi possível atualizar o OMNI Engine de desenvolvimento em ${destination}: outro processo ` +
       `está usando o arquivo. O app instalado não foi tocado. Feche o app de dev ` +
-      `(ou encerre omni-engine-x86_64-pc-windows-msvc.exe) e rode de novo.`,
+      `(ou encerre o processo omni-engine) e rode de novo.`,
   );
 }
 
@@ -86,19 +86,35 @@ const release = process.argv.includes("--release");
 execFileSync(process.execPath, [resolve("node_modules/vite/bin/vite.js"), "build", "--config", "vite.mobile.config.ts"], { cwd: resolve("."), stdio: "inherit" });
 const profile = release ? "release" : "debug";
 const engineTarget = resolve("target-engine");
-const cargoArgs = ["build", "-p", "omni-engine", "-j", "1"];
-if (release) cargoArgs.push("--release");
-
-execFileSync("cargo", cargoArgs, {
-  cwd: resolve("."),
-  stdio: "inherit",
-  env: { ...process.env, CARGO_INCREMENTAL: "0", CARGO_TARGET_DIR: engineTarget },
-});
-
 const extension = process.platform === "win32" ? ".exe" : "";
-const triple = process.env.TAURI_ENV_TARGET_TRIPLE ?? "x86_64-pc-windows-msvc";
-const source = resolve(engineTarget, profile, `omni-engine${extension}`);
+
+// `--target <triple>`: build de release para outra arquitetura (CI). Sem ele, a da máquina — o
+// Tauri procura o sidecar como `binaries/omni-engine-<triple>`, então o nome tem que bater.
+const targetIndex = process.argv.indexOf("--target");
+const requested = targetIndex >= 0 ? process.argv[targetIndex + 1] : process.env.TAURI_ENV_TARGET_TRIPLE;
+const host = execFileSync("rustc", ["-vV"], { encoding: "utf8" }).match(/^host: (\S+)/m)[1]; // sem `$`: no Windows a linha termina em \r
+const triple = requested ?? host;
+
+function buildEngine(target) {
+  const cargoArgs = ["build", "-p", "omni-engine", "-j", "1"];
+  if (release) cargoArgs.push("--release");
+  if (target) cargoArgs.push("--target", target);
+  execFileSync("cargo", cargoArgs, {
+    cwd: resolve("."),
+    stdio: "inherit",
+    env: { ...process.env, CARGO_INCREMENTAL: "0", CARGO_TARGET_DIR: engineTarget },
+  });
+  return resolve(engineTarget, ...(target ? [target] : []), profile, `omni-engine${extension}`);
+}
+
 const binaries = resolve("src-tauri", "binaries");
 mkdirSync(binaries, { recursive: true });
-await copyEngine(source, resolve(binaries, `omni-engine-${triple}${extension}`));
-console.log(`OMNI Engine copiado para src-tauri/binaries (${profile}).`);
+const destination = resolve(binaries, `omni-engine-${triple}${extension}`);
+if (triple === "universal-apple-darwin") {
+  // App universal do macOS exige sidecar universal: as duas arquiteturas fundidas pelo `lipo`.
+  const parts = ["aarch64-apple-darwin", "x86_64-apple-darwin"].map(buildEngine);
+  execFileSync("lipo", ["-create", "-output", destination, ...parts], { stdio: "inherit" });
+} else {
+  await copyEngine(buildEngine(requested && requested !== host ? requested : undefined), destination);
+}
+console.log(`OMNI Engine copiado para src-tauri/binaries/omni-engine-${triple}${extension} (${profile}).`);

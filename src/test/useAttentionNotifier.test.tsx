@@ -24,12 +24,23 @@ function item(overrides: Partial<AttentionItem> = {}): AttentionItem {
     sessionId: "s1",
     sessionName: "Claude · api",
     reason: "answered",
+    state: "answered",
+    attentionSeq: 1,
     projectId: "api",
     projectName: "api",
     workspaceId: "ws-a",
     workspaceName: "Cliente X",
     ...overrides,
   };
+}
+
+/** Primeira leitura só registra o que já estava pendente; o evento chega no poll seguinte. */
+function renderAfterStartup(items: AttentionItem[], enabled = true) {
+  const hook = renderHook(({ items, enabled }) => useAttentionNotifier(items, enabled), {
+    initialProps: { items: [] as AttentionItem[], enabled },
+  });
+  hook.rerender({ items, enabled });
+  return hook;
 }
 
 beforeEach(() => {
@@ -40,7 +51,7 @@ beforeEach(() => {
 
 describe("useAttentionNotifier", () => {
   it("notifica e pisca a barra quando o app está fora de foco", async () => {
-    renderHook(() => useAttentionNotifier([item()], true));
+    renderAfterStartup([item()]);
 
     await waitFor(() => expect(toast.sendNotification).toHaveBeenCalledTimes(1));
     expect(toast.sendNotification).toHaveBeenCalledWith({
@@ -50,35 +61,52 @@ describe("useAttentionNotifier", () => {
     expect(janela.requestUserAttention).toHaveBeenCalled();
   });
 
-  it("não repete o mesmo aviso, mas notifica quando o motivo muda", async () => {
-    const { rerender } = renderHook(({ items }) => useAttentionNotifier(items, true), {
-      initialProps: { items: [item()] },
-    });
+  it("um aviso por evento do engine: repetir o estado não notifica, evento novo sim", async () => {
+    const { rerender } = renderAfterStartup([item()]);
     await waitFor(() => expect(toast.sendNotification).toHaveBeenCalledTimes(1));
 
-    rerender({ items: [item()] });
-    await waitFor(() => expect(toast.sendNotification).toHaveBeenCalledTimes(1));
+    rerender({ items: [item()], enabled: true });
+    rerender({ items: [], enabled: true });
+    rerender({ items: [item()], enabled: true });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(toast.sendNotification).toHaveBeenCalledTimes(1);
 
-    rerender({ items: [item({ reason: "approval_required" })] });
+    rerender({ items: [item({ reason: "approval_required", state: "approval_required", attentionSeq: 2 })], enabled: true });
     await waitFor(() => expect(toast.sendNotification).toHaveBeenCalledTimes(2));
+  });
+
+  it("só terminou/aprovação notificam — nunca silêncio, shell, travado ou o que já estava pendente", async () => {
+    const { rerender } = renderHook(({ items }) => useAttentionNotifier(items, true), {
+      initialProps: { items: [item({ sessionId: "antigo" })] },
+    });
+    rerender({
+      items: [
+        item({ sessionId: "antigo" }),
+        item({ sessionId: "shell", attentionSeq: 0 }),
+        item({ sessionId: "travou", reason: "crashed", state: "crashed" }),
+        item({ sessionId: "parado", reason: "stopped", state: "stopped" }),
+      ],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(toast.sendNotification).not.toHaveBeenCalled();
   });
 
   it("cala a boca com a janela em foco ou com o aviso desligado", async () => {
     janela.isFocused.mockResolvedValue(true);
-    const { unmount } = renderHook(() => useAttentionNotifier([item()], true));
+    const { unmount } = renderAfterStartup([item()]);
     await waitFor(() => expect(janela.isFocused).toHaveBeenCalled());
     expect(toast.sendNotification).not.toHaveBeenCalled();
     unmount();
 
     janela.isFocused.mockResolvedValue(false);
-    renderHook(() => useAttentionNotifier([item()], false));
+    renderAfterStartup([item()], false);
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(toast.sendNotification).not.toHaveBeenCalled();
   });
 
   it("resume num aviso só quando são muitos agentes de uma vez", async () => {
     const muitos = ["a", "b", "c", "d"].map((id) => item({ sessionId: id }));
-    renderHook(() => useAttentionNotifier(muitos, true));
+    renderAfterStartup(muitos);
 
     await waitFor(() => expect(toast.sendNotification).toHaveBeenCalledTimes(1));
     expect(toast.sendNotification).toHaveBeenCalledWith({

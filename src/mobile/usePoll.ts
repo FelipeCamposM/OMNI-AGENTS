@@ -13,11 +13,12 @@ const MAX_DELAY_MS = 60_000;
  * O token de geração é o que impede duas cadeias de timer vivas ao mesmo tempo: acordar enquanto
  * uma chamada está em voo invalida a cadeia antiga, que morre ao tentar se reagendar.
  */
-export function usePoll(run: () => Promise<void>, onError: (reason: unknown) => void, deps: DependencyList) {
+/** `intervalMs` é o ritmo base: o chat usa curto enquanto o agente trabalha, para parecer ao vivo. */
+export function usePoll(run: () => Promise<void>, onError: (reason: unknown) => void, deps: DependencyList, intervalMs = BASE_DELAY_MS) {
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
-    let delay = BASE_DELAY_MS;
+    let delay = intervalMs;
     let generation = 0;
 
     async function poll(token: number) {
@@ -25,7 +26,7 @@ export function usePoll(run: () => Promise<void>, onError: (reason: unknown) => 
       if (!document.hidden) {
         try {
           await run();
-          delay = BASE_DELAY_MS;
+          delay = intervalMs;
         } catch (reason) {
           if (!cancelled && token === generation) onError(reason);
           delay = Math.min(delay * 2, MAX_DELAY_MS);
@@ -39,7 +40,7 @@ export function usePoll(run: () => Promise<void>, onError: (reason: unknown) => 
       // Voltar para a aba é sinal de que o usuário quer ver o estado agora: recomeça sem esperar
       // o backoff acumulado enquanto ela esteve oculta.
       generation += 1;
-      delay = BASE_DELAY_MS;
+      delay = intervalMs;
       window.clearTimeout(timer);
       void poll(generation);
     }
@@ -52,5 +53,5 @@ export function usePoll(run: () => Promise<void>, onError: (reason: unknown) => 
       document.removeEventListener("visibilitychange", wake);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, intervalMs]);
 }

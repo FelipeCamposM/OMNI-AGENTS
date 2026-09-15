@@ -67,8 +67,10 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
       fontFamily: "Cascadia Code, Consolas, monospace",
       fontSize: 13,
       scrollback: 10_000,
+      // Fundo transparente no xterm; a cor sai do container, com a opacidade de Configurações → Fundo.
+      allowTransparency: true,
       theme: {
-        background: "#0e0e14",
+        background: "#00000000",
         foreground: "#e2e2ec",
         cursor: "#f97316",
         selectionBackground: "#f973164d",
@@ -263,7 +265,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   }
 
   return (
-    <div className="relative h-full min-h-0 bg-[#0e0e14]">
+    <div className="relative h-full min-h-0" style={{ backgroundColor: "rgb(14 14 20 / var(--terminal-opacity, 1))" }}>
       <div
         ref={hostRef}
         className="absolute inset-0 p-2"

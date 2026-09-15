@@ -35,6 +35,12 @@ struct OutputBuffer {
 struct LiveSession {
     interaction: Mutex<interaction::Interaction>,
     reserved: std::sync::atomic::AtomicBool,
+    /// Ninguém está exibindo esta PTY num terminal de verdade — foi aberta pelo celular. Enquanto for
+    /// `true` o engine responde sozinho as perguntas que um terminal responderia (ver
+    /// `answer_terminal_queries`). Vira `false` no primeiro `snapshot`, quando o xterm do desktop
+    /// passa a exibir a sessão e assume essas respostas — os dois respondendo em dobro vazaria
+    /// `ESC[1;1R` como texto digitado dentro do CLI.
+    headless: std::sync::atomic::AtomicBool,
     meta: Mutex<TerminalSession>,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
@@ -48,26 +54,59 @@ enum SessionEntry {
 }
 
 /// How long a `Working` session can go without new output before it's reported as
-/// `Answered` instead. ponytail: a fixed idle timeout is a naive proxy for "the agent
-/// stopped producing output" — a silent long-running build looks identical to an
-/// answered prompt. Upgrade path: providers emitting a structured "done" signal.
+/// `Answered` instead.
 const ANSWERED_IDLE_MS: u64 = 1_500;
 
-fn apply_idle_timeout(state: SessionState, last_activity_at_ms: u64, now_ms: u64) -> SessionState {
-    if state == SessionState::Working && now_ms.saturating_sub(last_activity_at_ms) > ANSWERED_IDLE_MS {
-        SessionState::Answered
-    } else {
-        state
+/// CLIs cujo estado vem da TELA, não só do silêncio. Silêncio sozinho mentia: digitar no shell,
+/// um log de dev server ou uma pausa do agente viravam "terminou" e disparavam aviso. Outros CLIs
+/// e shells puros continuam no palpite por tempo ocioso — e nunca contam `attention_seq`.
+fn screen_tracked(provider: Option<&str>) -> bool {
+    matches!(provider, Some("claude" | "codex"))
+}
+
+/// Claude Code e Codex mostram "esc to interrupt" durante o turno inteiro (inclusive rodando
+/// ferramenta) e tiram quando acabam.
+fn in_turn(screen_text: &str) -> bool {
+    screen_text.to_ascii_lowercase().contains("esc to interrupt")
+}
+
+/// Novo estado depois de `idle_ms` sem saída, e se isso encerra um turno de verdade (= aviso).
+fn settle_state(state: &SessionState, idle_ms: u64, tracked: bool, screen_in_turn: bool, turn_active: bool) -> (SessionState, bool) {
+    if *state != SessionState::Working || idle_ms <= ANSWERED_IDLE_MS {
+        return (state.clone(), false);
     }
+    if !tracked {
+        return (SessionState::Answered, false);
+    }
+    if screen_in_turn {
+        return (SessionState::Working, false);
+    }
+    (SessionState::Answered, turn_active)
+}
+
+/// Aplica `settle_state` e grava no meta: o aviso de fim de turno só pode ser contado uma vez.
+/// Ordem de lock interaction → meta, a mesma de `append_output` e `capabilities`.
+fn settle(session: &LiveSession) -> TerminalSession {
+    let mut interaction = session.interaction.lock().expect("screen poisoned");
+    let mut meta = session.meta.lock().expect("session metadata poisoned");
+    let tracked = screen_tracked(meta.provider.as_deref());
+    let screen_in_turn = tracked && in_turn(&interaction.parser.screen().contents());
+    let idle_ms = now_ms().saturating_sub(meta.last_activity_at_ms);
+    let (state, turn_finished) = settle_state(&meta.state, idle_ms, tracked, screen_in_turn, interaction.turn_active);
+    if turn_finished {
+        interaction.turn_active = false;
+        meta.attention_seq += 1;
+    }
+    meta.state = state;
+    meta.clone()
 }
 
 impl SessionEntry {
     fn metadata(&self) -> TerminalSession {
         match self {
             Self::Live(session) => {
-                let mut meta = session.meta.lock().expect("session metadata poisoned").clone();
+                let mut meta = settle(session);
                 meta.input_locked = session.reserved.load(Ordering::SeqCst);
-                meta.state = apply_idle_timeout(meta.state, meta.last_activity_at_ms, now_ms());
                 meta
             }
             Self::Historical(session) => session.clone(),
@@ -109,6 +148,7 @@ impl EngineState {
 async fn main() -> Result<()> {
     let engine_dir = engine_dir()?;
     fs::create_dir_all(&engine_dir)?;
+    executable_identity(); // captura antes que uma atualização troque o arquivo
     let token = load_or_create_token(&engine_dir.join("engine.token"))?;
     let state_file = engine_dir.join("sessions.json");
     let sessions = load_historical_sessions(&state_file);
@@ -175,10 +215,14 @@ fn handle_request(request: EngineRequest, state: &Arc<EngineState>) -> EngineRes
         EngineRequest::MobileSettings { config, rotate, .. } => mobile::settings(state, config, rotate),
         EngineRequest::PublishWorkspace { projects, agents, .. } => mobile::publish(state, projects, agents),
         EngineRequest::MobileCheck { .. } => mobile::check(state),
+        EngineRequest::MobileTotp { action, .. } => mobile::totp(state, action),
         EngineRequest::Ping { .. } => {
+            let (engine_exe, engine_exe_modified_ms) = executable_identity().clone();
             return EngineResponse::Pong {
                 protocol_version: PROTOCOL_VERSION,
                 engine_pid: std::process::id(),
+                engine_exe,
+                engine_exe_modified_ms,
             }
         }
         EngineRequest::ListSessions { .. } => list_sessions(state),
@@ -205,7 +249,7 @@ fn handle_request(request: EngineRequest, state: &Arc<EngineState>) -> EngineRes
             initial_command,
             rows,
             cols,
-            SessionOrigin { env, provider, profile_id, conversation_id, external_session_id },
+            SessionOrigin { headless: false, env, provider, profile_id, conversation_id, external_session_id },
         ),
         EngineRequest::WriteTerminal { session_id, data, .. } => write_terminal(state, &session_id, &data),
         EngineRequest::ResizeTerminal { session_id, rows, cols, .. } => {
@@ -240,6 +284,27 @@ fn list_sessions(state: &EngineState) -> Result<EngineResponse> {
 
 type PtySpawn = (Option<u32>, Box<dyn Write + Send>, Box<dyn MasterPty + Send>, Box<dyn Child + Send + Sync>, Box<dyn Read + Send>);
 
+/// Variáveis que dizem **qual** engine é este (porta, pasta de dados, binário). Valem para o
+/// processo do engine e para mais ninguém.
+///
+/// Sem esta limpeza elas vazavam para todo terminal aberto pelo engine: quem desenvolve o OMNI
+/// dentro do próprio OMNI rodava `npm run dev` num shell que já trazia a porta 47321 e a pasta
+/// `com.omni.agents` do app instalado — e as variáveis de ambiente vencem o padrão de dev. O app de
+/// dev passava a usar o engine e o código de acesso do instalado, e comando novo esbarrava num
+/// engine velho ("unknown variant `mobile_totp`").
+const VARIAVEIS_DO_ENGINE: [&str; 3] = ["OMNI_ENGINE_PORT", "OMNI_DATA_DIR", "OMNI_ENGINE_PATH"];
+
+fn ambiente_do_terminal(command: &mut CommandBuilder, env: &[(String, String)]) {
+    for nome in VARIAVEIS_DO_ENGINE {
+        command.env_remove(nome);
+    }
+    command.env("OMNI_AGENTS", "1");
+    // Isolamento de conta: o CLI é digitado no shell, então herda o ambiente daqui.
+    for (key, value) in env {
+        command.env(key, value);
+    }
+}
+
 fn open_pty_and_spawn(
     cwd: &str,
     shell: &str,
@@ -261,11 +326,11 @@ fn open_pty_and_spawn(
     }).context("failed to create ConPTY")?;
     let mut command = CommandBuilder::new(shell);
     command.cwd(cwd_path);
-    command.env("OMNI_AGENTS", "1");
-    // Isolamento de conta: o CLI é digitado no shell, então herda o ambiente daqui.
-    for (key, value) in env {
-        command.env(key, value);
-    }
+    ambiente_do_terminal(&mut command, env);
+    // Shell de login: é o `.zprofile`/`.bash_profile` que põe Homebrew e `~/.local/bin` no PATH,
+    // onde `claude` e `codex` costumam morar no macOS e no Linux.
+    #[cfg(not(windows))]
+    command.arg("-l");
     #[cfg(windows)]
     if shell.to_ascii_lowercase().contains("powershell")
         || shell.to_ascii_lowercase().contains("pwsh")
@@ -334,6 +399,7 @@ fn spawn_reader_thread(state: Arc<EngineState>, session: Arc<LiveSession>, mut r
 /// `spawn_terminal_inner` já estava no limite de argumentos.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SessionOrigin {
+    pub headless: bool,
     pub env: Vec<(String, String)>,
     pub provider: Option<String>,
     pub profile_id: Option<String>,
@@ -346,6 +412,7 @@ impl SessionOrigin {
     /// precisam manter a mesma conta.
     fn of(session: &TerminalSession) -> Self {
         Self {
+            headless: false,
             env: session.env.clone(),
             provider: session.provider.clone(),
             profile_id: session.profile_id.clone(),
@@ -370,6 +437,7 @@ pub(crate) fn spawn_terminal_inner(
     origin: SessionOrigin,
 ) -> Result<TerminalSession> {
     let shell = shell.unwrap_or_else(default_shell);
+    let headless = origin.headless;
     let (pid, writer, master, child, reader) = open_pty_and_spawn(&cwd, &shell, rows, cols, &origin.env)?;
     let metadata = TerminalSession {
         id: id.clone(),
@@ -387,6 +455,7 @@ pub(crate) fn spawn_terminal_inner(
         initial_command: initial_command.clone(),
         input_locked: false,
         notice: None,
+        attention_seq: 0,
         env: origin.env,
         provider: origin.provider,
         profile_id: origin.profile_id,
@@ -396,6 +465,7 @@ pub(crate) fn spawn_terminal_inner(
     let session = Arc::new(LiveSession {
         interaction: Mutex::new(interaction::Interaction::new(rows.max(1), cols.max(1))),
         reserved: std::sync::atomic::AtomicBool::new(false),
+        headless: std::sync::atomic::AtomicBool::new(headless),
         meta: Mutex::new(metadata.clone()),
         writer: Mutex::new(writer),
         master: Mutex::new(master),
@@ -489,6 +559,7 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
             let meta = session.meta.lock().map_err(|_| anyhow!("session metadata poisoned"))?.clone();
             context.parser = vt100::Parser::new(meta.rows, meta.cols, 0);
             context.input_revision += 1;
+            context.turn_active = false;
             let (pid, writer, master, child, reader) =
                 open_pty_and_spawn(&meta.cwd, &meta.shell, meta.rows, meta.cols, &meta.env)?;
             *session.writer.lock().map_err(|_| anyhow!("terminal writer poisoned"))? = writer;
@@ -587,10 +658,26 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
     }
     let length = data.len();
     let mut interaction = session.interaction.lock().expect("screen poisoned");
-    if session.meta.lock().expect("metadata poisoned").pid != watched_pid { return; }
+    let tracked_provider = {
+        let meta = session.meta.lock().expect("metadata poisoned");
+        if meta.pid != watched_pid { return; }
+        meta.provider.clone().filter(|provider| screen_tracked(Some(provider)))
+    };
     interaction.parser.process(bytes);
-    let approval_requested = looks_like_approval_prompt(&data);
-    let notice = detect_notice(&interaction.parser.screen().contents());
+    if session.headless.load(Ordering::SeqCst) {
+        answer_terminal_queries(session, &data, interaction.parser.screen());
+    }
+    let screen_text = interaction.parser.screen().contents();
+    let approval_requested = match &tracked_provider {
+        // O diálogo real, reconhecido estrito — não "do you want to" solto numa resposta do agente.
+        Some(provider) => {
+            let dialog = interaction::approval(&screen_text, provider).is_some();
+            if dialog || in_turn(&screen_text) { interaction.turn_active = true; }
+            dialog
+        }
+        None => looks_like_approval_prompt(&data),
+    };
+    let notice = detect_notice(&screen_text);
     if let Ok(mut output) = session.output.lock() {
         let sequence = output.next_seq;
         output.next_seq += 1;
@@ -606,10 +693,38 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
         if let Ok(mut meta) = session.meta.lock() {
             meta.output_seq = output.next_seq;
             meta.last_activity_at_ms = now_ms();
-            meta.state = if approval_requested { SessionState::ApprovalRequired } else { SessionState::Working };
+            let next = if approval_requested { SessionState::ApprovalRequired } else { SessionState::Working };
+            if tracked_provider.is_some() && next == SessionState::ApprovalRequired && meta.state != next {
+                meta.attention_seq += 1;
+            }
+            meta.state = next;
             meta.notice = notice;
         }
     }
+}
+
+/// Responde as perguntas que um terminal de verdade responderia, para PTYs que ninguém está exibindo.
+///
+/// **Sem isto, sessão aberta pelo celular nunca iniciava.** O ConPTY do Windows manda `ESC[6n`
+/// ("onde está o cursor?") ao criar a PTY e **para** até receber `ESC[linha;colunaR`. No desktop
+/// quem responde é o xterm.js; headless, ninguém respondia: a saída ficava só no `ESC[6n`, o bash
+/// não terminava de subir, o `claude` injetado nunca rodava, e o celular dizia "entrada do CLI não
+/// reconhecida". Confirmado respondendo `ESC[1;1R` à mão numa sessão travada: ela destravou na hora.
+///
+/// A posição vem do `vt100` que o engine já mantém, já com o chunk aplicado.
+fn answer_terminal_queries(session: &LiveSession, data: &str, screen: &vt100::Screen) {
+    if let Some(resposta) = cursor_report(data, screen.cursor_position()) {
+        if let Ok(mut writer) = session.writer.lock() {
+            let _ = writer.write_all(resposta.as_bytes());
+            let _ = writer.flush();
+        }
+    }
+}
+
+/// `ESC[linha;colunaR` (1-based) para cada `ESC[6n` no chunk. Separado para testar sem PTY.
+fn cursor_report(data: &str, (row, col): (u16, u16)) -> Option<String> {
+    let pedidos = data.matches("[6n").count();
+    (pedidos > 0).then(|| format!("[{};{}R", row + 1, col + 1).repeat(pedidos))
 }
 
 fn write_terminal(state: &EngineState, session_id: &str, data: &str) -> Result<EngineResponse> {
@@ -685,6 +800,9 @@ fn snapshot(state: &EngineState, session_id: &str, since: u64) -> Result<EngineR
     let SessionEntry::Live(session) = entry else {
         return Ok(EngineResponse::Snapshot { session: session_meta, from_seq: since, next_seq: since, data: String::new() });
     };
+    // Snapshot só vem de quem renderiza a PTY num terminal (o xterm do desktop). A partir daqui é ele
+    // quem responde as perguntas do terminal.
+    session.headless.store(false, Ordering::SeqCst);
     let output = session.output.lock().map_err(|_| anyhow!("terminal output poisoned"))?;
     let from_seq = output.chunks.front().map(|(seq, _)| (*seq).max(since)).unwrap_or(since);
     let data = output
@@ -703,8 +821,18 @@ fn engine_dir() -> Result<PathBuf> {
     if let Some(dir) = env::var_os("OMNI_DATA_DIR") {
         return Ok(PathBuf::from(dir));
     }
-    let base = env::var_os("LOCALAPPDATA").ok_or_else(|| anyhow!("LOCALAPPDATA is unavailable"))?;
-    Ok(PathBuf::from(base).join(omni_protocol::DATA_DIR).join("engine"))
+    let base = omni_protocol::local_data_root().ok_or_else(|| anyhow!("user data directory is unavailable"))?;
+    Ok(base.join(omni_protocol::DATA_DIR).join("engine"))
+}
+
+/// Binário e data de modificação dele **no momento em que o engine subiu** (ver `Pong`).
+fn executable_identity() -> &'static (Option<String>, Option<u64>) {
+    static IDENTITY: std::sync::OnceLock<(Option<String>, Option<u64>)> = std::sync::OnceLock::new();
+    IDENTITY.get_or_init(|| {
+        let exe = env::current_exe().ok();
+        let modified = exe.as_ref().and_then(|exe| omni_protocol::modified_ms(exe));
+        (exe.map(|exe| exe.to_string_lossy().into_owned()), modified)
+    })
 }
 
 fn load_or_create_token(path: &Path) -> Result<String> {
@@ -731,9 +859,26 @@ fn load_historical_sessions(path: &Path) -> HashMap<String, SessionEntry> {
         .ok()
         .and_then(|data| serde_json::from_slice::<Vec<TerminalSession>>(&data).ok())
         .unwrap_or_default();
+    // Um engine antigo que ficou vivo durante uma atualização ignorava provider/profile_id no
+    // SpawnTerminal e gravou a sessão sem origem — e o restart preserva isso para sempre. Sem
+    // origem, `/usage` e o celular não acham a sessão. O índice de conversas guarda a origem.
+    let conversations = path.parent().map(omni_core::conversations::read_index).unwrap_or_default();
     sessions
         .into_iter()
         .map(|mut session| {
+            if session.provider.is_none() {
+                let origin = conversations.iter().rev().find_map(|conversation| {
+                    let segment = conversation.segments.iter().rev()
+                        .find(|segment| segment.terminal_session_id.as_deref() == Some(session.id.as_str()))?;
+                    Some((conversation.id.clone(), segment.clone()))
+                });
+                if let Some((conversation_id, segment)) = origin {
+                    session.provider = Some(segment.provider);
+                    session.profile_id = session.profile_id.take().or(segment.profile_id);
+                    session.conversation_id = session.conversation_id.take().or(Some(conversation_id));
+                    session.external_session_id = session.external_session_id.take().or(segment.external_session_id);
+                }
+            }
             session.state = if Path::new(&session.cwd).is_dir() { SessionState::Stopped } else { SessionState::Orphan };
             session.pid = None;
             (session.id.clone(), SessionEntry::Historical(session))
@@ -779,6 +924,23 @@ mod tests {
             sessions: Mutex::new(HashMap::new()),
             id_sequence: AtomicU64::new(1),
         })
+    }
+
+    #[test]
+    fn historical_session_without_origin_is_filled_from_conversation_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let session = serde_json::json!({"id":"s","project_id":"p","name":"Claude · agent","cwd":".","shell":"sh",
+            "state":"working","pid":1,"created_at_ms":0,"last_activity_at_ms":0,"output_seq":0,"rows":10,"cols":10});
+        fs::write(dir.path().join("sessions.json"), serde_json::json!([session]).to_string()).unwrap();
+        fs::write(dir.path().join("conversations.json"), serde_json::json!({"conversations":[{"id":"conv","project_id":"p","cwd":".",
+            "title":"t","created_at_ms":0,"segments":[{"provider":"claude","profile_id":"claude-padrao",
+            "external_session_id":"ext","terminal_session_id":"s","started_at_ms":0}]}]}).to_string()).unwrap();
+        let sessions = load_historical_sessions(&dir.path().join("sessions.json"));
+        let meta = sessions["s"].metadata();
+        assert_eq!(meta.provider.as_deref(), Some("claude"));
+        assert_eq!(meta.profile_id.as_deref(), Some("claude-padrao"));
+        assert_eq!(meta.conversation_id.as_deref(), Some("conv"));
+        assert_eq!(meta.external_session_id.as_deref(), Some("ext"));
     }
 
     #[tokio::test]
@@ -849,6 +1011,70 @@ mod tests {
         assert_ne!(session.pid, spawned.pid, "restart should replace the running process");
     }
 
+    /// A identidade do engine não pode chegar aos terminais. Foi o que fez `npm run dev`, rodado dentro
+    /// do OMNI instalado, conversar com o engine instalado em vez de abrir o próprio.
+    #[test]
+    fn terminal_nao_herda_a_identidade_do_engine() {
+        env::set_var("OMNI_ENGINE_PORT", "47321");
+        env::set_var("OMNI_DATA_DIR", r"C:\dados\com.omni.agents\engine");
+        let mut command = CommandBuilder::new("shell");
+        ambiente_do_terminal(&mut command, &[("CLAUDE_CONFIG_DIR".into(), r"C:\conta".into())]);
+
+        for nome in VARIAVEIS_DO_ENGINE {
+            assert!(command.get_env(nome).is_none(), "{nome} vazou para o terminal");
+        }
+        assert_eq!(command.get_env("OMNI_AGENTS").and_then(|v| v.to_str()), Some("1"));
+        assert_eq!(command.get_env("CLAUDE_CONFIG_DIR").and_then(|v| v.to_str()), Some(r"C:\conta"),
+            "o isolamento de conta continua passando");
+    }
+
+    #[test]
+    fn cursor_report_responde_cada_pergunta_em_1_based() {
+        assert_eq!(cursor_report("\x1b[6n", (0, 0)).as_deref(), Some("\x1b[1;1R"));
+        assert_eq!(cursor_report("abc\x1b[6nxyz\x1b[6n", (9, 2)).as_deref(), Some("\x1b[10;3R\x1b[10;3R"));
+        assert_eq!(cursor_report("sem pergunta", (0, 0)), None);
+    }
+
+    /// Reproduz o travamento real: PTY aberta sem terminal exibindo. O ConPTY manda `ESC[6n` e para
+    /// até ter resposta; antes, o comando injetado nunca rodava. Com `headless`, o engine responde e
+    /// o shell segue.
+    #[cfg(windows)]
+    #[test]
+    fn sessao_sem_terminal_exibindo_nao_trava_no_pedido_de_cursor() {
+        let state = test_state();
+        let cwd = env::temp_dir().to_string_lossy().into_owned();
+        let id = state.next_id();
+        spawn_terminal_inner(
+            &state,
+            id.clone(),
+            "project".into(),
+            "headless".into(),
+            cwd,
+            Some(default_shell()),
+            Some("echo OMNI_HEADLESS_OK".into()),
+            24,
+            80,
+            now_ms(),
+            SessionOrigin { headless: true, ..SessionOrigin::default() },
+        )
+        .expect("spawn should succeed");
+
+        let mut saida = String::new();
+        let limite = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        while std::time::Instant::now() < limite {
+            let sessions = state.sessions.lock().unwrap();
+            if let Some(SessionEntry::Live(session)) = sessions.get(&id) {
+                saida = session.output.lock().unwrap().chunks.iter().map(|(_, c)| c.as_str()).collect();
+            }
+            drop(sessions);
+            // O comando aparece duas vezes quando roda: o eco da digitação e a saída do `echo`.
+            if saida.matches("OMNI_HEADLESS_OK").count() >= 2 { break; }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let _ = close_session(&state, &id);
+        assert!(saida.matches("OMNI_HEADLESS_OK").count() >= 2, "o shell não chegou a rodar o comando: {saida:?}");
+    }
+
     #[test]
     fn approval_prompt_patterns_are_detected_case_insensitively() {
         assert!(looks_like_approval_prompt("Do You Want To continue? (y/n)"));
@@ -867,8 +1093,23 @@ mod tests {
 
     #[test]
     fn idle_timeout_only_demotes_working_sessions_to_answered() {
-        assert_eq!(apply_idle_timeout(SessionState::Working, 0, ANSWERED_IDLE_MS + 1), SessionState::Answered);
-        assert_eq!(apply_idle_timeout(SessionState::Working, 0, ANSWERED_IDLE_MS - 1), SessionState::Working);
-        assert_eq!(apply_idle_timeout(SessionState::Crashed, 0, ANSWERED_IDLE_MS + 1), SessionState::Crashed);
+        let idle = ANSWERED_IDLE_MS + 1;
+        assert_eq!(settle_state(&SessionState::Working, idle, false, false, false), (SessionState::Answered, false));
+        assert_eq!(settle_state(&SessionState::Working, ANSWERED_IDLE_MS - 1, false, false, false), (SessionState::Working, false));
+        assert_eq!(settle_state(&SessionState::Crashed, idle, false, false, false), (SessionState::Crashed, false));
+    }
+
+    #[test]
+    fn only_a_real_agent_turn_ending_counts_as_attention() {
+        let idle = ANSWERED_IDLE_MS + 1;
+        // Shell puro ocioso: "answered" pra exibir, mas nunca aviso.
+        assert_eq!(settle_state(&SessionState::Working, idle, false, false, true), (SessionState::Answered, false));
+        // Agente parado com "esc to interrupt" na tela ainda está no turno.
+        assert_eq!(settle_state(&SessionState::Working, idle, true, true, true), (SessionState::Working, false));
+        // Turno acabou: aviso.
+        assert_eq!(settle_state(&SessionState::Working, idle, true, false, true), (SessionState::Answered, true));
+        // Ocioso sem turno (acabou de abrir, pessoa digitando no composer): sem aviso.
+        assert_eq!(settle_state(&SessionState::Working, idle, true, false, false), (SessionState::Answered, false));
+        assert!(in_turn("✻ Thinking… (esc to interrupt)") && in_turn("Working (5s • Esc to interrupt)"));
     }
 }

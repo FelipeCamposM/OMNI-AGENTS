@@ -43,6 +43,12 @@ export function esquecerToken() {
   try { localStorage.removeItem(TOKEN_KEY); } catch { /* nada a fazer */ }
 }
 
+/** Grava o token recebido no pareamento pelo Authy — o caminho do app da tela inicial do iPhone,
+ *  que não enxerga o token que o QR gravou no Safari. */
+export function salvarToken(valor: string) {
+  try { localStorage.setItem(TOKEN_KEY, valor); } catch { /* sem armazenamento: vale só nesta aba */ }
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,

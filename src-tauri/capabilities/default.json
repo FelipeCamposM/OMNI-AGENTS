@@ -23,6 +23,7 @@
     "core:window:allow-set-focus",
     "core:window:allow-unminimize",
     "opener:allow-open-path",
-    "opener:allow-reveal-item-in-dir"
+    "opener:allow-reveal-item-in-dir",
+    { "identifier": "opener:allow-open-url", "allow": [{ "url": "https://login.tailscale.com/*" }] }
   ]
 }

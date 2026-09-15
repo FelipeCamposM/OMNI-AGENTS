@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePoll } from "../../mobile/usePoll";
 import { listDir, resolveIgnoreList, type FileEntry } from "./filesService";
+
+function sameEntries(a: FileEntry[] | undefined, b: FileEntry[]): boolean {
+  return a?.length === b.length && a.every((entry, index) => entry.path === b[index].path && entry.isDirectory === b[index].isDirectory);
+}
 
 export function useFileTree(projectPath: string | null) {
   const [ignoreList, setIgnoreList] = useState<string[]>([]);
@@ -56,13 +61,28 @@ export function useFileTree(projectPath: string | null) {
       if (!projectPath) return;
       const relative = absoluteDirPath === projectPath ? "" : absoluteDirPath.slice(projectPath.length).replace(/^[\\/]/, "");
       const list = await listDir(projectPath, relative, ignoreList);
+      // Igual ao anterior não troca o estado — o poll abaixo não re-renderiza a árvore à toa.
       if (absoluteDirPath === projectPath) {
-        setRoot(list);
+        setRoot((previous) => (sameEntries(previous, list) ? previous : list));
       } else {
-        setChildren((previous) => new Map(previous).set(absoluteDirPath, list));
+        setChildren((previous) =>
+          sameEntries(previous.get(absoluteDirPath), list) ? previous : new Map(previous).set(absoluteDirPath, list)
+        );
       }
     },
     [projectPath, ignoreList]
+  );
+
+  // Arquivo criado fora da árvore (agente no terminal, editor externo) não aparecia até reabrir
+  // o projeto. Relê a raiz e as pastas abertas no mesmo ritmo do resto dos polls.
+  // ponytail: poll em vez de `watch` do plugin-fs (feature extra + permissão); trocar se 5s incomodar.
+  usePoll(
+    async () => {
+      if (!projectPath || ignoreList.length === 0) return;
+      await Promise.all([projectPath, ...expanded].map((dir) => refreshDir(dir).catch(() => undefined)));
+    },
+    () => undefined,
+    [projectPath, ignoreList, expanded, refreshDir]
   );
 
   return { root, children, expanded, toggle, refreshDir };

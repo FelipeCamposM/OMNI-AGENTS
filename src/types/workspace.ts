@@ -65,7 +65,8 @@ export interface WorkspaceCollection {
 }
 
 export type WorkspaceAction =
-  | { type: "ADD_PROJECT"; path: string }
+  /** `id` opcional: quem precisa do id antes do reducer rodar (retomar conversa do Histórico). */
+  | { type: "ADD_PROJECT"; path: string; id?: string }
   | { type: "SELECT_PROJECT"; projectId: string }
   | { type: "CLOSE_PROJECT"; projectId: string }
   | { type: "FOCUS_PANE"; paneId: string }

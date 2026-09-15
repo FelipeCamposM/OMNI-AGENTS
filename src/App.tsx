@@ -2,6 +2,8 @@ import { useState } from "react";
 import { AppBackground } from "./components/backgrounds/AppBackground";
 import { SettingsView } from "./components/SettingsView";
 import { Sidebar } from "./components/Sidebar";
+import { fileKind } from "./features/files/filesService";
+import { QuickOpen } from "./features/files/QuickOpen";
 import { useWorkspace } from "./features/workspace/useWorkspace";
 import { collectResourceIds } from "./features/workspace/workspaceReducer";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
@@ -10,11 +12,21 @@ import { useKanbanDispatcher } from "./features/kanban/useKanbanDispatcher";
 import { useTerminalSessions } from "./features/terminal/useTerminalSessions";
 import { useAttention, type AttentionItem } from "./features/terminal/useAttention";
 import { useAttentionNotifier } from "./features/terminal/useAttentionNotifier";
-import { closeTerminal, duplicateTerminal, restartTerminal } from "./features/terminal/terminalService";
+import {
+  closeTerminal,
+  duplicateTerminal,
+  ensureAgentTrust,
+  ensureEngine,
+  listAgentClis,
+  restartTerminal,
+  spawnTerminal,
+} from "./features/terminal/terminalService";
+import { HistoryView } from "./features/history/HistoryView";
+import { resumeCommand, samePath, type HistoryEntry } from "./features/history/historyService";
 import type { SettingsSection } from "./hooks/useNotifications";
 import { useSettings } from "./hooks/useSettings";
 
-type View = "workspace" | "settings";
+type View = "workspace" | "settings" | "history";
 
 export function App() {
   const [view, setView] = useState<View>("workspace");
@@ -25,14 +37,14 @@ export function App() {
   const { kanban, dispatch: kanbanDispatch } = useKanban();
   useKanbanDispatcher(kanban, kanbanDispatch, workspace.projects, sessions);
   // Com as Configurações abertas nenhuma pane está na tela, então nada pode ser marcado como visto.
-  const { items: attention, countByWorkspace } = useAttention(
+  const { items: attention, all: allAttention, countByWorkspace } = useAttention(
     sessions,
     workspaces,
     activeWorkspaceId,
     view === "workspace"
   );
 
-  useAttentionNotifier(attention, settings.notifyAttention);
+  useAttentionNotifier(allAttention, settings.notifyAttention);
 
   function focusSession(item: AttentionItem) {
     dispatch({
@@ -45,9 +57,50 @@ export function App() {
     setView("workspace");
   }
 
+  function openFile(path: string, kind: "file" | "markdown") {
+    if (!activeProject) return;
+    const title = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+    dispatch({ type: "CREATE_TAB", paneId: activeProject.activePaneId, kind, title, resourceId: path });
+    setView("workspace");
+  }
+
+  /** Reabre uma conversa do Histórico num terminal do projeto dela — adicionando o projeto ao
+   *  workspace ativo se ele ainda não estiver aberto em nenhum. */
+  async function resumeHistory(entry: HistoryEntry) {
+    const cwd = entry.cwd;
+    if (!cwd) throw new Error("Essa conversa não registrou a pasta onde rodou.");
+    const cli = (await listAgentClis()).find((item) => item.id === entry.provider);
+    if (!cli?.available) throw new Error(`${cli?.label ?? entry.provider} não foi encontrado no PATH.`);
+    const found = workspaces
+      .flatMap((item) => item.projects.map((project) => ({ workspaceId: item.id, project })))
+      .find(({ project }) => samePath(project.path, cwd));
+    const workspaceId = found?.workspaceId ?? activeWorkspaceId;
+    if (!workspaceId) throw new Error("Crie um workspace antes de retomar a conversa.");
+    // Id escolhido aqui pra já nascer a sessão no projeto certo, antes do reducer rodar.
+    const projectId = found?.project.id ?? `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (!found) dispatch({ type: "ADD_PROJECT", path: cwd, id: projectId });
+
+    await ensureEngine();
+    await ensureAgentTrust(cli.id, cwd, entry.profile_id);
+    const session = await spawnTerminal({
+      projectId,
+      name: `${cli.label} · ${(entry.title ?? "retomada").slice(0, 40)}`,
+      cwd,
+      rows: 30,
+      cols: 120,
+      initialCommand: resumeCommand(cli.command, entry),
+      provider: cli.id,
+      profileId: entry.profile_id,
+      externalSessionId: entry.session_id,
+    });
+    dispatch({ type: "FOCUS_SESSION", workspaceId, projectId, sessionId: session.id, title: session.name });
+    setView("workspace");
+  }
+
   return (
     <div className="flex h-screen overflow-hidden">
       <AppBackground settings={settings} />
+      <QuickOpen projectPath={activeProject?.path ?? null} onOpenFile={(path) => openFile(path, fileKind(path))} />
       <Sidebar
         workspaces={workspaces}
         activeWorkspaceId={activeWorkspaceId}
@@ -67,12 +120,7 @@ export function App() {
         projects={workspace.projects}
         activeProjectId={workspace.activeProjectId}
         activeProjectPath={activeProject?.path ?? null}
-        onOpenFile={(path, kind) => {
-          if (!activeProject) return;
-          const title = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
-          dispatch({ type: "CREATE_TAB", paneId: activeProject.activePaneId, kind, title, resourceId: path });
-          setView("workspace");
-        }}
+        onOpenFile={openFile}
         onFileRenamed={(fromPath, toPath, title) => {
           dispatch({ type: "RENAME_TAB_RESOURCE", fromResourceId: fromPath, toResourceId: toPath, title });
         }}
@@ -83,6 +131,8 @@ export function App() {
           (session) => session.project_id === workspace.activeProjectId,
         )}
         showSettings={view === "settings"}
+        showHistory={view === "history"}
+        onOpenHistory={() => setView("history")}
         onHome={() => setView("workspace")}
         onAddProject={(path) => {
           dispatch({ type: "ADD_PROJECT", path });
@@ -145,7 +195,9 @@ export function App() {
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <main className="flex-1 min-h-0">
-          {view === "settings" ? (
+          {view === "history" ? (
+            <HistoryView onResume={resumeHistory} />
+          ) : view === "settings" ? (
             <div className="h-full overflow-y-auto px-6 py-6 [scrollbar-gutter:stable]">
               <div className="w-full mx-auto max-w-3xl">
                 <SettingsView

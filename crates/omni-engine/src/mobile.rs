@@ -1,7 +1,7 @@
 use super::*;
 use axum::{Router, Json, extract::{State, Path as RoutePath, Query, DefaultBodyLimit, Request},
     http::{StatusCode, HeaderMap}, response::{IntoResponse, Response}, routing::{get,post}, middleware::{self, Next}};
-use omni_protocol::{MobileConfig, PublishedAgent, PublishedProject, PublishedWorkspace};
+use omni_protocol::{MobileConfig, PublishedAgent, PublishedProject, PublishedWorkspace, TotpAction};
 use serde::{Serialize, Deserialize};
 use serde_json::{Value, json};
 use std::net::{SocketAddr, IpAddr};
@@ -20,6 +20,8 @@ pub struct MobileRuntime {
     /// nunca pela tela: `tailscale serve` pode levar dezenas de segundos e não pode segurar as
     /// Configurações esperando.
     serve_state: Mutex<(Option<String>,Option<String>)>,
+    /// Tentativas de pareamento pelo Authy: instantes das falhas recentes e o último passo TOTP aceito.
+    pareamento: Mutex<Pareamento>,
     status: Mutex<(Option<String>,Option<String>)>,
     changed: Notify,
     actions: Mutex<VecDeque<Action>>,
@@ -60,6 +62,7 @@ impl MobileRuntime {
             workspace: Mutex::new(omni_protocol::read_json_or_default(&dir.join("workspace.json"))),
             magic_dns: Mutex::new(None),
             serve_state: Mutex::new((None,None)),
+            pareamento: Mutex::new(Pareamento::default()),
             status: Mutex::new((None,None)),changed: Notify::new(),actions: Mutex::new(VecDeque::new()),pending: Notify::new() }
     }
 }
@@ -67,22 +70,28 @@ impl MobileRuntime {
 /// Roda a CLI do Tailscale e devolve (sucesso, stdout+stderr). Timeout curto: o cliente pode estar
 /// travado e a tela de Configurações não pode ficar pendurada esperando por ele.
 fn tailscale(args: &[&str], segundos: u64) -> Option<(bool,String)> {
-    let path = if cfg!(windows) { PathBuf::from("C:/Program Files/Tailscale/tailscale.exe") } else { PathBuf::from("tailscale") };
+    let app = PathBuf::from("/Applications/Tailscale.app/Contents/MacOS/Tailscale"); // app da Mac App Store / site
+    let path = if cfg!(windows) { PathBuf::from("C:/Program Files/Tailscale/tailscale.exe") }
+        else if cfg!(target_os = "macos") && app.is_file() { app } else { PathBuf::from("tailscale") };
     let mut command = std::process::Command::new(path);
     command.args(args).stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
     #[cfg(windows)] { use std::os::windows::process::CommandExt; command.creation_flags(0x08000000); }
     let mut child = command.spawn().ok()?;
     let started = std::time::Instant::now();
+    let mut estourou = false;
     loop {
         if child.try_wait().ok()?.is_some() { break; }
-        if started.elapsed() > std::time::Duration::from_secs(segundos) { let _ = child.kill(); let _ = child.wait(); return None; }
+        if started.elapsed() > std::time::Duration::from_secs(segundos) { let _ = child.kill(); estourou = true; break; }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
+    // A saída é lida **mesmo no timeout**. `tailscale serve --bg` com o Serve desabilitado imprime o
+    // link de liberação e fica esperando, sem sair; antes a saída era descartada aqui e a tela só
+    // dizia "o Tailscale não respondeu", escondendo justamente o link que resolvia.
     let output = child.wait_with_output().ok()?;
     let mut texto = String::from_utf8_lossy(&output.stdout).into_owned();
     texto.push_str(&String::from_utf8_lossy(&output.stderr));
-    Some((output.status.success(),texto))
+    Some((output.status.success() && !estourou,texto))
 }
 
 fn tailscale_ip() -> Option<IpAddr> {
@@ -104,14 +113,23 @@ fn magic_dns() -> Option<String> {
 /// Publica a porta local pelo `tailscale serve`. Devolve `Err(link)` quando o Serve ainda não foi
 /// habilitado na conta — é uma ação de uma vez só, por tailnet, e a UI mostra o link como botão.
 fn serve_start(porta: u16) -> Result<(),String> {
-    let Some((ok,saida)) = tailscale(&["serve","--bg",&porta.to_string()],45) else {
-        return Err("O Tailscale não respondeu.".into());
+    // 10 s bastam: liberado, o comando volta em poucos segundos; não liberado, ele **nunca** volta
+    // (imprime o link e fica esperando), então esperar mais só atrasa a tela.
+    let Some((ok,saida)) = tailscale(&["serve","--bg",&porta.to_string()],10) else {
+        return Err("Tailscale não encontrado neste PC.".into());
     };
     if ok { return Ok(()) }
-    // A CLI imprime o link de habilitação junto da recusa; extrair é melhor do que mandar o
-    // usuário procurar no painel.
-    let link = saida.split_whitespace().find(|palavra| palavra.starts_with("https://login.tailscale.com/"));
-    Err(link.map(str::to_owned).unwrap_or_else(|| saida.trim().to_owned()))
+    Err(motivo_do_serve(&saida))
+}
+
+/// Tira da saída do `tailscale serve` o que a tela precisa: o link de liberação, quando houver.
+/// Separado para testar sem um Tailscale de verdade.
+fn motivo_do_serve(saida: &str) -> String {
+    if let Some(link) = saida.split_whitespace().find(|palavra| palavra.starts_with("https://login.tailscale.com/")) {
+        return link.to_owned();
+    }
+    let texto = saida.trim();
+    if texto.is_empty() { "O Tailscale não respondeu.".into() } else { texto.to_owned() }
 }
 
 fn serve_reset() { let _ = tailscale(&["serve","reset"],15); }
@@ -119,6 +137,9 @@ fn serve_reset() { let _ = tailscale(&["serve","reset"],15); }
 /// Resolve MagicDNS e publica (ou despublica) pelo Serve. Roda na tarefa do servidor, fora do
 /// caminho da tela, porque a CLI do Tailscale pode levar dezenas de segundos para responder.
 async fn publicar(state: &Arc<EngineState>, config: &MobileConfig) {
+    // Zera antes de tentar: o aviso da tentativa anterior ("falta liberar") pararia o polling da
+    // tela, e depois de a pessoa liberar e clicar em Aplicar o QR nunca apareceria.
+    *state.mobile.serve_state.lock().expect("serve poisoned") = (None,None);
     let serve = config.serve;
     let porta: u16 = config.bind.rsplit(':').next().and_then(|p|p.parse().ok()).unwrap_or(0);
     let resultado = tokio::task::spawn_blocking(move || {
@@ -212,6 +233,13 @@ pub fn settings(state: &EngineState, config: Option<MobileConfig>, rotate: bool)
         // tela de configuração não consegue plantar um token escolhido por ela.
         let atual = state.mobile.config.lock().map_err(|_|anyhow!("config poisoned"))?.token.clone();
         config.token = if rotate || (config.enabled && atual.is_empty()) { random_token() } else { atual };
+        // Mesmo motivo do token: o cadastro do Authy é do engine. Uma tela de configuração que
+        // mandasse `totp_confirmed: true` não pode pular a confirmação.
+        {
+            let guardado = state.mobile.config.lock().map_err(|_|anyhow!("config poisoned"))?;
+            config.totp_secret = guardado.totp_secret.clone();
+            config.totp_confirmed = guardado.totp_confirmed;
+        }
         if config.enabled { preferir_tailscale(&mut config); validate(&config)?; }
         atomic_write_json(&state.state_file.with_file_name("mobile.json"),&config)?;
         *state.mobile.config.lock().map_err(|_|anyhow!("config poisoned"))? = config;
@@ -235,7 +263,108 @@ pub fn settings(state: &EngineState, config: Option<MobileConfig>, rotate: bool)
 
     // O link do QR só existe quando há endereço público; sem isso o celular leria um endereço morto.
     let qr = public_url.as_ref().map(|url| format!("{url}/#t={}",config.token));
-    Ok(EngineResponse::MobileSettings { config,listening,error,qr,public_url,magic_dns:magic,serve_hint })
+    let totp_confirmed = config.totp_confirmed;
+    let totp_uri = (!config.totp_confirmed && !config.totp_secret.is_empty())
+        .then(|| totp_de(&config.totp_secret, magic.as_deref()).map(|t| t.get_url()))
+        .flatten();
+    Ok(EngineResponse::MobileSettings { config,listening,error,qr,public_url,magic_dns:magic,serve_hint,totp_confirmed,totp_uri })
+}
+
+/// Passo do TOTP (RFC 6238). Padrão do Authy e do Google Authenticator: 30 s, 6 dígitos, SHA-1.
+const TOTP_PASSO: u64 = 30;
+/// Janela de tolerância, em passos, para relógio do PC e do celular fora de sincronia.
+const TOTP_JANELA: i64 = 1;
+/// Erros de pareamento tolerados dentro de `TRAVA_MS` antes de recusar tudo.
+const MAX_FALHAS: usize = 5;
+const TRAVA_MS: u64 = 5 * 60_000;
+
+#[derive(Default)]
+pub struct Pareamento { falhas: VecDeque<u64>, ultimo_passo: u64 }
+
+/// Monta o TOTP a partir do segredo guardado. `None` com segredo corrompido.
+fn totp_de(secret: &str, conta: Option<&str>) -> Option<totp_rs::TOTP> {
+    let bytes = totp_rs::Secret::Encoded(secret.to_owned()).to_bytes().ok()?;
+    // `:` é separador no `otpauth://`: nome com dois pontos invalida o cadastro.
+    let conta = conta.unwrap_or("PC").replace(':', "-");
+    totp_rs::TOTP::new(totp_rs::Algorithm::SHA1, 6, 0, TOTP_PASSO, bytes, Some("OMNI AGENTS".into()), conta).ok()
+}
+
+/// Passo aceito para `code` no instante `agora` (segundos), com janela ±`TOTP_JANELA`.
+///
+/// Devolve o passo, e não só `bool`, porque o pareamento recusa reuso: um código visto por cima do
+/// ombro não pode ser digitado de novo nos segundos seguintes. Comparação em tempo constante.
+fn totp_confere(secret: &str, code: &str, agora: u64) -> Option<u64> {
+    if code.len() != 6 || !code.bytes().all(|b| b.is_ascii_digit()) { return None }
+    let totp = totp_de(secret, None)?;
+    let atual = (agora / TOTP_PASSO) as i64;
+    (-TOTP_JANELA..=TOTP_JANELA).map(|delta| atual + delta).filter(|passo| *passo >= 0)
+        .find(|passo| token_confere(code, &totp.generate(*passo as u64 * TOTP_PASSO)))
+        .map(|passo| passo as u64)
+}
+
+fn agora_segundos() -> u64 { now_ms() / 1000 }
+
+/// Cadastro do Authy, pedido pelo desktop.
+pub fn totp(state: &EngineState, action: TotpAction) -> Result<EngineResponse> {
+    {
+        let mut config = state.mobile.config.lock().map_err(|_|anyhow!("config poisoned"))?;
+        match action {
+            TotpAction::Reset => {
+                let totp_rs::Secret::Encoded(novo) = totp_rs::Secret::generate_secret().to_encoded() else {
+                    return Err(anyhow!("Falha ao gerar o segredo do Authy"));
+                };
+                config.totp_secret = novo;
+                config.totp_confirmed = false;
+            }
+            TotpAction::Confirm { code } => {
+                if config.totp_secret.is_empty() { return Err(anyhow!("Gere o código do Authy primeiro")); }
+                if totp_confere(&config.totp_secret, code.trim(), agora_segundos()).is_none() {
+                    return Err(anyhow!("Código do Authy não confere. Confira se leu o QR desta tela e use o código atual."));
+                }
+                config.totp_confirmed = true;
+            }
+        }
+        atomic_write_json(&state.state_file.with_file_name("mobile.json"),&*config)?;
+    }
+    settings(state,None,false)
+}
+
+#[derive(Deserialize)] #[serde(deny_unknown_fields)] struct PareamentoBody { codigo: String }
+
+/// Troca um código atual do Authy pelo token de dispositivo.
+///
+/// Existe porque o app da tela inicial do iPhone **não enxerga** o armazenamento do Safari (decisão
+/// da Apple, WebKit bug 181849): o token gravado pelo QR não chega nele. É rota pública — quem
+/// chama é justamente quem ainda não tem token — então a trava de tentativas é o que segura força
+/// bruta: 3 códigos válidos em 10^6 e 5 tentativas a cada 5 minutos.
+async fn parear(State(state): State<Arc<EngineState>>, Json(body): Json<PareamentoBody>) -> Result<Json<Value>,ApiError> {
+    tokio::task::spawn_blocking(move || parear_em(&state,&body.codigo,agora_segundos()))
+        .await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha no pareamento"))?
+}
+
+fn parear_em(state: &EngineState, codigo: &str, agora: u64) -> Result<Json<Value>,ApiError> {
+    let config = state.mobile.config.lock().expect("config poisoned").clone();
+    if !config.totp_confirmed || config.totp_secret.is_empty() {
+        return Err(error(StatusCode::CONFLICT,"Configure o Authy na aba Celular do PC primeiro"));
+    }
+    let mut pareamento = state.mobile.pareamento.lock().expect("pareamento poisoned");
+    let agora_ms = agora * 1000;
+    pareamento.falhas.retain(|instante| agora_ms.saturating_sub(*instante) < TRAVA_MS);
+    if pareamento.falhas.len() >= MAX_FALHAS {
+        return Err(error(StatusCode::TOO_MANY_REQUESTS,"Muitas tentativas erradas. Espere alguns minutos e tente de novo."));
+    }
+    match totp_confere(&config.totp_secret, codigo.trim(), agora) {
+        Some(passo) if passo > pareamento.ultimo_passo => {
+            pareamento.ultimo_passo = passo;
+            pareamento.falhas.clear();
+            Ok(Json(json!({"token":config.token})))
+        }
+        // Passo já usado conta como erro: é exatamente a tentativa de reaproveitar um código visto.
+        _ => {
+            pareamento.falhas.push_back(agora_ms);
+            Err(error(StatusCode::UNAUTHORIZED,"Código do Authy não confere. Use o código que está aparecendo agora."))
+        }
+    }
 }
 
 pub fn start(state: Arc<EngineState>) {
@@ -302,6 +431,7 @@ fn router(state: Arc<EngineState>) -> Router {
         .route("/conversas/{id}/aprovar",post(approve))
         .route("/atencao",get(attention))
         .route("/sessoes",post(create_session))
+        .route("/parear",post(parear))
         .fallback(get(asset)).layer(DefaultBodyLimit::max(32 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(),same_origin)).with_state(state)
 }
@@ -335,7 +465,6 @@ fn hosts_aceitos(state: &EngineState) -> (Vec<String>, Vec<String>) {
 
 async fn same_origin(State(state): State<Arc<EngineState>>, request: Request, next: Next) -> Response {
     let (hosts,origens) = hosts_aceitos(&state);
-    let bind = hosts[0].clone();
     let host = request.headers().get("host").and_then(|v|v.to_str().ok()).unwrap_or("");
     if !hosts.iter().any(|aceito| aceito == host) {
         // A mensagem nomeia a causa real: o Host tem que bater com o bind literal, então abrir pelo
@@ -354,7 +483,7 @@ async fn same_origin(State(state): State<Arc<EngineState>>, request: Request, ne
     // é API. Rota nova nasce protegida sem ninguém lembrar de protegê-la.
     let token = state.mobile.config.lock().expect("config poisoned").token.clone();
     let path = request.uri().path();
-    let publico = path == "/" || path.starts_with("/assets/");
+    let publico = caminho_publico(path);
     if !publico && !token.is_empty()
         && !token_confere(request.headers().get("x-omni-token").and_then(|v|v.to_str().ok()).unwrap_or(""),&token) {
         return error(StatusCode::UNAUTHORIZED,"Dispositivo não autorizado; leia o QR de novo no PC").into_response();
@@ -394,7 +523,7 @@ fn summaries(state: &EngineState) -> Vec<Value> {
         let live = linked_session(state,c);
         let capabilities = live.as_ref().map(interaction::capabilities);
         let status = live.as_ref().map(|s| {
-            let meta = s.meta.lock().expect("metadata poisoned"); apply_idle_timeout(meta.state.clone(),meta.last_activity_at_ms,now_ms())
+            settle(s).state
         });
         json!({"id":c.id,"title":c.title,"project_id":c.project_id,"provider":c.segments.last().map(|s|&s.provider),
             "profile_id":c.segments.last().and_then(|s|s.profile_id.as_ref()),"state":status,"capabilities":capabilities})
@@ -620,6 +749,8 @@ fn spawn_from_mobile(state:&Arc<EngineState>, action:&Action, plan:&SpawnPlan) -
         120,
         now_ms(),
         SessionOrigin {
+            // Aberta sem nenhum terminal exibindo: o engine responde o `ESC[6n` do ConPTY.
+            headless: true,
             env: plan.env.clone(),
             provider: Some(plan.provider.clone()),
             profile_id: plan.profile_id.clone(),
@@ -660,13 +791,39 @@ fn execute_checked(state:&Arc<EngineState>, action:&Action, is_running: impl Fn(
     Ok(())
 }
 
+/// Caminhos servidos sem código de acesso. Lista **fechada**, não prefixo: todo o resto é API e nasce
+/// protegido.
+///
+/// Ícones e manifest precisam estar aqui porque o navegador os busca **sozinho**, sem o
+/// `X-Omni-Token` — ao adicionar à tela inicial, e antes mesmo de o JavaScript rodar. Antes eles
+/// caíam no 401 e o celular ficava sem ícone.
+// `/parear` é pública porque quem chama ainda não tem token; quem a protege é a trava de tentativas.
+const ARQUIVOS_PUBLICOS: [&str; 6] =
+    ["/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/favicon.png", "/parear"];
+
+fn caminho_publico(path: &str) -> bool {
+    path == "/" || path.starts_with("/assets/") || ARQUIVOS_PUBLICOS.contains(&path)
+}
+
+/// `nosniff` está ligado em toda resposta, então o tipo tem de estar certo: ícone ou manifest
+/// servidos como `application/octet-stream` são ignorados pelo celular.
+fn tipo_do_arquivo(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("") {
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "png" => "image/png",
+        "webmanifest" => "application/manifest+json",
+        _ => "application/octet-stream",
+    }
+}
+
 async fn asset(request: Request) -> Response {
     let path = request.uri().path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
     #[cfg(mobile_assets)]
     if let Some(file) = ASSETS.get_file(path) {
-        let content_type = if path.ends_with(".html") { "text/html; charset=utf-8" } else if path.ends_with(".js") { "text/javascript; charset=utf-8" } else if path.ends_with(".css") { "text/css; charset=utf-8" } else { "application/octet-stream" };
-        return ([("content-type",content_type)],file.contents()).into_response();
+        return ([("content-type",tipo_do_arquivo(path))],file.contents()).into_response();
     }
     let _ = path;
     (StatusCode::NOT_FOUND,"Página não encontrada; em desenvolvimento, execute npm run build:mobile antes de compilar o engine").into_response()
@@ -693,7 +850,7 @@ mod tests {
     #[ignore = "Run explicitly while checking the mobile UI in a browser (3 minutes)"]
     async fn browser_fixture() {
         let (_dir,state) = fixture();
-        *state.mobile.config.lock().unwrap() = MobileConfig{enabled:true,bind:"127.0.0.1:47329".into(),token:"fixture-token".into(),serve:false};
+        *state.mobile.config.lock().unwrap() = MobileConfig{enabled:true,bind:"127.0.0.1:47329".into(),token:"fixture-token".into(),serve:false,totp_secret:String::new(),totp_confirmed:false};
         let listener = TcpListener::bind("127.0.0.1:47329").await.unwrap();
         let stop = Arc::new(Notify::new());
         let notify = stop.clone();
@@ -800,16 +957,16 @@ mod tests {
 
     #[test] fn habilitar_gera_token_e_o_desktop_nao_escolhe_o_segredo() {
         let (_dir,state) = fixture();
-        let forjado = MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:"escolhido-pelo-desktop".into(),serve:false};
+        let forjado = MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:"escolhido-pelo-desktop".into(),serve:false,totp_secret:String::new(),totp_confirmed:false};
         settings(&state,Some(forjado),false).unwrap();
         let gerado = state.mobile.config.lock().unwrap().token.clone();
         assert_eq!(gerado.len(),64,"32 bytes em hex");
         assert_ne!(gerado,"escolhido-pelo-desktop");
 
         // Salvar de novo preserva o token: só `rotate` troca, senão todo "Aplicar" desparearia o celular.
-        settings(&state,Some(MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:false}),false).unwrap();
+        settings(&state,Some(MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:false,totp_secret:String::new(),totp_confirmed:false}),false).unwrap();
         assert_eq!(state.mobile.config.lock().unwrap().token,gerado);
-        settings(&state,Some(MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:false}),true).unwrap();
+        settings(&state,Some(MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:false,totp_secret:String::new(),totp_confirmed:false}),true).unwrap();
         assert_ne!(state.mobile.config.lock().unwrap().token,gerado);
     }
 
@@ -847,7 +1004,7 @@ mod tests {
     #[tokio::test] async fn serve_aceita_o_nome_magicdns_e_mais_nenhum() {
         let (_dir,state) = fixture();
         *state.mobile.config.lock().unwrap() =
-            MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:true};
+            MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:true,totp_secret:String::new(),totp_confirmed:false};
         *state.mobile.magic_dns.lock().unwrap() = Some("pc.tail0000.ts.net".into());
         let app = router(state);
         let get = |host:&str| Request::builder().method("GET").uri("/conversas")
@@ -862,15 +1019,15 @@ mod tests {
 
     #[test] fn serve_exige_loopback_no_bind() {
         // Escutar num IP roteável **e** publicar pelo Serve dobraria a superfície sem serventia.
-        assert!(validate(&MobileConfig{enabled:true,bind:"100.64.0.1:47322".into(),token:String::new(),serve:true}).is_err());
-        assert!(validate(&MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:true}).is_ok());
+        assert!(validate(&MobileConfig{enabled:true,bind:"100.64.0.1:47322".into(),token:String::new(),serve:true,totp_secret:String::new(),totp_confirmed:false}).is_err());
+        assert!(validate(&MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:String::new(),serve:true,totp_secret:String::new(),totp_confirmed:false}).is_ok());
     }
 
     /// O QR com `127.0.0.1` abria no PC e falhava no 4G. Com Tailscale no ar, o modo direto troca o
     /// loopback pelo IP dele; nos outros casos não mexe em nada.
     #[test] fn modo_direto_troca_loopback_pelo_ip_do_tailscale() {
         let ts: IpAddr = "100.94.187.72".parse().unwrap();
-        let config = |bind:&str,serve:bool| MobileConfig{enabled:true,bind:bind.into(),token:String::new(),serve};
+        let config = |bind:&str,serve:bool| MobileConfig{enabled:true,bind:bind.into(),token:String::new(),serve,totp_secret:String::new(),totp_confirmed:false};
 
         let mut padrao = config("127.0.0.1:47322",false);
         assert!(preferir_ip(&mut padrao,Some(ts)));
@@ -892,10 +1049,133 @@ mod tests {
         assert_eq!(escolhido.bind,"100.64.0.9:47322");
     }
 
+    /// Saída real do `tailscale serve --bg` com o Serve desabilitado, capturada depois de matar o
+    /// processo — ele não sai sozinho. O link tem de sobreviver até a tela.
+    #[test] fn link_de_liberacao_sai_da_saida_do_serve() {
+        let saida = "Serve is not enabled on your tailnet.\nTo enable, visit:\n\n         https://login.tailscale.com/f/serve?node=nEXEMPLO0000CNTRL\n";
+        assert_eq!(motivo_do_serve(saida),"https://login.tailscale.com/f/serve?node=nEXEMPLO0000CNTRL");
+        assert_eq!(motivo_do_serve("   "),"O Tailscale não respondeu.");
+        assert_eq!(motivo_do_serve("access denied"),"access denied");
+    }
+
+    /// O celular busca ícone e manifest sem o código de acesso. Se caírem no 401, o app fica sem ícone.
+    #[tokio::test] async fn icone_e_manifest_carregam_sem_codigo_mas_a_api_nao() {
+        let (_dir,state) = fixture();
+        state.mobile.config.lock().unwrap().token = "segredo".into();
+        let app = router(state);
+        for publico in ["/manifest.webmanifest","/apple-touch-icon.png","/icon-192.png","/icon-512.png","/favicon.png"] {
+            assert_ne!(app.clone().oneshot(req("GET",publico,"","")).await.unwrap().status(),StatusCode::UNAUTHORIZED,
+                "{publico} precisa carregar sem código");
+        }
+        // Lista fechada: nome parecido não passa, e a API segue protegida.
+        assert_eq!(app.clone().oneshot(req("GET","/icon-192.png/../conversas","","")).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+        assert_eq!(app.oneshot(req("GET","/conversas","","")).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+    }
+
+    #[test] fn tipos_de_arquivo_que_o_celular_exige() {
+        assert_eq!(tipo_do_arquivo("apple-touch-icon.png"),"image/png");
+        assert_eq!(tipo_do_arquivo("manifest.webmanifest"),"application/manifest+json");
+        assert_eq!(tipo_do_arquivo("assets/index-abc.js"),"text/javascript; charset=utf-8");
+    }
+
+    /// "12345678901234567890" em base32 — o segredo dos vetores oficiais do RFC 6238.
+    const SEGREDO_RFC: &str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+
+    fn codigo_em(segundos: u64) -> String { totp_de(SEGREDO_RFC,None).unwrap().generate(segundos) }
+
+    /// Vetor oficial do RFC 6238 (SHA-1, T=59 → 94287082; 6 dígitos → 287082). Se isto falhar, o
+    /// Authy e o engine discordam de todo código.
+    #[test] fn totp_bate_com_o_vetor_do_rfc_6238() {
+        assert_eq!(codigo_em(59),"287082");
+        assert_eq!(totp_confere(SEGREDO_RFC,"287082",59),Some(1));
+    }
+
+    #[test] fn totp_tolera_um_passo_de_relogio_e_nao_dois() {
+        let codigo = codigo_em(59); // passo 1
+        assert_eq!(totp_confere(SEGREDO_RFC,&codigo,60),Some(1),"relógio um passo à frente ainda vale");
+        assert_eq!(totp_confere(SEGREDO_RFC,&codigo,90),None,"dois passos já não vale");
+        assert_eq!(totp_confere(SEGREDO_RFC,"12345",59),None);
+        assert_eq!(totp_confere(SEGREDO_RFC,"28708a",59),None);
+    }
+
+    fn com_authy_confirmado() -> (tempfile::TempDir, Arc<EngineState>) {
+        let (dir,state) = fixture();
+        {
+            let mut config = state.mobile.config.lock().unwrap();
+            config.token = "token-do-aparelho".into();
+            config.totp_secret = SEGREDO_RFC.into();
+            config.totp_confirmed = true;
+        }
+        (dir,state)
+    }
+
+    #[test] fn pareamento_entrega_o_token_uma_vez_por_codigo() {
+        let (_dir,state) = com_authy_confirmado();
+        let agora = 30 * 1_000_000;
+        let codigo = codigo_em(agora);
+        let resposta = parear_em(&state,&codigo,agora).expect("código atual deveria parear");
+        assert_eq!(resposta.0["token"],"token-do-aparelho");
+        // O mesmo código de novo é o cenário "vi por cima do ombro": recusado.
+        assert_eq!(parear_em(&state,&codigo,agora).unwrap_err().0,StatusCode::UNAUTHORIZED);
+    }
+
+    #[test] fn pareamento_trava_depois_de_cinco_erros() {
+        let (_dir,state) = com_authy_confirmado();
+        let agora = 30 * 2_000_000;
+        for _ in 0..MAX_FALHAS {
+            assert_eq!(parear_em(&state,"000000",agora).unwrap_err().0,StatusCode::UNAUTHORIZED);
+        }
+        // Travado: nem o código certo passa até a janela acabar.
+        assert_eq!(parear_em(&state,&codigo_em(agora),agora).unwrap_err().0,StatusCode::TOO_MANY_REQUESTS);
+        let depois = agora + TRAVA_MS / 1000 + 30;
+        assert!(parear_em(&state,&codigo_em(depois),depois).is_ok(),"a trava tem de acabar sozinha");
+    }
+
+    #[test] fn pareamento_recusa_sem_authy_confirmado() {
+        let (_dir,state) = fixture();
+        state.mobile.config.lock().unwrap().totp_secret = SEGREDO_RFC.into();
+        assert_eq!(parear_em(&state,&codigo_em(59),59).unwrap_err().0,StatusCode::CONFLICT);
+    }
+
+    /// Rota pública (quem pareia ainda não tem token), mas sob a mesma checagem de Host e Origin.
+    #[tokio::test] async fn parear_nao_exige_token_mas_exige_origem() {
+        let (_dir,state) = com_authy_confirmado();
+        let app = router(state);
+        let corpo = r#"{"codigo":"000000"}"#;
+        let status = app.clone().oneshot(req("POST","/parear","http://127.0.0.1:47322",corpo)).await.unwrap().status();
+        assert_eq!(status,StatusCode::UNAUTHORIZED,"401 aqui é do código errado, não do token ausente");
+        let sem_origem = app.oneshot(req("POST","/parear","https://evil.example",corpo)).await.unwrap().status();
+        assert_eq!(sem_origem,StatusCode::FORBIDDEN);
+    }
+
+    #[test] fn desktop_nao_confirma_o_authy_nem_troca_o_segredo() {
+        let (_dir,state) = fixture();
+        totp(&state,TotpAction::Reset).unwrap();
+        let segredo = state.mobile.config.lock().unwrap().totp_secret.clone();
+        assert!(!segredo.is_empty());
+
+        let forjado = MobileConfig{enabled:false,bind:"127.0.0.1:47322".into(),token:String::new(),serve:false,
+            totp_secret:"FORJADO".into(),totp_confirmed:true};
+        let EngineResponse::MobileSettings{totp_confirmed,totp_uri,..} = settings(&state,Some(forjado),false).unwrap() else { panic!() };
+        assert!(!totp_confirmed,"confirmar só com código do Authy");
+        assert!(totp_uri.is_some_and(|uri| uri.starts_with("otpauth://totp/")),"antes de confirmar o QR do Authy aparece");
+        assert_eq!(state.mobile.config.lock().unwrap().totp_secret,segredo);
+    }
+
+    #[test] fn qr_do_authy_some_depois_de_confirmado() {
+        let (_dir,state) = fixture();
+        totp(&state,TotpAction::Reset).unwrap();
+        let segredo = state.mobile.config.lock().unwrap().totp_secret.clone();
+        let codigo = totp_de(&segredo,None).unwrap().generate(agora_segundos());
+        let EngineResponse::MobileSettings{totp_confirmed,totp_uri,..} = totp(&state,TotpAction::Confirm{code:codigo}).unwrap() else { panic!() };
+        assert!(totp_confirmed);
+        assert!(totp_uri.is_none(),"depois de confirmado o segredo não sai mais do engine");
+    }
+
     #[test] fn loopback_default_and_no_wildcard() {
         let config = MobileConfig::default(); assert!(!config.enabled); assert!(validate(&config).is_ok());
-        assert!(validate(&MobileConfig{enabled:true,bind:"0.0.0.0:47322".into(),token:String::new(),serve:false}).is_err());
-        assert!(validate(&MobileConfig{enabled:true,bind:"127.0.0.1:47321".into(),token:String::new(),serve:false}).is_err());
+        assert!(validate(&MobileConfig{enabled:true,bind:"0.0.0.0:47322".into(),token:String::new(),serve:false,totp_secret:String::new(),totp_confirmed:false}).is_err());
+        assert!(validate(&MobileConfig{enabled:true,bind:"127.0.0.1:47321".into(),token:String::new(),serve:false,totp_secret:String::new(),totp_confirmed:false}).is_err());
     }
 
     #[cfg(windows)]
@@ -930,7 +1210,7 @@ mod tests {
                 "state":"answered","pid":42,"created_at_ms":1,"last_activity_at_ms":1,"output_seq":0,"rows":20,"cols":100,
                 "provider":"claude","profile_id":"profile","conversation_id":"c"})).unwrap();
             let mut context = interaction::Interaction::new(20,100); context.parser.process(b"\x1b[?2004h"); context.parser.process(text.as_bytes());
-            let session = Arc::new(LiveSession{interaction:Mutex::new(context),reserved:std::sync::atomic::AtomicBool::new(false),
+            let session = Arc::new(LiveSession{interaction:Mutex::new(context),reserved:std::sync::atomic::AtomicBool::new(false),headless:std::sync::atomic::AtomicBool::new(false),
                 meta:Mutex::new(meta),writer:Mutex::new(Box::new(RecordingWriter(bytes.clone()))),master:Mutex::new(Box::new(FakeMaster)),
                 child:Mutex::new(Box::new(FakeChild)),output:Mutex::new(OutputBuffer{chunks:VecDeque::new(),bytes:0,next_seq:0})});
             state.sessions.lock().unwrap().insert("s".into(),SessionEntry::Live(session.clone()));

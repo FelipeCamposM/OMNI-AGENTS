@@ -59,7 +59,7 @@ pub fn claude_transcript_path(config_dir: &Path, cwd: &str, session_id: &str) ->
     config_dir.join("projects").join(claude_project_slug(cwd)).join(format!("{session_id}.jsonl"))
 }
 
-fn timestamp(value: &Value) -> Option<u64> {
+pub(crate) fn timestamp(value: &Value) -> Option<u64> {
     chrono::DateTime::parse_from_rfc3339(value.as_str()?).ok()
         .and_then(|d| u64::try_from(d.timestamp_millis()).ok())
 }
@@ -91,7 +91,7 @@ pub struct Message { pub id: String, pub role: String, pub text: String, pub pro
 #[derive(Serialize)]
 pub struct Timeline { pub messages: Vec<Message>, pub next_cursor: Option<usize>, pub unavailable_segments: Vec<usize> }
 
-fn text_message(value: &Value, provider: &str) -> Option<(String, String)> {
+pub(crate) fn text_message(value: &Value, provider: &str) -> Option<(String, String)> {
     if value["isSidechain"] == true { return None; }
     let message = match provider {
         "claude" if value["type"] == "user" || value["type"] == "assistant" => &value["message"],
@@ -112,6 +112,11 @@ pub fn timeline(conversation: &Conversation, profiles: &[crate::Profile], cursor
     let mut seen = HashSet::new();
     let mut count = 0;
     for (segment_index, segment) in conversation.segments.iter().enumerate() {
+        // O Claude só grava o `.jsonl` depois da primeira mensagem. Conversa recém-aberta tem o
+        // caminho já fixado (`--session-id`) mas nenhum arquivo: isso é "vazia", não "indisponível".
+        // Antes caía no aviso de histórico perdido logo na primeira abertura. Nada é lido aqui, então
+        // pular não abre brecha na checagem de caminho feita em `resolve`.
+        if segment.transcript_path.as_deref().is_some_and(|path| !Path::new(path).exists()) { continue }
         let Some(path) = resolve(segment, conversation, profiles) else { result.unavailable_segments.push(segment_index); continue };
         let Ok(file) = File::open(path) else { result.unavailable_segments.push(segment_index); continue };
         for line in BufReader::new(file).lines().map_while(Result::ok) {
@@ -152,6 +157,19 @@ mod tests {
         assert_eq!(second.messages.len(),5); assert!(second.next_cursor.is_none());
         let wrong = crate::Profile{config_dir:dir.path().join("other").to_string_lossy().into_owned(),..profile};
         assert_eq!(timeline(&conversation,&[wrong],0,100).unavailable_segments,vec![0,1]);
+    }
+
+    /// Conversa recém-aberta: caminho do transcript já fixado, arquivo ainda não gravado. Isso é
+    /// "sem mensagens ainda", não "histórico indisponível" — que era o aviso que o celular mostrava.
+    #[test] fn transcript_ainda_nao_gravado_e_vazio_e_nao_indisponivel() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:true,created_at_ms:0,last_used_at_ms:None,authenticated:false};
+        let futuro = dir.path().join("projects").join("x").join("ainda-nao-existe.jsonl");
+        let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:Some("s".into()),transcript_path:Some(futuro.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
+        let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),created_at_ms:0,segments:vec![segment]};
+        let vazia = timeline(&conversation,std::slice::from_ref(&profile),0,100);
+        assert!(vazia.messages.is_empty());
+        assert!(vazia.unavailable_segments.is_empty(),"arquivo ainda não gravado não é histórico perdido");
     }
 }
 

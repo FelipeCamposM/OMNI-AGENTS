@@ -113,3 +113,105 @@ it("nova sessão manda só escolhas de lista e nunca um caminho", async () => {
   // O celular escolhe id de projeto e de agente. Caminho e binário são resolvidos no servidor.
   expect(posts[0].body).toEqual({ project_id: "p", provider: "claude", profile_id: null });
 });
+
+it("conversa sem mensagens diz que está vazia, não que o histórico sumiu", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(
+    url.includes("timeline") ? { timeline: { messages: [], next_cursor: null, unavailable_segments: [] }, actions: [] }
+      : url === "/projetos" ? PROJETOS
+      : url === "/atencao" ? [] : [{ id: "c", title: "Nova", project_id: "p", provider: "claude", profile_id: "p", state: "answered", capabilities: null }]
+  ))));
+  render(<MobileApp />);
+  await abrirConversa();
+  expect(await screen.findByText(/Nenhuma mensagem ainda/)).toBeInTheDocument();
+  expect(screen.queryByText(/indisponível/)).not.toBeInTheDocument();
+});
+
+it("mandar prompt vira balão no chat e mostra o agente trabalhando, sem aviso de fila", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") return new Response(JSON.stringify({ id: "a1", state: "queued" }), { status: 202 });
+    return new Response(JSON.stringify(
+      url.includes("timeline") ? { timeline: { messages: [], next_cursor: null, unavailable_segments: [] }, actions: [{ id: "a1", state: "sent", error: null }] }
+        : url === "/projetos" ? PROJETOS
+        : url === "/atencao" ? []
+        : [{ id: "c", title: "Chat", project_id: "p", provider: "claude", profile_id: "p", state: "answered",
+            capabilities: { prompt: true, approve: false, revision: '"r"', approval_text: null, reason: null } }]
+    ));
+  }));
+  render(<MobileApp />);
+  await abrirConversa();
+  await act(async () => {
+    await userEvent.type(screen.getByLabelText("Sua resposta"), "Olá agente");
+    await userEvent.click(screen.getByRole("button", { name: "Enviar resposta" }));
+  });
+
+  expect(await screen.findByText("Olá agente")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("O agente está trabalhando");
+  expect(screen.queryByText(/enfileirada/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/Enviado ao CLI|Na fila/)).not.toBeInTheDocument();
+});
+
+it("prompt recusado pela fila some do chat e diz o motivo", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") return new Response(JSON.stringify({ id: "a1", state: "queued" }), { status: 202 });
+    return new Response(JSON.stringify(
+      url.includes("timeline") ? { timeline: { messages: [], next_cursor: null, unavailable_segments: [] }, actions: [{ id: "a1", state: "rejected", error: "Sessão trocada" }] }
+        : url === "/projetos" ? PROJETOS
+        : url === "/atencao" ? []
+        : [{ id: "c", title: "Chat", project_id: "p", provider: "claude", profile_id: "p", state: "answered",
+            capabilities: { prompt: true, approve: false, revision: '"r"', approval_text: null, reason: null } }]
+    ));
+  }));
+  render(<MobileApp />);
+  await abrirConversa();
+  await act(async () => {
+    await userEvent.type(screen.getByLabelText("Sua resposta"), "vai falhar");
+    await userEvent.click(screen.getByRole("button", { name: "Enviar resposta" }));
+  });
+  expect(await screen.findByText(/Não foi enviado: Sessão trocada/)).toBeInTheDocument();
+  expect(screen.queryByText("vai falhar")).not.toBeInTheDocument();
+});
+
+describe("pareamento pelo Authy", () => {
+  function servidor(parear: (codigo: string) => Response) {
+    let pareado = false;
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "/parear") {
+        const resposta = parear(JSON.parse(String(init?.body)).codigo);
+        if (resposta.ok) pareado = true;
+        return resposta;
+      }
+      const token = (init?.headers as Record<string, string> | undefined)?.["X-Omni-Token"];
+      if (!pareado || token !== "token-pareado") return new Response(JSON.stringify({ error: "Dispositivo não autorizado" }), { status: 401 });
+      return new Response(JSON.stringify(url === "/projetos" ? PROJETOS : []));
+    }));
+  }
+
+  beforeEach(() => { localStorage.clear(); window.location.hash = ""; });
+
+  it("app sem acesso pede o código e, com o código certo, abre", async () => {
+    servidor((codigo) => codigo === "287082"
+      ? new Response(JSON.stringify({ token: "token-pareado" }))
+      : new Response(JSON.stringify({ error: "Código do Authy não confere." }), { status: 401 }));
+    render(<MobileApp />);
+
+    const campo = await screen.findByLabelText("Código do Authy");
+    await act(async () => {
+      await userEvent.type(campo, "287082");
+      await userEvent.click(screen.getByRole("button", { name: "Parear" }));
+    });
+
+    expect(await screen.findByRole("button", { name: "Abrir projeto" })).toBeInTheDocument();
+    expect(localStorage.getItem("omni-token")).toBe("token-pareado");
+  });
+
+  it("mostra o motivo quando o servidor recusa e aceita só dígitos", async () => {
+    servidor(() => new Response(JSON.stringify({ error: "Muitas tentativas erradas. Espere alguns minutos e tente de novo." }), { status: 429 }));
+    render(<MobileApp />);
+
+    const campo = await screen.findByLabelText("Código do Authy");
+    await act(async () => { await userEvent.type(campo, "12ab34x56"); });
+    expect(campo).toHaveValue("123456");
+    await act(async () => { await userEvent.click(screen.getByRole("button", { name: "Parear" })); });
+    expect(await screen.findByText(/Muitas tentativas erradas/)).toBeInTheDocument();
+  });
+});

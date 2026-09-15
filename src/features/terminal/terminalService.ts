@@ -23,6 +23,9 @@ export interface TerminalSession {
   /** Por que a sessão parou, quando o motivo não cabe no `state` (o engine só distingue seis).
    *  Ortogonal ao `state` de propósito: `state` é reescrito a cada chunk de saída. */
   notice?: "usage_limit" | "api_error";
+  /** Sobe a cada evento que merece aviso: Claude/Codex terminou um turno de verdade ou abriu
+   *  diálogo de aprovação. O toast dispara quando ele muda — nunca pelo `state` sozinho. */
+  attention_seq?: number;
 }
 
 export type AgentCliId = "cursor" | "claude" | "codex";
@@ -40,7 +43,7 @@ export interface AgentCliStatus {
 }
 
 type EngineResponse =
-  | { type: "pong"; protocol_version: number; engine_pid: number }
+  | { type: "pong"; protocol_version: number; engine_pid: number; engine_exe?: string | null; engine_exe_modified_ms?: number | null }
   | { type: "sessions"; sessions: TerminalSession[] }
   | { type: "session"; session: TerminalSession }
   | {

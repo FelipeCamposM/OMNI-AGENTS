@@ -33,6 +33,8 @@ export interface AppSettings {
   backgroundPath: string;
   backgroundOpacity: number; // 0..100
   backgroundBlur: number; // px, 0..40
+  /** Opacidade do fundo dos terminais, 0..100 — abaixo de 100 o fundo do app aparece atrás do texto. */
+  terminalOpacity: number;
   glass: GlassLevel;
   animations: MotionLevel;
 
@@ -51,6 +53,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   backgroundPath: "",
   backgroundOpacity: 55,
   backgroundBlur: 0,
+  terminalOpacity: 100,
   glass: "forte",
   animations: "completas",
 

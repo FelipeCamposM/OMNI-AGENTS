@@ -740,6 +740,24 @@ em execução na hora de conferir. O que precisa ser olhado com o app aberto:
 - [ ] **Validação no ambiente real:** capturas de `/usage` e menus Claude/Codex em sessões
   existentes; celular em 4G com Tailscale e janela desktop fechada. Fixtures de parser são
   sintéticos: formatos não reconhecidos continuam bloqueados/indisponíveis, sem tentar adivinhar.
+- [x] **`/usage` Claude não achava sessão (2026-09-15):** sessões vivas no engine instalado tinham
+  `provider`/`profile_id`/`conversation_id` nulos — criadas por um engine antigo que sobreviveu à
+  atualização (o `PROTOCOL_VERSION` nunca subiu, o app aceitou) e o restart preserva a origem vazia.
+  `load_historical_sessions` (`crates/omni-engine/src/main.rs`) agora preenche a origem pelo
+  `terminal_session_id` do `conversations.json`. `interaction::account_usage` passou a mandar
+  `/usage` e o Enter em writes separados (rajada única o Claude trata como colagem). Conferido
+  contra snapshot real: `ready()` e `provider_running` reconhecem a sessão ociosa. **Pendente:**
+  app não reinicia engine de versão antiga; ver tela real do `/usage` depois de reinstalar.
+  Motivo "Claude está respondendo" separado de "entrada não reconhecida" quando a única sessão
+  elegível mostra `esc to interrupt`.
+- [x] **Uso Claude fixo no rodapé (2026-09-15):** `src/features/terminal/ClaudeUsageStatus.tsx` ao
+  lado de `ENGINE:` em `WorkspaceView.tsx`. Conta Claude usada por último; ao abrir só lê o cache do
+  engine (`refresh: false`), `/usage` é digitado apenas no botão de ícone (`ReloadIcon`). Mostra 5H e
+  semana com reset curto (sem fuso; completo no tooltip) e "consultado há X" (atualiza a cada 30 s).
+  Teste `src/test/ClaudeUsageStatus.test.tsx`. Não conferido visualmente no app.
+  Responsivo: rodapé sem quebra de linha (`whitespace-nowrap`/`overflow-hidden`); abaixo de `xl` some
+  o reset, abaixo de `lg` o "consultado há", abaixo de `md` "CLAUDE" e "UI CONNECTED". Tudo segue no
+  tooltip. Percentuais, ↻ e ENGINE ficam sempre.
 
 Operação, contrato HTTP, limites e comandos de build/teste em `docs/mobile-and-account-usage.md`.
 
@@ -1166,6 +1184,133 @@ PC, falhava no celular sem explicação.
 - Teste: `modo_direto_troca_loopback_pelo_ip_do_tailscale` (troca; sem Tailscale não troca; Serve
   não troca; endereço já escolhido não é sobrescrito).
 
+## Botão "Liberar na conta Tailscale" morto (2026-09-15)
+
+Três defeitos empilhados, todos no mesmo fluxo:
+
+- [x] **`tailscale serve --bg` nunca sai** quando o Serve não está liberado: imprime o link e fica
+  esperando. O helper `tailscale()` matava no timeout e **descartava a saída** — a tela recebia
+  "O Tailscale não respondeu." em vez do link. Agora a saída é lida mesmo no timeout, e o timeout
+  do serve caiu de 45 s para 10 s (liberado, volta rápido; não liberado, nunca volta).
+  `motivo_do_serve()` extrai o link; testado com a saída real capturada.
+- [x] **Sem permissão de abrir URL**: `capabilities/default.json` só tinha `opener:allow-open-path`.
+  O `openUrl()` era recusado e o `void` engolia o erro. Adicionado `opener:allow-open-url` **restrito a
+  `https://login.tailscale.com/*`**.
+- [x] **Qualquer aviso virava botão de liberar**, inclusive "não respondeu". Agora só link de
+  liberação vira botão; o resto aparece como texto. Se o navegador não abrir, o link fica na tela.
+- [x] `publicar()` zera o estado do Serve antes de cada tentativa: o aviso antigo parava o polling e o
+  QR nunca aparecia depois de liberar e clicar em Aplicar.
+
+## Sessão aberta pelo celular nunca iniciava + histórico "indisponível" (2026-09-15)
+
+Diagnosticado com dados reais, não fixture.
+
+- [x] **Causa principal — o ConPTY espera resposta de cursor.** Ao criar a PTY ele manda `ESC[6n` e
+  **para** até receber `ESC[linha;colunaR`. No desktop quem responde é o xterm.js. Sessão aberta
+  pelo celular não tem terminal exibindo: a saída inteira ficava só `ESC[6n`, o shell não tinha
+  nenhum filho, e o `claude` injetado nunca rodava — daí "entrada do CLI não reconhecida".
+  Confirmado respondendo `ESC[1;1R` à mão: a sessão destravou e passou a `prompt=true`.
+  Conserto: `LiveSession.headless`; o engine responde `ESC[6n` pelo `vt100` enquanto ninguém exibe a
+  sessão, e para no primeiro `snapshot` (o xterm assume — os dois respondendo vazaria `ESC[1;1R` como
+  texto). Teste com PTY real: sem a resposta trava e falha em 15 s; com ela passa em 0,9 s.
+- [x] **Histórico "indisponível" em conversa nova.** O Claude só grava o `.jsonl` depois da primeira
+  mensagem; o caminho já existia (`--session-id`) e o arquivo não. Agora é "vazia", não "indisponível".
+- [x] **Agente trabalhando parecia sem histórico.** Num transcript real ativo: 31 `tool_use`, 25
+  `thinking`, 0 `text` — nada disso vira mensagem. O celular agora avisa que o agente está
+  trabalhando. (Em 15 transcripts recentes, 12 têm texto: o parser estava certo.)
+- [x] `composer_vazio()`: à esquerda do cursor só o prompt; à direita só vazio ou `dim`. A tela real
+  não mostrou isso travando (um `ESC[K` apaga o exemplo em cinza), mas a regra da linha inteira
+  quebraria sem ele. Primeiro fixture **real** do projeto: `tests-fixtures/claude-composer-vazio.ansi`.
+
+## Chat no celular e ícone do PWA (2026-09-15)
+
+### Chat
+- [x] `src/mobile/Chat.tsx`: `MessageBubble` (seu à direita em laranja, do agente à esquerda) e
+  `AgentWorking` — quadro que "respira" como o spinner do Claude Code, frase boba trocando a cada
+  2,8 s ("Tricotando código…", "Consultando os astros…") com brilho correndo, e contador em segundos.
+  O texto que muda é `aria-hidden`; leitor de tela recebe uma mensagem estável. Sem animação com
+  `prefers-reduced-motion`.
+- [x] Sai "Ação enfileirada" e a lista "Na fila / Enviando / Enviado ao CLI". O prompt vira balão na hora
+  (otimista) e some quando chega no transcript; recusa da fila tira o balão e diz o motivo.
+- [x] **Bug achado pelo teste:** o polling limpava todo erro a cada ciclo, então "não foi enviado"
+  aparecia e sumia no mesmo instante. Falha de envio virou estado separado.
+- [x] `usePoll` com intervalo configurável: 1,5 s com o agente ativo, 5 s parado.
+- [x] Barra de digitação presa no pé da tela (shell em coluna flex, conversa com `flex: 1`).
+
+### Ícone do PWA
+Três camadas: `index.html` sem link de ícone/manifest; nenhum arquivo de ícone no bundle; e o servidor
+exigia código de acesso fora de `/` e `/assets/` — o navegador busca ícone e manifest **sem** o
+`X-Omni-Token`, então cairiam no 401.
+- [x] `vite.mobile.config.ts` emite os ícones **direto de `src-tauri/icons`** (sem cópia no repo) com
+  nomes fixos, mais o `manifest.webmanifest`. `apple-touch-icon` usa o 180×180 opaco do iOS (o iPhone
+  pinta transparente de preto).
+- [x] `mobile.rs`: `ARQUIVOS_PUBLICOS` (lista fechada, não prefixo) e `tipo_do_arquivo()` — com
+  `nosniff`, PNG servido como `octet-stream` seria ignorado. Validado ao vivo: os 5 arquivos 200 sem
+  código com o tipo certo, `/conversas` segue 401.
+
+### Verificador do celular estava quebrado
+`scripts/check-mobile-browser.mjs` não sabia do código de acesso nem da tela de projetos, e procurava
+o botão de envio pelo texto. Atualizado (entra pelo link `#t=`, navega Projetos → Conversa, mede
+estouro e alvos de toque também no chat). Virou `npm run test:mobile`.
+
+## v0.4.1 — pareamento pelo Authy e entrega do chat/ícone ao app instalado (2026-09-15)
+
+**Sintoma:** no iPhone nada mudava — sem ícone, aparência antiga. **Não era bug:** o iPhone falava com o
+app instalado (engine de 14/09, v0.4.0), e tudo que tinha sido feito estava só no build de dev.
+Verificado comparando o que o `https://pc-felipe…ts.net` servia (sem `apple-touch-icon`, bundle
+`index-B8gBM43a.js`, ícone 401) com o build novo. A correção era uma versão instalada.
+
+### Armadilha do iPhone — leia antes de mexer em autenticação do celular
+**App da tela inicial do iPhone não compartilha `localStorage` nem cookies com o Safari, por design**
+(engenheiro da Apple em [WebKit bug 181849](https://bugs.webkit.org/show_bug.cgi?id=181849)). O token
+que o QR grava no Safari **não existe** dentro do app da tela inicial. Sem um segundo caminho de
+autenticação, o PWA abriria sempre travado em "Dispositivo não autorizado", e ler o QR de novo abre o
+Safari, não o app.
+
+### Pareamento pelo Authy (TOTP, RFC 6238)
+- [x] `totp-rs` (sem features padrão; `otpauth` + `gen_secret`) — HMAC de biblioteca, não escrito à mão.
+- [x] `MobileConfig.totp_secret`/`totp_confirmed`, gravados **só pelo engine** (o desktop não confirma
+  nem troca o segredo — testado). `EngineRequest::MobileTotp { Reset | Confirm }`.
+- [x] `totp_uri` (`otpauth://`) só sai enquanto o cadastro não foi confirmado.
+- [x] `POST /parear` público (quem chama ainda não tem token), sob o mesmo Host/Origin. Janela ±1 passo
+  de 30 s; **replay recusado** (guarda o último passo aceito); **5 erros em 5 min → 429**. Força bruta:
+  3 códigos válidos em 10⁶ a 5 tentativas por 5 min, e só de dentro da tailnet.
+- [x] Teste com o vetor oficial do RFC 6238 (SHA-1, T=59 → `287082`).
+- [x] Aba Celular, passo 4 "Proteger com o Authy": QR → código → "configurado"; refazer pede confirmação.
+- [x] Celular: `401` troca o app pela `PairingScreen` (`autoComplete="one-time-code"`, só dígitos).
+
+### Release
+- [x] `VERSION` 0.4.1, changelog em linguagem de usuário, `npm run build` assinado. Instalador em
+  `installers/`. **Instalação fica com o usuário** (o hook do NSIS encerra o engine e as sessões).
+
+### Gotcha que voltou: `findBy*` dentro de `act()`
+Apareceu de novo em `MobileSettings.test.tsx`. O teste só passava quando o elemento procurado já
+existia na primeira renderização — por sorte. Regra: `findBy*` sempre **fora** do `act`, só o clique
+dentro. Varredura feita nos outros testes: nenhuma ocorrência restante.
+
+## A identidade do engine vazava para os terminais (2026-09-15)
+
+**Sintoma:** a janela de `npm run dev` mostrava os dados do app instalado, e "Configurar Authy" falhava
+com `unknown variant 'mobile_totp'` — o app de dev estava falando com o engine **instalado** (0.4.0).
+
+**Causa — regressão do isolamento dev/instalado.** Para o engine usar a identidade de quem o abre,
+`spawn_engine()` passou a entregar `OMNI_ENGINE_PORT` e `OMNI_DATA_DIR` ao engine. Só que o engine
+repassa o próprio ambiente a **todo terminal** que cria. Quem desenvolve o OMNI dentro do próprio OMNI
+roda `npm run dev` num shell que já traz a porta 47321 e a pasta `com.omni.agents` — e variável de
+ambiente vence o padrão de dev. Confirmado lendo o ambiente de um shell aberto pelo OMNI
+(`OMNI_ENGINE_PORT=47321`, `OMNI_DATA_DIR=…\com.omni.agents\engine`) e cruzando o código de acesso da
+tela com a pasta do instalado.
+
+- [x] `main.rs::ambiente_do_terminal()` remove `VARIAVEIS_DO_ENGINE` do shell antes de abrir a PTY.
+  Teste validado por mutação (sem a limpeza: `OMNI_ENGINE_PORT vazou para o terminal`).
+- [x] `engine_client.rs::send_request`: a tradução para "engine desatualizado" só valia na conexão
+  nova; na reaproveitada (quase todas) a mensagem chegava crua. Teste de conexão agora exige a tradução
+  nas três requisições.
+
+**Consequência prática:** terminais já abertos pelo engine 0.4.0 continuam com as variáveis. Só depois
+de instalar a 0.4.1 (que reinicia o engine) os terminais nascem limpos. Até lá, `npm run dev` rodado
+dentro do OMNI instalado continua usando o engine instalado.
+
 ## Gotchas
 
 - **Bug real encontrado em 2026-08-27 (usuário travado com "tela preta")**: no caso sem split
@@ -1214,3 +1359,108 @@ PC, falhava no celular sem explicação.
 - Publicação concluída: https://github.com/FelipeCamposM/OMNI-AGENTS/releases/tag/v0.4.0 (commit `6e07e4f401f256b30bdbf2379cf3382df943072f`), release normal e mais recente.
 - NSIS assinado gerado com sucesso; assinatura Ed25519 validada com a chave pública do updater. SHA-256 local e remoto: `0aff9282cc29b51679e9732c4c289c4034d93e37c7d961c90748e65de6fbce0c`.
 - Os três assets foram publicados; `latest.json` baixado do GitHub é idêntico ao manifesto local da 0.4.0.
+
+## Quick open (Ctrl+P) e árvore que se atualiza (2026-09-15)
+
+- [x] **Ctrl+P** abre busca fuzzy de arquivos do projeto ativo, igual VS Code
+  (`src/features/files/QuickOpen.tsx`, montado em `src/App.tsx`). Listener em captura na `window`,
+  então funciona até com foco no terminal (o xterm não recebe o ^P). Setas + Enter abrem na pane ativa,
+  Esc fecha. Índice recursivo refeito a cada abertura por `listAllFiles()` em `filesService.ts`
+  (mesmo ignore da árvore, dotfiles incluídos, teto de 20k arquivos).
+- [x] `.env` sumindo da aba Files: nada no código filtra dotfile (`readDir` do plugin-fs lista tudo no
+  Windows e o render mostra — conferido em teste). A causa encontrada foi a árvore **nunca recarregar**
+  depois de abrir o projeto: arquivo criado por agente/editor externo não aparecia. `useFileTree.ts`
+  agora relê raiz + pastas abertas via `usePoll` (5s, só troca estado se mudou).
+- Testes: `src/test/QuickOpen.test.tsx`. `kindFor` do `FileTree.tsx` virou `fileKind` em `filesService.ts`.
+- Próximo: validar no Tauri; se `.env` continuar sumido num projeto específico, investigar esse caminho.
+
+## Avisos só para "terminou" e "pediu aprovação" (2026-09-15)
+
+- [x] Causa: o engine chamava de `answered` qualquer sessão com 1,5s sem saída (digitar no shell, log
+  de dev server, pausa do agente) e de `approval_required` qualquer chunk com "do you want to"/"(y/n)"
+  — inclusive texto da resposta do agente. O toast disparava em cima disso.
+- [x] Engine (`crates/omni-engine/src/main.rs`): Claude/Codex agora têm estado lido da tela vt100.
+  Aprovação = `interaction::approval()` (diálogo real, reconhecimento estrito). Fim de turno = o agente
+  mostrou "esc to interrupt" (`Interaction.turn_active`), a hint sumiu e passou 1,5s sem saída
+  (`settle_state`/`settle`). Cada um desses eventos sobe `TerminalSession.attention_seq`
+  (`crates/omni-protocol/src/lib.rs`). Shell puro e outros CLIs mantêm o palpite por ociosidade só
+  para exibição e nunca sobem o contador.
+- [x] Desktop: `useAttentionNotifier.ts` notifica quando `attention_seq` muda com estado
+  `answered`/`approval_required` — um toast por evento, nunca por travou/parou/órfã/shell, nem pelo
+  que já estava pendente ao abrir o app. Usa `all` de `useAttention` (sem o filtro "já visto"), pra
+  redesenho do CLI não ressuscitar aviso antigo. Evento que chega com a janela em foco conta como avisado.
+- Testes: `only_a_real_agent_turn_ending_counts_as_attention` (Rust) e `useAttentionNotifier.test.tsx`.
+- Próximo: validar no Tauri com Claude real (turno longo com ferramenta, aprovação, Esc). Precisa
+  `npm run build:engine` e reiniciar o engine — o que está rodando é o binário velho.
+
+## macOS e Linux + CI de release (2026-09-15)
+
+Guia completo (release, primeira abertura no Mac, SmartScreen, roteiro de teste) em
+`docs/multiplataforma.md`.
+
+- [x] Pasta de dados portável: `omni_protocol::local_data_root()` (LOCALAPPDATA / `~/Library/Application
+  Support` / XDG). Usada por `engine_dir` do engine e do app; `profiles_root` cai nela sem `APPDATA`.
+- [x] Terminais em macOS/Linux abrem `$SHELL -l` (PATH do Homebrew/`~/.local/bin`).
+- [x] `import_login_shell_path` (`src-tauri/src/engine_client.rs`), chamado no `run()`: app aberto
+  pelo Finder/menu importa o PATH do shell de login (timeout 3 s).
+- [x] `provider_running` fora do Windows via `ps -A -o pid,ppid,args` (`agent_descends_from`, testado).
+  Religa `/usage`, prompt e aprovação pelo celular.
+- [x] Login do agente: Terminal.app via `osascript` no macOS; x-terminal-emulator/gnome-terminal/
+  konsole/xfce4-terminal/xterm no Linux. Variáveis de conta escritas no script.
+- [x] Tailscale do app oficial no macOS (`/Applications/Tailscale.app/Contents/MacOS/Tailscale`).
+- [x] Claude no macOS guarda token no Keychain: conta conectada detectada por `oauthAccount` no `.claude.json`.
+- [x] Engine desatualizado depois de update: `Pong` leva `engine_exe` + `engine_exe_modified_ms`;
+  `ensure_engine` compara com o arquivo em disco e reinicia (equivalente ao hook do NSIS).
+- [x] `scripts/build-engine.mjs --target <triple>`, incluindo `universal-apple-darwin` (lipo); triple
+  padrão = host do `rustc`. `src-tauri/build.rs` expõe `OMNI_TARGET_TRIPLE` para o caminho de dev.
+- [x] `tauri.conf.json`: `bundle.macOS.signingIdentity "-"` (ad-hoc, sem Apple Developer), mínimo 11.0.
+- [x] `.github/workflows/ci.yml` (testes do engine + `cargo check` do app nas 3 plataformas; front no
+  Ubuntu) e `release.yml` (tag `v*` → rascunho com instaladores + `latest.json` unificado via tauri-action).
+- Verificado local: Windows (`cargo test` engine/app, vitest 183, typecheck); `cargo check --tests`
+  do engine para `x86_64-unknown-linux-gnu` e `aarch64-apple-darwin`. App Tauri para macOS não compila
+  fora do Mac (objc precisa do `cc` da Apple) — **primeira prova real é o CI**.
+- [ ] Rodar o CI (push) e corrigir o que quebrar em macOS/Linux.
+- [ ] Cadastrar secrets `TAURI_SIGNING_PRIVATE_KEY(_PASSWORD)` no GitHub.
+- [ ] Teste do amigo no Mac (roteiro no doc), incluindo update N→N+1.
+- [ ] Atalhos usam Ctrl no macOS (Cmd seria o esperado).
+- [ ] Risco AppImage: engine sobrevive ao app, mas a imagem montada some ao fechar.
+- [ ] SmartScreen no Windows: exige certificado Authenticode (decisão de custo pendente).
+
+## Histórico de conversas Claude/Codex (2026-09-15)
+
+- [x] Tela **Histórico** (rodapé da sidebar, `view === "history"` em `src/App.tsx`), com abas Claude e
+  Codex separadas, busca por palavras (título, primeiro prompt, pasta, id), filtro por projeto e por
+  conta (aparece com mais de uma), prévia das mensagens em markdown e **Retomar no terminal**.
+  UI em `src/features/history/HistoryView.tsx`; filtro e comando em `historyService.ts`.
+- [x] Fonte: transcripts nativos de todas as contas cadastradas, abertos pelo OMNI ou não
+  (`crates/omni-core/src/history.rs`). Claude: `<config>/projects/<slug>/<uuid>.jsonl`, título do último
+  `ai-title`. Codex: `<config>/sessions/**/rollout-*.jsonl` + título do `session_index.jsonl`. Sessão sem
+  prompt digitado é descartada; texto injetado pelo CLI (`<...>`, AGENTS.md) não conta como prompt.
+  Mesma sessão copiada entre contas aparece uma vez. Cache por mtime+tamanho em `src-tauri/src/history.rs`
+  (medido nesta máquina: 39 conversas Claude/248 MB em 0,7s na primeira leitura, 7ms depois).
+- [x] Leitura de transcript valida que o caminho está dentro da pasta de uma conta do provider.
+- [x] Retomar: acha o projeto pela pasta em qualquer workspace (ou adiciona ao workspace ativo —
+  `ADD_PROJECT` ganhou `id` opcional), abre `claude --resume <id>` / `codex resume <id>` na conta da
+  conversa e foca a sessão.
+- Testes: `history::tests` (Rust) e `src/test/historyService.test.ts`.
+- Limites conhecidos: busca não olha o conteúdo inteiro das mensagens; prévia mostra as últimas 400;
+  conversa retomada não entra no índice `conversations.json` (celular não a vê como conversa do OMNI).
+- Próximo: validar no Tauri (visual e retomada real nos dois CLIs).
+
+## Opacidade dos terminais (2026-09-15)
+
+- [x] Configurações → Fundo → **Opacidade dos terminais** (`terminalOpacity`, 0–100, padrão 100 = visual
+  de antes). `useSettings.ts` grava `--terminal-opacity`; `TerminalPane.tsx` usa xterm com
+  `allowTransparency` e fundo transparente, e o container pinta `rgb(14 14 20 / var(--terminal-opacity))`.
+  `PaneView.tsx` tira o `bg-bg-surface/90` do painel em abas terminal/agente, senão ele cobria o fundo.
+- Próximo: conferir legibilidade no Tauri com fundo animado e com imagem customizada.
+
+## Árvore de arquivos: criar inline e item preso ao ponteiro no arrasto (2026-09-15)
+
+- [x] "Novo arquivo"/"Nova pasta" não usam mais `window.prompt`: linha de nome (`NewEntryInput`)
+  aparece dentro da árvore, no topo da pasta de destino (abre a pasta se estiver fechada). Enter ou
+  sair do campo cria; Esc ou nome vazio cancela. Arquivo criado abre numa tab.
+- [x] Arrasto interno mostra `DragGhost` (ícone + nome) num portal preso ao ponteiro, com
+  `pointer-events: none` para o `elementFromPoint` do drop continuar vendo a árvore. Posição via ref
+  (sem re-render por pointermove); cursor `grabbing` durante o arrasto.
+- Tudo em `src/components/FileTree.tsx`; teste `src/test/FileTree.test.tsx`. Não conferido no app.

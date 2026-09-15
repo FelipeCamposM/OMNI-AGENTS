@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "../../components/ui";
 
-interface UsageWindow { used_percent: number; resets_at: number | null; reset_label: string | null }
-interface Usage { status: string; observed_at_ms: number | null; primary: UsageWindow | null; secondary: UsageWindow | null; reason: string | null }
+export interface UsageWindow { used_percent: number; resets_at: number | null; reset_label: string | null }
+export interface Usage { status: string; observed_at_ms: number | null; primary: UsageWindow | null; secondary: UsageWindow | null; reason: string | null }
 
 function WindowUsage({ label, window }: { label: string; window: UsageWindow | null }) {
   return <div className="min-w-0">

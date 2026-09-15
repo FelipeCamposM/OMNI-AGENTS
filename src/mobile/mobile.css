@@ -1,8 +1,51 @@
 html, body, #root { min-height: 100%; height: auto; overflow: auto; }
 body { margin: 0; background: rgb(var(--c-bg-primary)); color: rgb(var(--c-text-primary)); }
 body { user-select: text; -webkit-user-select: text; }
-.mobile-shell { max-width: 48rem; margin: auto; padding: 1rem; padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+.mobile-shell { max-width: 48rem; margin: auto; padding: 1rem; padding-bottom: max(1rem, env(safe-area-inset-bottom)); box-sizing: border-box; min-height: 100dvh; display: flex; flex-direction: column; }
 .mobile-shell .btn { min-height: 44px; }
 .mobile-card { border: 1px solid rgb(var(--c-border-subtle)); background: rgb(var(--c-bg-surface)); padding: 1rem; margin-block: .75rem; }
 .mobile-message { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; }
 .mobile-composer { display: block; width: 100%; min-height: 7rem; padding: .75rem; background: rgb(var(--c-bg-elevated)); border: 1px solid rgb(var(--c-border)); font-size: 16px; }
+
+/* Chat. Classes em arquivo, não style inline: o servidor do celular manda `style-src 'self'`. */
+/* A conversa ocupa a altura que sobra: com poucas mensagens a barra de digitação fica no pé da tela, não grudada no conteúdo. */
+.chat-tela { flex: 1; display: flex; flex-direction: column; }
+.chat { flex: 1; display: flex; flex-direction: column; gap: .625rem; margin-block: 1rem; }
+.bubble { max-width: 88%; padding: .625rem .875rem; border-radius: 1rem; line-height: 1.45; }
+.bubble-user { align-self: flex-end; background: rgb(var(--c-accent) / .14); border: 1px solid rgb(var(--c-accent) / .35); border-bottom-right-radius: .25rem; }
+.bubble-agent { align-self: flex-start; background: rgb(var(--c-bg-surface)); border: 1px solid rgb(var(--c-border-subtle)); border-bottom-left-radius: .25rem; }
+.bubble-pending { opacity: .65; }
+.bubble-author { font-size: .6875rem; letter-spacing: .02em; color: rgb(var(--c-text-muted)); margin-bottom: .25rem; }
+
+/* "Trabalhando…" no estilo do Claude Code: quadro que respira, frase com brilho correndo, contador. */
+.working { display: inline-flex; align-items: baseline; gap: .5rem; font-size: .875rem; }
+.working-glyph { display: inline-block; width: 1ch; text-align: center; font-weight: 700; color: rgb(var(--c-accent)); }
+.working-verb {
+  font-weight: 600;
+  background: linear-gradient(90deg, rgb(var(--c-accent)) 0%, rgb(var(--c-accent)) 40%, rgb(var(--c-text-primary)) 50%, rgb(var(--c-accent)) 60%, rgb(var(--c-accent)) 100%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: working-brilho 2.4s linear infinite;
+}
+.working-time { font-size: .75rem; color: rgb(var(--c-text-muted)); }
+@keyframes working-brilho { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .working-verb { animation: none; background: none; color: rgb(var(--c-accent)); }
+}
+
+/* Barra de digitação presa embaixo, como num app de mensagens. */
+.chat-composer { position: sticky; bottom: 0; display: flex; gap: .5rem; align-items: flex-end; padding-block: .75rem max(.75rem, env(safe-area-inset-bottom)); background: rgb(var(--c-bg-primary)); border-top: 1px solid rgb(var(--c-border-subtle)); }
+.chat-composer textarea { flex: 1; min-height: 44px; max-height: 10rem; resize: none; padding: .625rem .875rem; border-radius: 1.25rem; background: rgb(var(--c-bg-elevated)); border: 1px solid rgb(var(--c-border)); color: inherit; font-size: 16px; }
+.chat-send { min-width: 44px; min-height: 44px; border-radius: 9999px; }
+.chat-state { display: inline-flex; align-items: center; gap: .375rem; font-size: .75rem; color: rgb(var(--c-text-secondary)); }
+.chat-state-dot { width: .5rem; height: .5rem; border-radius: 9999px; background: rgb(var(--c-text-muted)); }
+.chat-state-dot.ativo { background: rgb(var(--c-accent)); }
+/* Com o shell em coluna flex, botão solto esticaria na largura toda (voltar, nova sessão). */
+.mobile-shell > .btn { align-self: flex-start; }
+
+/* Tela de pareamento pelo Authy: centralizada, campo grande de 6 dígitos. */
+.pairing { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .875rem; text-align: center; padding-block: 2rem; }
+.pairing-icon { border-radius: 1rem; }
+.pairing-form { display: flex; flex-direction: column; gap: .75rem; width: 100%; max-width: 18rem; }
+.pairing-input { text-align: center; font-size: 2rem; letter-spacing: .5rem; padding: .625rem; border-radius: .75rem; background: rgb(var(--c-bg-elevated)); border: 1px solid rgb(var(--c-border)); color: inherit; font-variant-numeric: tabular-nums; }
+.pairing-button { min-height: 48px; }

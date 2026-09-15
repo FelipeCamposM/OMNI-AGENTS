@@ -1,9 +1,15 @@
 import { useEffect, useRef } from "react";
 import { ATTENTION_LABEL, type AttentionItem } from "./useAttention";
 
-/** Chave de um aviso: mesma sessão com motivo novo volta a notificar; repetir o mesmo motivo não. */
+/** Um aviso por evento do engine: cada fim de turno ou diálogo de aprovação sobe o `attentionSeq`. */
 function keyOf(item: AttentionItem): string {
-  return `${item.sessionId}:${item.reason}`;
+  return `${item.sessionId}:${item.attentionSeq}`;
+}
+
+/** Só isto vira toast: agente que terminou um turno ou pede aprovação. Travou, parou, sessão órfã e
+ *  shell ocioso aparecem na seção ATENÇÃO da sidebar, mas não chamam ninguém. */
+function isNotifiable(item: AttentionItem): boolean {
+  return item.attentionSeq > 0 && (item.state === "answered" || item.state === "approval_required");
 }
 
 /**
@@ -12,27 +18,28 @@ function keyOf(item: AttentionItem): string {
  * some, o piscar da barra fica lá até você olhar.
  *
  * Só dispara com a janela sem foco de propósito — se o app está na sua frente, a seção ATENÇÃO da
- * sidebar já mostra tudo, e um toast por cima disso é barulho.
+ * sidebar já mostra tudo, e um toast por cima disso é barulho. Evento que chegou com a janela em
+ * foco é dado como avisado: sair do app depois não solta toast atrasado.
  *
  * Fora do Tauri (testes, `dev:vite`) os imports dinâmicos falham: notificação é aviso, nunca pode
  * derrubar a tela. Mas falha **sempre loga** — um catch mudo aqui torna "não apareceu nada"
  * impossível de diagnosticar, que foi exatamente o que aconteceu na primeira versão disto.
  */
 export function useAttentionNotifier(items: AttentionItem[], enabled: boolean) {
-  const notified = useRef<Set<string>>(new Set());
+  // `null` até a primeira leitura: o que já estava pendente quando o app abriu não é evento novo.
+  const notified = useRef<Set<string> | null>(null);
 
   useEffect(() => {
-    const current = new Set(items.map(keyOf));
-    // Um aviso que sumiu (usuário viu, agente voltou a trabalhar) pode notificar de novo depois.
-    for (const key of notified.current) {
-      if (!current.has(key)) notified.current.delete(key);
+    const avisos = items.filter(isNotifiable);
+    if (notified.current === null) {
+      notified.current = new Set(avisos.map(keyOf));
+      return;
     }
-
-    if (!enabled) return;
-    const novos = items.filter((item) => !notified.current.has(keyOf(item)));
-    if (novos.length === 0) return;
-
-    let cancelado = false;
+    const novos = avisos.filter((item) => !notified.current!.has(keyOf(item)));
+    // Marca já, antes de qualquer await: o efeito roda a cada poll, e marcar só depois do toast
+    // deixava dois polls seguidos mandarem o mesmo aviso.
+    for (const item of novos) notified.current.add(keyOf(item));
+    if (!enabled || novos.length === 0) return;
 
     void (async () => {
       try {
@@ -43,11 +50,6 @@ export function useAttentionNotifier(items: AttentionItem[], enabled: boolean) {
           console.debug("[atenção] toast suprimido: a janela do OMNI está em foco", novos.map(keyOf));
           return;
         }
-        if (cancelado) return;
-
-        // Marca só depois de confirmar que vai notificar — senão um aviso que chegou com a janela
-        // em foco nunca mais notificaria.
-        for (const item of novos) notified.current.add(keyOf(item));
 
         const { isPermissionGranted, requestPermission, sendNotification } = await import(
           "@tauri-apps/plugin-notification"
@@ -82,10 +84,6 @@ export function useAttentionNotifier(items: AttentionItem[], enabled: boolean) {
         console.error("[atenção] falha ao notificar:", motivo);
       }
     })();
-
-    return () => {
-      cancelado = true;
-    };
   }, [items, enabled]);
 }
 

@@ -97,6 +97,28 @@ export async function listDir(projectRoot: string, relativePath: string, ignoreL
     });
 }
 
+export function fileKind(name: string): "file" | "markdown" {
+  return /\.(md|markdown)$/i.test(name) ? "markdown" : "file";
+}
+
+/** Todos os arquivos do projeto (mesmo ignore da árvore, dotfiles incluídos) — índice do Ctrl+P.
+ * Symlink de pasta não vira `isDirectory` no `readDir`, então não tem loop. */
+export async function listAllFiles(projectRoot: string, ignoreList: string[], limit = 20_000): Promise<FileEntry[]> {
+  const files: FileEntry[] = [];
+  let pending = [""];
+  while (pending.length > 0 && files.length < limit) {
+    // ponytail: um nível inteiro de pastas em paralelo, sem limite de concorrência de IPC —
+    // pôr um pool se projeto gigante travar a UI.
+    const levels = await Promise.all(pending.map((relative) => listDir(projectRoot, relative, ignoreList).catch(() => [])));
+    pending = [];
+    for (const entry of levels.flat()) {
+      if (entry.isDirectory) pending.push(entry.path.slice(projectRoot.length).replace(/^[\\/]/, ""));
+      else files.push(entry);
+    }
+  }
+  return files.slice(0, limit);
+}
+
 export async function readTextFile(absolutePath: string, projectRoot: string): Promise<string> {
   assertWithinRoot(absolutePath, projectRoot);
   return pluginReadTextFile(absolutePath);
