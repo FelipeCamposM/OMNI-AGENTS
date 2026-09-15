@@ -1326,6 +1326,31 @@ dentro do OMNI instalado continua usando o engine instalado.
   do Tailscale num teste do engine e o IP do Tailscale num teste da tela. `.omni-agents/` (imagens
   coladas nos terminais) entrou no `.gitignore`.
 
+## "Reiniciar" não voltava para a conversa do Claude (2026-09-15)
+
+**Sintoma:** sessão parada → **reiniciar** → o Claude abria sem a conversa; era preciso digitar `claude -r`.
+
+**Causa:** os dois caminhos de `restart_session` (sessão viva e histórica) reinjetam `initial_command`
+literal. Numa conversa Claude ele é `claude --session-id <uuid>` — o comando de **criar** a conversa com
+aquele id, não de retomar (`claude --help`: `--session-id` "Use a specific session ID for the
+conversation"; `--resume <id>` é o que retoma).
+
+- [x] `main.rs::comando_ao_reiniciar()`: conversa Claude cujo transcript existe reinicia com
+  `--resume <uuid>` (mesmo id, então o celular segue lendo o mesmo arquivo). Sem transcript — nenhuma
+  mensagem mandada — o `--resume` falharia, então fica o comando original. Transcript procurado no
+  `CLAUDE_CONFIG_DIR` da conta da sessão ou no `~/.claude` padrão. Codex e terminal puro não mudam.
+- Testes: `reiniciar_conversa_claude_com_historico_retoma_a_mesma`,
+  `reiniciar_nao_mexe_no_que_nao_e_conversa_claude_nova`.
+
+**Por que a sessão "sumia":** sem evidência de morte por ociosidade (nenhum evento de suspensão do
+Windows). As sessões paradas coincidem com reinícios do engine — a atualização automática para a
+0.4.2 reiniciou o engine às 03:02 de 15/09 e encerrou as sessões abertas, que é o comportamento
+esperado de atualizar.
+
+- [ ] Codex: o reinício ainda abre conversa nova. O id da sessão do Codex não é conhecido na criação;
+  `codex resume --last` pegaria a mais recente da pasta, que pode não ser a mesma.
+- [ ] Chega ao app instalado só na próxima versão.
+
 ## Gotchas
 
 - **Bug real encontrado em 2026-08-27 (usuário travado com "tela preta")**: no caso sem split
@@ -1469,6 +1494,11 @@ Guia completo (release, primeira abertura no Mac, SmartScreen, roteiro de teste)
   `allowTransparency` e fundo transparente, e o container pinta `rgb(14 14 20 / var(--terminal-opacity))`.
   `PaneView.tsx` tira o `bg-bg-surface/90` do painel em abas terminal/agente, senão ele cobria o fundo.
 - Próximo: conferir legibilidade no Tauri com fundo animado e com imagem customizada.
+- [x] **Fundo continuava escondido:** o `xterm.css` (v6) pinta `.xterm .xterm-viewport` de `#000` e o
+  tema transparente só limpa o elemento de rolagem — viewport preto cobria tudo em qualquer opacidade.
+  `src/index.css` (fim, fora de `@layer`, `!important` porque o xterm.css carrega depois) deixa o
+  viewport transparente. Medido no Edge headless com xterm 6 real: antes `xterm-viewport => rgb(0,0,0)`,
+  depois só a cor do container com `--terminal-opacity`.
 
 ## Árvore de arquivos: criar inline e item preso ao ponteiro no arrasto (2026-09-15)
 
@@ -1479,3 +1509,60 @@ Guia completo (release, primeira abertura no Mac, SmartScreen, roteiro de teste)
   `pointer-events: none` para o `elementFromPoint` do drop continuar vendo a árvore. Posição via ref
   (sem re-render por pointermove); cursor `grabbing` durante o arrasto.
 - Tudo em `src/components/FileTree.tsx`; teste `src/test/FileTree.test.tsx`. Não conferido no app.
+
+## `/usage` do Claude confiável: lê o cache que o próprio CLI grava (2026-09-15)
+
+Relato: clicar no uso do rodapé "às vezes carrega, às vezes não".
+
+- Diagnóstico com sessão real: a consulta funcionava (425 ms) num painel de 58 linhas, mas o diálogo
+  do `/usage` tem ~40 linhas e a lista "What's contributing" cresce depois do "Scanning" — num painel
+  baixo os limites saem da tela e o parser falhava. Na falha o engine não mandava Esc: o diálogo
+  ficava aberto e travava as próximas. Sucesso cacheado 5 min e falha 15 s mascaravam o clique.
+- [x] Fonte nova: `cachedUsageUtilization` do `.claude.json` (Claude Code 2.1.272 grava a cada
+  `/usage`; `fetchedAtMs` bateu com a consulta disparada). `omni_core::usage::read_claude_cache` +
+  `claude_state_path` (perfil nativo `~/.claude.json`, isolado `<config_dir>/.claude.json`), valida
+  `accountUuid`. Reset vira timestamp exato.
+- [x] `interaction::account_usage` reescrito: `refresh:false` só lê o arquivo; `refresh:true` digita
+  `/usage` em sessão ociosa, espera `fetchedAtMs` mudar (12 s, tela como plano B), **sempre** fecha o
+  diálogo aberto com Esc; clique com leitura < 20 s não digita; sem sessão ociosa devolve a última
+  leitura com motivo. Removido `EngineState.usage_cache`.
+- [x] Rodapé (`ClaudeUsageStatus.tsx`) relê o arquivo a cada 30 s; reset curto (`11:40` hoje, `17/09 14:00`).
+- Verificado: testes `claude_cache_reads_real_shape_and_rejects_other_account`,
+  `claude_state_path_follows_profile_isolation`; engine novo isolado (pasta/porta temporárias) leu o
+  `~/.claude.json` real (34%/61%). **Não validado:** clique no app — o engine instalado é o 0.4.2.
+- Docs: `docs/mobile-and-account-usage.md`.
+- Relato "não funciona" logo depois: os dois engines vivos eram anteriores à mudança (instalado 0.4.2;
+  dev compilado 06:49, fonte alterada 07:01–07:05). `tauri dev` não recompila o engine — rodar
+  `npm run build:engine` depois de mexer em `crates/`. Refeito às 07:10: engine de dev responde
+  `source: claude_cache` 34%/61%.
+
+## Arrastar abas entre painéis com prévia do destino (2026-09-15)
+
+Pedido: arrastar abas para outros painéis e para as bordas (dividir), vendo onde a aba vai ficar.
+
+**Causa de não funcionar:** abas de agente/terminal usavam HTML5 DnD, que o webview do Tauri no Windows
+não entrega com `dragDropEnabled` ligado (o drop de arquivos do Explorer na árvore precisa dele). Só abas
+de arquivo arrastavam, por pointer events, e o destino eram 5 botões de texto sem prévia de área.
+
+- [x] `src/features/workspace/tabPointerDrag.ts` (era `fileTabDrag.ts`): um controle para **todas** as abas.
+  `dropZone()` decide pela posição: sobre o cabeçalho = mover; borda mais próxima até 30% = dividir;
+  resto = mover. Emite `TAB_DRAG_EVENT` só quando o destino muda; fantasma com o nome da aba preso ao
+  ponteiro; Esc/blur/pointercancel cancelam.
+- [x] `PaneView.tsx`: `data-drop-pane` na seção e prévia translúcida (metade do painel na borda, painel
+  inteiro no centro) com rótulo "Dividir à direita"/"Mover para este painel", animada
+  (`motion-reduce:transition-none`). Sem prévia onde soltar não faria nada (centro do próprio painel,
+  borda do próprio painel com uma aba só).
+- [x] `workspaceReducer.ts`: `SPLIT_WITH_TAB` no próprio painel com a única aba vira no-op (antes, com
+  painel único, esvaziava o painel e criava outro ao lado).
+- [x] `WorkspaceTabBar.tsx`/`tabDrag.ts`/`TabDropOverlay.tsx`: removido o HTML5 das abas; o overlay de
+  botões ficou só para arrastar o painel inteiro pelo cabeçalho.
+- Verificado: `src/test/PaneView.test.tsx` (5 tipos de aba, 4 bordas, cabeçalho, próprio painel, Esc,
+  `dropZone`), `workspaceReducer.test.ts`; `node scripts/test-tab-drag-browser.mjs` no Edge real (aba de
+  agente → borda direita: prévia `right` e `SPLIT_WITH_TAB` horizontal/after). 194 testes, typecheck ok.
+- [x] **Regressão corrigida:** clicar numa aba parou de trocar de aba. `setPointerCapture` no
+  pointerdown faz o `click` ir para o wrapper que capturou, não para o botão da aba. Agora a captura só
+  acontece depois do limiar de 6 px. O harness do Edge clica numa aba antes de arrastar e reprova se não
+  vier `SELECT_TAB` (conferido que reprova com a captura antiga).
+- [ ] Arrastar o painel inteiro pelo cabeçalho continua HTML5 — mesmo problema no Windows. Migrar para o
+  mesmo controle se for pedido.
+- [ ] Não conferido no app Tauri.

@@ -137,53 +137,121 @@ pub fn capabilities(session: &Arc<LiveSession>) -> Capabilities {
         reason: (!(approve || prompt)).then(|| "Entrada do CLI não reconhecida ou sessão ocupada".into()) }
 }
 
+/// Uso da conta Claude. A fonte é o `cachedUsageUtilization` que o próprio Claude Code grava no
+/// `.claude.json` a cada `/usage` — ler a tela falhava conforme a altura do painel e o momento do
+/// redesenho (a lista "What's contributing" empurra os limites para fora de um painel baixo).
+///
+/// - `refresh: false` só lê o arquivo. Nunca digita nada.
+/// - `refresh: true` precisa de um `/usage` novo, porque o arquivo só muda quando alguém consulta:
+///   usa um agente Claude ocioso da conta; sem nenhum, abre um Claude **oculto e temporário** na
+///   pasta do engine, consulta e encerra. Sucesso = `fetchedAtMs` do arquivo mudou.
+/// - Falhou: devolve a última leitura do arquivo com o motivo, em vez de sumir com os números.
 pub fn account_usage(state: &Arc<EngineState>, profile_id: &str, refresh: bool) -> Result<EngineResponse> {
-    let mut result = AccountUsage::unavailable(profile_id,"claude","Nenhuma sessão Claude disponível neste perfil");
-    result.status = "unknown".into();
-    if let Some((at, cached)) = state.usage_cache.lock().map_err(|_|anyhow!("cache poisoned"))?.get(profile_id) {
-        let ttl = if cached.status == "available" || cached.status == "stale" { 300_000 } else { 15_000 };
-        if now_ms().saturating_sub(*at) < ttl || !refresh {
-            let mut cached = cached.clone();
-            if now_ms().saturating_sub(*at) >= 300_000 { cached.status = "stale".into(); }
-            return Ok(EngineResponse::AccountUsage { usage: cached });
-        }
+    let dir = state.state_file.parent().ok_or_else(|| anyhow!("engine dir unavailable"))?.to_path_buf();
+    let profile = omni_core::profiles(&dir).into_iter().find(|p| p.id == profile_id && p.provider == "claude");
+    let state_path = profile.as_ref().map(omni_core::usage::claude_state_path);
+    let read_cache = || state_path.as_deref().and_then(|path| omni_core::usage::read_claude_cache(profile_id, path, now_ms()));
+    let with_reason = |usage: Option<AccountUsage>, reason: &str| {
+        let mut usage = usage.unwrap_or_else(|| AccountUsage::unavailable(profile_id, "claude", reason));
+        usage.reason = Some(reason.into());
+        Ok(EngineResponse::AccountUsage { usage })
+    };
+    let before = read_cache();
+    if !refresh {
+        return match before {
+            Some(usage) => Ok(EngineResponse::AccountUsage { usage }),
+            None => with_reason(None, "Sem consulta de uso ainda. Clique em atualizar."),
+        };
     }
-    if !refresh { return Ok(EngineResponse::AccountUsage { usage: result }); }
-    let sessions: Vec<_> = state.sessions.lock().map_err(|_|anyhow!("sessions poisoned"))?.values().filter_map(|entry| {
+    let Some(profile) = profile else { return with_reason(before, "Conta Claude não encontrada.") };
+    // Clique repetido: uma leitura de segundos atrás não precisa consultar de novo.
+    if let Some(usage) = before.as_ref().filter(|u| u.observed_at_ms.is_some_and(|at| now_ms().saturating_sub(at) < 20_000)) {
+        return Ok(EngineResponse::AccountUsage { usage: usage.clone() });
+    }
+    let previous_fetch = before.as_ref().and_then(|u| u.observed_at_ms);
+
+    let idle_agent = state.sessions.lock().map_err(|_|anyhow!("sessions poisoned"))?.values().filter_map(|entry| {
         let SessionEntry::Live(session) = entry else { return None };
         let meta = session.meta.lock().ok()?;
         (meta.provider.as_deref() == Some("claude") && meta.profile_id.as_deref() == Some(profile_id)).then(|| session.clone())
-    }).collect();
-    // A user may have opened /usage manually in an existing session. Reading it never types
-    // or closes their dialog, and preserves the screen's actual last-observed timestamp.
-    // `parse_claude_screen` is strict enough on its own (exact section titles, one percentage and
-    // one reset line each) — the real /usage screen never shows an "Esc to cancel/close" hint, so
-    // gating on that text kept this branch permanently unreachable.
-    for session in &sessions {
-        let context = session.interaction.lock().map_err(|_|anyhow!("screen poisoned"))?;
-        let meta = session.meta.lock().map_err(|_|anyhow!("metadata poisoned"))?;
-        if meta.pid.is_none() { continue; }
-        let usage = parse_claude_screen(&context.parser.screen().contents(),profile_id,meta.last_activity_at_ms);
-        if usage.status == "available" {
-            state.usage_cache.lock().map_err(|_|anyhow!("cache poisoned"))?.insert(profile_id.into(),(now_ms(),usage.clone()));
+    }).find(|session| capabilities(session).prompt);
+    if let Some(session) = idle_agent {
+        if let Some(usage) = run_usage_command(state, &session, profile_id, &read_cache, previous_fetch)? {
             return Ok(EngineResponse::AccountUsage { usage });
         }
     }
-    let has_session = !sessions.is_empty();
-    let Some(session) = sessions.iter().find(|s| capabilities(s).prompt).cloned() else {
-        if has_session {
-            let busy = sessions.iter().any(|s| s.interaction.lock().is_ok_and(|c| c.parser.screen().contents().contains("esc to interrupt")));
-            result.status = "unavailable".into();
-            result.reason = Some(if busy { "Claude está respondendo. Consulte quando ele terminar ou abra /usage no agente." }
-                else { "Entrada ocupada ou não reconhecida. Abra /usage no agente e consulte novamente." }.into());
+
+    // Nenhum agente ocioso (ou ele não trouxe): Claude oculto só para consultar. `/usage` não manda
+    // mensagem ao modelo, e sem mensagem o Claude não grava conversa.
+    let id = state.next_id();
+    let hidden = spawn_terminal_inner(state, id.clone(), String::new(), "Claude · consulta de uso".into(),
+        dir.to_string_lossy().into_owned(), None, Some("claude".into()), 40, 120, now_ms(),
+        SessionOrigin { headless: true, env: omni_core::env_for(&profile), provider: Some("claude".into()),
+            profile_id: Some(profile_id.into()), conversation_id: None, external_session_id: None });
+    let result = hidden.and_then(|_| {
+        let session = match state.sessions.lock().map_err(|_|anyhow!("sessions poisoned"))?.get(&id) {
+            Some(SessionEntry::Live(session)) => session.clone(),
+            _ => return Ok(None),
+        };
+        if !wait_claude_ready(&session, Duration::from_secs(25)) { return Ok(None); }
+        run_usage_command(state, &session, profile_id, &read_cache, previous_fetch)
+    });
+    let _ = close_session(state, &id);
+    match result? {
+        Some(usage) => Ok(EngineResponse::AccountUsage { usage }),
+        None => with_reason(before, "O Claude não trouxe o uso a tempo; mostrando a última leitura."),
+    }
+}
+
+/// Espera o Claude recém-aberto chegar no composer vazio, passando pelo "confiar nesta pasta" (a
+/// pasta é a do próprio engine; o Claude grava a confiança, então só acontece na primeira vez).
+fn wait_claude_ready(session: &Arc<LiveSession>, limit: Duration) -> bool {
+    let started = Instant::now();
+    while started.elapsed() < limit {
+        std::thread::sleep(Duration::from_millis(300));
+        if session.meta.lock().map(|meta| meta.pid.is_none()).unwrap_or(true) { return false; }
+        let text = session.interaction.lock().map(|c| c.parser.screen().contents()).unwrap_or_default();
+        if let Some(keys) = trust_dialog_keys(&text) {
+            if let Ok(mut writer) = session.writer.lock() { let _ = writer.write_all(keys.as_bytes()); let _ = writer.flush(); }
+            continue;
         }
-        return Ok(EngineResponse::AccountUsage { usage: result });
-    };
+        if capabilities(session).prompt { return true; }
+    }
+    false
+}
+
+/// Teclas para o diálogo de confiança de pasta, ou `None` se ele não está na tela. Na 2.1.272 o
+/// padrão selecionado é "No, exit" — um Enter às cegas **fecharia** o Claude. Então: seta até a opção
+/// "Yes", e Enter só quando a tela já mostra o `❯` nela (a próxima volta do loop confere).
+fn trust_dialog_keys(text: &str) -> Option<&'static str> {
+    // Rótulo sem o `❯` e sem numeração ("1. Yes, proceed" nas versões antigas).
+    let label = |line: &str| line.trim_start_matches('❯').trim_start().trim_start_matches(|c: char| c.is_ascii_digit() || c == '.').trim_start().to_owned();
+    let options: Vec<&str> = text.lines().map(str::trim)
+        .filter(|line| label(line).starts_with("Yes, ") || label(line).starts_with("No, exit"))
+        .collect();
+    let yes = options.iter().position(|line| label(line).starts_with("Yes, "))?;
+    let selected = options.iter().position(|line| line.starts_with('❯'))?;
+    if !options.iter().any(|line| label(line).starts_with("No, exit")) { return None; }
+    Some(match selected.cmp(&yes) {
+        std::cmp::Ordering::Equal => "\r",
+        std::cmp::Ordering::Less => "\x1b[B",
+        std::cmp::Ordering::Greater => "\x1b[A",
+    })
+}
+
+/// Digita `/usage` numa sessão ociosa e espera o resultado; fecha o diálogo aberto com Esc — com
+/// sucesso ou não. Pronto quando:
+/// - o `fetchedAtMs` do arquivo mudou (o Claude buscou de novo), ou
+/// - o diálogo terminou de carregar (limites na tela, sem "Refreshing…") por duas leituras seguidas:
+///   o Claude não busca de novo se consultou há pouco, e aí o valor do arquivo **é** o atual.
+/// CLI que não grava o cache: os números da própria tela.
+fn run_usage_command(state: &Arc<EngineState>, session: &Arc<LiveSession>, profile_id: &str,
+    read_cache: &dyn Fn() -> Option<AccountUsage>, previous_fetch: Option<u64>) -> Result<Option<AccountUsage>> {
     {
         let sessions = state.sessions.lock().map_err(|_|anyhow!("sessions poisoned"))?;
-        if !sessions.values().any(|entry| matches!(entry,SessionEntry::Live(s) if Arc::ptr_eq(s,&session))) { return Ok(EngineResponse::AccountUsage { usage: result }); }
+        if !sessions.values().any(|entry| matches!(entry,SessionEntry::Live(s) if Arc::ptr_eq(s,session))) { return Ok(None); }
         let mut context = session.interaction.lock().map_err(|_|anyhow!("screen poisoned"))?;
-        if !ready(context.parser.screen(),"claude") || session.reserved.swap(true,Ordering::SeqCst) { return Ok(EngineResponse::AccountUsage { usage: result }); }
+        if !ready(context.parser.screen(),"claude") || session.reserved.swap(true,Ordering::SeqCst) { return Ok(None); }
         context.input_revision += 1;
         let written = (|| -> Result<()> {
             let mut writer = session.writer.lock().map_err(|_|anyhow!("writer poisoned"))?;
@@ -193,36 +261,56 @@ pub fn account_usage(state: &Arc<EngineState>, profile_id: &str, refresh: bool) 
     }
     struct Release<'a>(&'a LiveSession);
     impl Drop for Release<'_> { fn drop(&mut self) { self.0.reserved.store(false,Ordering::SeqCst); } }
-    let _release = Release(&session);
+    let _release = Release(session);
+    let write = |bytes: &[u8]| -> Result<()> {
+        let mut writer = session.writer.lock().map_err(|_|anyhow!("writer poisoned"))?;
+        writer.write_all(bytes)?; writer.flush()?; Ok(())
+    };
     // Texto e Enter no mesmo write chegam como uma rajada só, que o Claude trata como colagem: o
     // `\r` não submete. Enter separado, fora dos locks (o leitor da PTY precisa da tela no intervalo).
     std::thread::sleep(Duration::from_millis(250));
-    {
-        let mut writer = session.writer.lock().map_err(|_|anyhow!("writer poisoned"))?;
-        writer.write_all(b"\r")?; writer.flush()?;
-    }
+    write(b"\r")?;
     let started = Instant::now();
-    result = AccountUsage::unavailable(profile_id,"claude","Consulta /usage sem tela reconhecida; verifique o agente e tente novamente");
-    while started.elapsed() < Duration::from_secs(10) {
-        std::thread::sleep(Duration::from_millis(150));
-        let sessions = state.sessions.lock().map_err(|_|anyhow!("sessions poisoned"))?;
-        if !sessions.values().any(|entry| matches!(entry,SessionEntry::Live(s) if Arc::ptr_eq(s,&session))) { break; }
-        let context = session.interaction.lock().map_err(|_|anyhow!("screen poisoned"))?;
-        let text = context.parser.screen().contents();
+    let mut result = None;
+    let mut settled_polls = 0;
+    while started.elapsed() < Duration::from_secs(15) && result.is_none() {
+        std::thread::sleep(Duration::from_millis(250));
+        if !state.sessions.lock().map_err(|_|anyhow!("sessions poisoned"))?.values().any(|entry| matches!(entry,SessionEntry::Live(s) if Arc::ptr_eq(s,session))) { break; }
         if session.meta.lock().map_err(|_|anyhow!("metadata poisoned"))?.pid.is_none() { break; }
-        // Still the idle composer: /usage hasn't rendered yet (or was already closed). The real
-        // screen never shows an "Esc to close" hint here, so `parse_claude_screen`'s own strict
-        // grammar — not a hint string that doesn't exist — is what decides this is done.
-        if ready(context.parser.screen(),"claude") { continue; }
-        result = parse_claude_screen(&text,profile_id,now_ms());
-        if result.status == "available" {
-            let mut writer = session.writer.lock().map_err(|_|anyhow!("writer poisoned"))?;
-            writer.write_all(b"\x1b")?; writer.flush()?;
+        let cached = read_cache();
+        if cached.as_ref().is_some_and(|u| u.observed_at_ms.is_some() && u.observed_at_ms != previous_fetch) {
+            result = cached;
             break;
         }
+        let text = session.interaction.lock().map_err(|_|anyhow!("screen poisoned"))?.parser.screen().contents();
+        if let Ok(path) = std::env::var("OMNI_USAGE_DEBUG") { // DEBUG-TEMP
+            use std::io::Write as _;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                let _ = writeln!(f, "==== t={}ms cache={:?}
+{}", started.elapsed().as_millis(), cached.as_ref().and_then(|u| u.observed_at_ms), text.lines().filter(|l| !l.trim().is_empty()).rev().take(14).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("
+"));
+            }
+        }
+        let settled = text.contains("Current session") && !text.contains("Refreshing");
+        settled_polls = if settled { settled_polls + 1 } else { 0 };
+        if settled_polls >= 2 {
+            result = cached.or_else(|| Some(parse_claude_screen(&text, profile_id, now_ms())).filter(|u| u.status == "available"));
+        }
     }
-    state.usage_cache.lock().map_err(|_|anyhow!("cache poisoned"))?.insert(profile_id.into(),(now_ms(),result.clone()));
-    Ok(EngineResponse::AccountUsage { usage: result })
+    if let Ok(secs) = std::env::var("OMNI_USAGE_LINGER") { // DEBUG-TEMP
+        let limit = Instant::now() + Duration::from_secs(secs.parse().unwrap_or(0));
+        while Instant::now() < limit {
+            std::thread::sleep(Duration::from_millis(500));
+            if let (Ok(path), Some(u)) = (std::env::var("OMNI_USAGE_DEBUG"), read_cache()) {
+                use std::io::Write as _;
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) { let _ = writeln!(f, "linger cache={:?} 5h={:?}", u.observed_at_ms, u.primary.map(|w| w.used_percent)); }
+            }
+        }
+    }
+    // Fecha o diálogo que NÓS abrimos: a sessão estava ociosa e com a entrada reservada, então uma
+    // tela que não é o composer vazio só pode ser o `/usage` (ou o autocomplete dele).
+    if session.interaction.lock().is_ok_and(|context| !ready(context.parser.screen(), "claude")) { let _ = write(b"\x1b"); }
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -261,6 +349,15 @@ mod tests {
         assert!(!ready(digitado.parser.screen(),"claude"));
     }
 
+    #[test] fn trust_dialog_moves_to_yes_before_confirming() {
+        // Tela real da 2.1.272: "No, exit" vem selecionado.
+        let screen = " Quick safety check: Is this a project you created or one you trust?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel";
+        assert_eq!(trust_dialog_keys(screen), Some("\x1b[B"));
+        assert_eq!(trust_dialog_keys(&screen.replace("❯ No, exit\n   Yes", "  No, exit\n ❯ Yes")), Some("\r"));
+        assert_eq!(trust_dialog_keys(" ❯ 1. Yes, proceed\n   2. No, exit"), Some("\r"));
+        assert_eq!(trust_dialog_keys("❯ "), None);
+        assert_eq!(trust_dialog_keys("Do you want to proceed?\n❯ 1. Yes\n3. No"), None);
+    }
     #[test] fn unix_agent_process_must_descend_from_pty() {
         let ps = "  10     1 -zsh\n  20    10 node /Users/a/.npm/bin/claude --session-id x\n  30     1 /opt/homebrew/bin/codex";
         assert!(agent_descends_from(ps, 10, "claude"));

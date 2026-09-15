@@ -12,8 +12,8 @@ import { GitGraphPane } from "../git/GitGraphPane";
 import { KanbanBoard } from "../kanban/KanbanBoard";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { closeTerminal } from "../terminal/terminalService";
-import { PANE_DRAG_TYPE, TAB_DRAG_TYPE } from "./tabDrag";
-import { FILE_TAB_DRAG_EVENT } from "./fileTabDrag";
+import { PANE_DRAG_TYPE } from "./tabDrag";
+import { TAB_DRAG_EVENT, type DropZone, type TabDragState } from "./tabPointerDrag";
 import { TabDropOverlay } from "./TabDropOverlay";
 import { NEW_TAB_OPTIONS, WorkspaceTabBar } from "./WorkspaceTabBar";
 
@@ -43,15 +43,15 @@ export function PaneView({
   dispatch,
 }: PaneViewProps) {
   const [dragActive, setDragActive] = useState(false);
-  const [fileDragActive, setFileDragActive] = useState(false);
+  const [tabDrag, setTabDrag] = useState<TabDragState>(null);
   useEffect(() => {
-    const update = (event: Event) => setFileDragActive((event as CustomEvent<boolean>).detail);
+    const update = (event: Event) => setTabDrag((event as CustomEvent<TabDragState>).detail);
     const finish = () => setDragActive(false);
-    window.addEventListener(FILE_TAB_DRAG_EVENT, update);
+    window.addEventListener(TAB_DRAG_EVENT, update);
     window.addEventListener("dragend", finish);
     window.addEventListener("drop", finish);
     return () => {
-      window.removeEventListener(FILE_TAB_DRAG_EVENT, update);
+      window.removeEventListener(TAB_DRAG_EVENT, update);
       window.removeEventListener("dragend", finish);
       window.removeEventListener("drop", finish);
     };
@@ -59,6 +59,10 @@ export function PaneView({
   const [dirtyTabIds, setDirtyTabIds] = useState<Set<string>>(new Set());
   const tab = pane.tabs.find((item) => item.id === pane.activeTabId) ?? pane.tabs[0];
   const tabId = tab?.id;
+  const dropZone = tabDrag?.target?.paneId === pane.id ? tabDrag.target.zone : null;
+  // Soltar no próprio painel só faz algo quando divide e sobra aba para trás.
+  const showDrop = dropZone !== null
+    && !(tabDrag!.tab.paneId === pane.id && (dropZone === "center" || pane.tabs.length === 1));
 
   const handleDirtyChange = useCallback((changedTabId: string, dirty: boolean) => {
     setDirtyTabIds((previous) => {
@@ -102,9 +106,10 @@ export function PaneView({
         active ? "border-accent" : "border-border-subtle",
       ].join(" ")}
       aria-label={`Painel ${tab?.title ?? pane.id}`}
+      data-drop-pane={pane.id}
       onPointerDown={() => dispatch({ type: "FOCUS_PANE", paneId: pane.id })}
       onDragEnter={(event) => {
-        if (!Array.from(event.dataTransfer.types).some((type) => type === PANE_DRAG_TYPE || type === TAB_DRAG_TYPE)) return;
+        if (!Array.from(event.dataTransfer.types).includes(PANE_DRAG_TYPE)) return;
         event.preventDefault();
         setDragActive(true);
       }}
@@ -192,12 +197,31 @@ export function PaneView({
         )}
         </PaneErrorBoundary>
       </div>
-      {(dragActive || fileDragActive) && (
+      {dragActive && (
         <TabDropOverlay targetPaneId={pane.id} dispatch={dispatch} onFinished={() => setDragActive(false)} />
+      )}
+      {showDrop && (
+        <div
+          role="status"
+          aria-label="Prévia do destino da aba"
+          data-zone={dropZone}
+          className={`pointer-events-none absolute z-30 flex items-center justify-center border-2 border-accent bg-accent/25 transition-all duration-150 motion-reduce:transition-none ${DROP_PREVIEW[dropZone].box}`}
+        >
+          <span className="bg-bg-elevated/90 px-2 py-1 text-[11px] text-text-primary">{DROP_PREVIEW[dropZone].label}</span>
+        </div>
       )}
     </section>
   );
 }
+
+/** Área que a aba vai ocupar: metade do painel nas bordas, o painel inteiro no centro. */
+const DROP_PREVIEW: Record<DropZone, { box: string; label: string }> = {
+  center: { box: "inset-0", label: "Mover para este painel" },
+  left: { box: "inset-y-0 left-0 right-1/2", label: "Dividir à esquerda" },
+  right: { box: "inset-y-0 left-1/2 right-0", label: "Dividir à direita" },
+  top: { box: "inset-x-0 top-0 bottom-1/2", label: "Dividir acima" },
+  bottom: { box: "inset-x-0 top-1/2 bottom-0", label: "Dividir abaixo" },
+};
 
 function PaneAction({
   label,

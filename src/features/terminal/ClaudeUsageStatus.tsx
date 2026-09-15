@@ -16,8 +16,17 @@ const percent = (window: UsageWindow | null) => (window ? `${window.used_percent
 /** Reset curto para o rodapé: data do Codex formatada, ou o texto da TUI sem "Resets" e sem o fuso. */
 export const resetShort = (window: UsageWindow | null) =>
   !window ? null
-    : window.resets_at ? new Date(window.resets_at * 1000).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })
+    : window.resets_at ? shortDate(window.resets_at * 1000)
     : window.reset_label?.replace(/^Resets\s+/, "").replace(/\s*\(.*\)\s*$/, "") ?? null;
+/** Hoje: só a hora ("11:40"). Outro dia: "17/09 14:00". */
+function shortDate(ms: number) {
+  const date = new Date(ms);
+  const time = date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return date.toDateString() === new Date().toDateString()
+    ? time
+    : `${date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${time}`;
+}
+
 const resets = (label: string, window: UsageWindow | null) =>
   window && `${label}: ${window.resets_at ? new Date(window.resets_at * 1000).toLocaleString("pt-BR") : window.reset_label}`;
 
@@ -53,10 +62,16 @@ export function ClaudeUsageStatus({ engineOnline }: { engineOnline: boolean }) {
     return () => { cancelled = true; };
   }, [engineOnline]);
 
+  // Relê o que o Claude Code gravou (não digita nada): pega também um /usage feito à mão no agente.
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+      if (profileId && engineOnline && !busy) {
+        void invoke<Usage>("account_usage", { profileId, refresh: false }).then(setUsage).catch(() => undefined);
+      }
+    }, 30_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [profileId, engineOnline, busy]);
 
   async function refresh() {
     if (!profileId) return;

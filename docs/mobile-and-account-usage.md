@@ -9,16 +9,18 @@ reset e origem da observação. Ausência de dado não significa 0%.
   modificado em `<config_dir>/sessions`. Valida percentual e duração das janelas; ignora uma
   cauda ainda incompleta. Cache de 60 segundos. Depois do reset, o registro anterior aparece
   desatualizado até uma nova medição. Não consulta rede nem arquivo de autenticação.
-- **Claude:** botão **Consultar /usage**, cache de cinco minutos para resultados e 15 segundos
-  para falhas. Usa somente sessão existente do perfil. Reconhece o prompt vazio, o processo
-  Claude descendente da PTY e o modo de colagem; reserva a entrada enquanto consulta (até dez
-  segundos). A tela é reconstruída de bytes ANSI pelo `vt100`, incluindo resize.
-  Se o prompt não for reconhecido, abra `/usage` manualmente naquele agente e clique novamente:
-  uma tela de uso já aberta pode ser lida sem digitar nem fechar o diálogo do usuário.
-- A leitura Claude é **melhor esforço**. Aceita as seções em inglês `Current session` e
-  `Current week (all models)`, percentual explicitamente marcado `% used` e linha `Resets`.
-  Limites por modelo não substituem o semanal geral. O reset da TUI é mostrado literalmente,
-  sem converter uma data/fuso ambíguo. Formatos desconhecidos ficam indisponíveis.
+- **Claude:** fonte é o `cachedUsageUtilization` que o próprio Claude Code grava no `.claude.json`
+  da conta a cada `/usage` (`~/.claude.json` no perfil nativo, `<config_dir>/.claude.json` em conta
+  isolada): percentual e reset exato de 5 h e semana, `fetchedAtMs` como hora da leitura. É número de
+  uso, não credencial. Cache de outra conta (`accountUuid` diferente do `oauthAccount`) é ignorado.
+  Abrir a tela ou o rodapé só lê o arquivo (e relê a cada 30 s). O botão de atualizar digita `/usage`
+  numa sessão Claude ociosa do perfil (prompt vazio, processo Claude descendente da PTY, entrada
+  reservada), espera o `fetchedAtMs` mudar (até 12 s) e fecha o diálogo com Esc — com sucesso ou não.
+  Leitura de menos de 20 s não digita de novo. Sem sessão ociosa, devolve a última leitura do
+  arquivo com o motivo.
+- Plano B, para CLI sem o campo: leitura da tela (`Current session`, `Current week (all models)`,
+  `% used`, `Resets`). Ler a tela sozinho falhava conforme a altura do painel: o diálogo tem ~40
+  linhas e a lista "What's contributing" empurra os limites para fora de um painel baixo.
 
 Não há leitura de `.credentials.json` nem chamada direta ao endpoint OAuth de uso. Nenhuma
 sessão é criada para consultar limites. Os fixtures de parser são sintéticos; validação contra

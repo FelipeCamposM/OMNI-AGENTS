@@ -116,7 +116,6 @@ impl SessionEntry {
 
 struct EngineState {
     persist_lock: Mutex<()>,
-    usage_cache: Mutex<HashMap<String, (u64, omni_core::usage::AccountUsage)>>,
     mobile: mobile::MobileRuntime,
     token: String,
     state_file: PathBuf,
@@ -154,7 +153,6 @@ async fn main() -> Result<()> {
     let sessions = load_historical_sessions(&state_file);
     let state = Arc::new(EngineState {
         persist_lock: Mutex::new(()),
-        usage_cache: Mutex::new(HashMap::new()),
         mobile: mobile::MobileRuntime::new(&engine_dir),
         token,
         state_file,
@@ -533,6 +531,38 @@ fn duplicate_session(state: &Arc<EngineState>, session_id: &str) -> Result<Engin
     Ok(EngineResponse::Session { session: metadata })
 }
 
+/// Comando para reabrir a sessão no **Reiniciar**.
+///
+/// Uma conversa Claude nasce com `claude --session-id <uuid>`, que serve para *criar* a conversa com
+/// aquele id. Repetir isso no reinício não volta para ela — era preciso sair e digitar `claude -r`
+/// à mão. Se o transcript já existe, o reinício troca por `--resume <uuid>`, que retoma a mesma
+/// conversa com o mesmo id (o celular continua lendo o mesmo arquivo). Sem transcript — nenhuma
+/// mensagem foi mandada ainda — o `--resume` falharia, então fica o comando original.
+fn comando_ao_reiniciar(meta: &TerminalSession) -> Option<String> {
+    let original = meta.initial_command.clone()?;
+    if meta.provider.as_deref() != Some("claude") {
+        return Some(original);
+    }
+    let Some(id) = meta.external_session_id.as_deref() else { return Some(original) };
+    let criar = format!("--session-id {id}");
+    if !original.contains(&criar) || !transcript_claude_existe(meta, id) {
+        return Some(original);
+    }
+    Some(original.replacen(&criar, &format!("--resume {id}"), 1))
+}
+
+/// O transcript mora no config dir da conta da sessão: `CLAUDE_CONFIG_DIR` do perfil quando há, senão
+/// o `~/.claude` padrão.
+fn transcript_claude_existe(meta: &TerminalSession, id: &str) -> bool {
+    let config_dir = meta
+        .env
+        .iter()
+        .find(|(chave, _)| chave == "CLAUDE_CONFIG_DIR")
+        .map(|(_, valor)| PathBuf::from(valor))
+        .or_else(|| env::var_os("USERPROFILE").or_else(|| env::var_os("HOME")).map(|home| PathBuf::from(home).join(".claude")));
+    config_dir.is_some_and(|dir| omni_core::conversations::claude_transcript_path(&dir, &meta.cwd, id).is_file())
+}
+
 enum RestartTarget {
     Live(Arc<LiveSession>),
     Historical(TerminalSession),
@@ -577,8 +607,8 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
             };
             drop(context);
             state.persist()?;
-            // Reinvoke the same agent/CLI the session was originally launched with.
-            spawn_initial_command_thread(session.clone(), meta.initial_command.clone());
+            // Reabre o mesmo agente; conversa Claude com histórico volta com `--resume`.
+            spawn_initial_command_thread(session.clone(), comando_ao_reiniciar(&meta));
             spawn_reader_thread(state.clone(), session, reader, pid);
             Ok(EngineResponse::Session { session: updated })
         }
@@ -587,6 +617,7 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
         // LiveSession (same id) via spawn_terminal_inner is the whole job.
         RestartTarget::Historical(meta) => {
             let origin = SessionOrigin::of(&meta);
+            let comando = comando_ao_reiniciar(&meta);
             let metadata = spawn_terminal_inner(
                 state,
                 meta.id,
@@ -594,7 +625,7 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
                 meta.name,
                 meta.cwd,
                 Some(meta.shell),
-                meta.initial_command,
+                comando,
                 meta.rows,
                 meta.cols,
                 meta.created_at_ms,
@@ -917,7 +948,6 @@ mod tests {
         fs::create_dir_all(&dir).expect("create temp state dir");
         Arc::new(EngineState {
             persist_lock: Mutex::new(()),
-            usage_cache: Mutex::new(HashMap::new()),
             mobile: mobile::MobileRuntime::new(&dir),
             token: "test-token".into(),
             state_file: dir.join("sessions.json"),
@@ -976,8 +1006,9 @@ mod tests {
     fn usage_without_existing_claude_session_never_spawns() {
         let state = test_state();
         let EngineResponse::AccountUsage { usage } = interaction::account_usage(&state, "missing", true).unwrap() else { panic!("usage response expected") };
-        assert_eq!(usage.status, "unknown");
+        assert_eq!(usage.status, "unavailable");
         assert!(usage.primary.is_none());
+        assert!(usage.reason.is_some_and(|reason| reason.contains("não encontrada")));
         assert!(state.sessions.lock().unwrap().is_empty());
     }
 
@@ -1026,6 +1057,55 @@ mod tests {
         assert_eq!(command.get_env("OMNI_AGENTS").and_then(|v| v.to_str()), Some("1"));
         assert_eq!(command.get_env("CLAUDE_CONFIG_DIR").and_then(|v| v.to_str()), Some(r"C:\conta"),
             "o isolamento de conta continua passando");
+    }
+
+    fn sessao_claude(config_dir: &Path, comando: &str) -> TerminalSession {
+        serde_json::from_value(serde_json::json!({
+            "id": "t", "project_id": "p", "name": "Claude · agent", "cwd": "C:/projeto", "shell": "bash",
+            "state": "stopped", "pid": null, "created_at_ms": 0, "last_activity_at_ms": 0, "output_seq": 0,
+            "rows": 24, "cols": 80,
+            "provider": "claude", "external_session_id": "abc-123",
+            "initial_command": comando,
+            "env": [["CLAUDE_CONFIG_DIR", config_dir.to_string_lossy()]],
+        })).expect("sessão de teste")
+    }
+
+    /// "Reiniciar" numa conversa Claude com histórico tem de voltar para ela, não abrir outra: antes
+    /// repetia `--session-id` e era preciso digitar `claude -r` à mão.
+    #[test]
+    fn reiniciar_conversa_claude_com_historico_retoma_a_mesma() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessao = sessao_claude(dir.path(), "claude --session-id abc-123");
+
+        // Sem transcript (nenhuma mensagem ainda), `--resume` falharia: mantém o comando original.
+        assert_eq!(comando_ao_reiniciar(&sessao).as_deref(), Some("claude --session-id abc-123"));
+
+        let transcript = omni_core::conversations::claude_transcript_path(dir.path(), "C:/projeto", "abc-123");
+        fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        fs::write(&transcript, "{}\n").unwrap();
+        assert_eq!(comando_ao_reiniciar(&sessao).as_deref(), Some("claude --resume abc-123"));
+    }
+
+    #[test]
+    fn reiniciar_nao_mexe_no_que_nao_e_conversa_claude_nova() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = omni_core::conversations::claude_transcript_path(dir.path(), "C:/projeto", "abc-123");
+        fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        fs::write(&transcript, "{}\n").unwrap();
+
+        // Já é retomada (veio de uma troca de conta): fica como está.
+        let retomada = sessao_claude(dir.path(), "claude --resume abc-123");
+        assert_eq!(comando_ao_reiniciar(&retomada).as_deref(), Some("claude --resume abc-123"));
+
+        // Outro provider não usa `--session-id`.
+        let mut codex = sessao_claude(dir.path(), "codex");
+        codex.provider = Some("codex".into());
+        assert_eq!(comando_ao_reiniciar(&codex).as_deref(), Some("codex"));
+
+        // Terminal puro: sem comando inicial, nada é injetado.
+        let mut shell = sessao_claude(dir.path(), "x");
+        shell.initial_command = None;
+        assert_eq!(comando_ao_reiniciar(&shell), None);
     }
 
     #[test]

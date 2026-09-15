@@ -714,3 +714,13 @@
   --tw-prose-th-borders: rgb(var(--c-border-subtle));
   --tw-prose-td-borders: rgb(var(--c-border-subtle));
 }
+
+/* O xterm.css pinta `.xterm-viewport` de preto sólido ("para a barra de rolagem do macOS"), e o
+   tema transparente do xterm só limpa o elemento de rolagem. Resultado: a opacidade dos terminais
+   (Configurações → Fundo) não mostrava o fundo por baixo. Fora de @layer de propósito: o xterm.css
+   entra sem layer e ganharia de qualquer regra dentro de um; `!important` porque ele carrega depois
+   deste arquivo (import do `TerminalPane`) e empataria em especificidade. A cor do terminal fica no
+   container do `TerminalPane`, com `--terminal-opacity`. */
+.xterm .xterm-viewport {
+  background-color: transparent !important;
+}

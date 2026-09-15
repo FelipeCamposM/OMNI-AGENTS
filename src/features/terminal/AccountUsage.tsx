@@ -33,7 +33,7 @@ export function AccountUsage({ profileId, provider }: { profileId: string; provi
   }
   const stale = usage?.status === "stale" || [usage?.primary, usage?.secondary].some(w => w?.resets_at && w.resets_at * 1000 <= Date.now());
   return <div className="w-full border-l-2 border-border-subtle pl-3 text-[11px] space-y-1" aria-label={`Uso ${profileId}`}>
-    <p className="text-text-muted">{provider === "codex" ? "Medido no registro do Codex" : "Lido da tela · melhor esforço"}</p>
+    <p className="text-text-muted">{provider === "codex" ? "Medido no registro do Codex" : "Última consulta do Claude Code"}</p>
     <div className="grid gap-2 sm:grid-cols-2"><WindowUsage label="5 horas" window={usage?.primary ?? null} /><WindowUsage label="Semana" window={usage?.secondary ?? null} /></div>
     {usage?.observed_at_ms && <p className="text-text-muted">Observado em {new Date(usage.observed_at_ms).toLocaleString("pt-BR")}{stale ? " · desatualizado" : ""}</p>}
     {(error || usage?.reason) && <p role={error ? "alert" : undefined} className="text-text-muted">{error ? `Indisponível: ${error}` : usage?.reason}</p>}

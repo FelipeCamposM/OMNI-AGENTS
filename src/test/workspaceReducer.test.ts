@@ -235,6 +235,14 @@ describe("workspaceReducer", () => {
     expect(ids.filter((id) => id === tabId)).toHaveLength(1);
   });
 
+  it("dividir o painel com a única aba dele não muda nada", () => {
+    const state = workspaceReducer(emptyWorkspace(), { type: "ADD_PROJECT", path: "C:\\dev\\omni" });
+    const paneId = state.projects[0].activePaneId;
+    const tabId = findPane(state.projects[0].layout, paneId)!.tabs[0].id;
+    const next = workspaceReducer(state, { type: "SPLIT_WITH_TAB", sourcePaneId: paneId, targetPaneId: paneId, tabId, direction: "horizontal", position: "after" });
+    expect(next.projects[0]).toBe(state.projects[0]);
+  });
+
   it("anexa uma sessão persistente existente sem duplicar a tab", () => {
     let state = workspaceReducer(emptyWorkspace(), { type: "ADD_PROJECT", path: "C:\\dev\\omni" });
 

@@ -9,43 +9,33 @@ import assert from 'node:assert/strict';
 // Browser regression: jsdom cannot reproduce native ancestor dragging/pointercancel.
 // Uses the installed Edge and an isolated temporary profile; no extra dependencies.
 const entry = `
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { WorkspaceTabBar } from './src/features/workspace/WorkspaceTabBar';
-import { TabDropOverlay } from './src/features/workspace/TabDropOverlay';
-import { FILE_TAB_DRAG_EVENT } from './src/features/workspace/fileTabDrag';
+import { TAB_DRAG_EVENT } from './src/features/workspace/tabPointerDrag';
 window.actions = []; window.events = []; window.gestures = [];
-window.addEventListener(FILE_TAB_DRAG_EVENT, e => window.gestures.push(e.detail));
+window.addEventListener(TAB_DRAG_EVENT, e => window.gestures.push(e.detail));
 for (const type of ['dragstart', 'pointercancel']) window.addEventListener(type, () => window.events.push(type));
 const dispatch = action => window.actions.push(action);
-function App() {
-  const [active, setActive] = useState(false);
-  useEffect(() => {
-    const update = e => setActive(e.detail);
-    window.addEventListener(FILE_TAB_DRAG_EVENT, update);
-    return () => window.removeEventListener(FILE_TAB_DRAG_EVENT, update);
-  }, []);
-  return <main>{['source', 'target'].map(id => <section key={id} id={id}>
-    <header draggable onDragStart={e => {
-      if (e.target.closest('[role="tablist"]')) { e.preventDefault(); return; }
-      e.dataTransfer.setData('application/x-omni-workspace-pane', JSON.stringify({paneId:id}));
-    }}>
-      <WorkspaceTabBar pane={{type:'pane', id, activeTabId:'file', tabs:id === 'source' ? [{id:'file',kind:'file',title:'code.ts'}] : []}} dispatch={dispatch} onCloseTab={() => {}} />
-    </header>
-    {active && <TabDropOverlay targetPaneId={id} dispatch={dispatch} onFinished={() => setActive(false)} />}
-  </section>)}</main>;
-}
-createRoot(document.getElementById('root')).render(<App />);
+const tabs = [{id:'agent',kind:'agent',title:'Claude'},{id:'file',kind:'file',title:'code.ts'}];
+createRoot(document.getElementById('root')).render(<main>{['source', 'target'].map(id => <section key={id} id={id} data-drop-pane={id}>
+  <header draggable onDragStart={e => {
+    if (e.target.closest('[role="tablist"]')) { e.preventDefault(); return; }
+    e.dataTransfer.setData('application/x-omni-workspace-pane', JSON.stringify({paneId:id}));
+  }}>
+    <WorkspaceTabBar pane={{type:'pane', id, activeTabId:'agent', tabs:id === 'source' ? tabs : []}} dispatch={dispatch} onCloseTab={() => {}} />
+  </header>
+</section>)}</main>);
 `;
 
 async function bundle(previous) {
   return (await build({ stdin: { contents: entry, loader: 'tsx', resolveDir: process.cwd() },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',
     plugins: previous ? [{ name: 'previous-gesture', setup(builder) {
-      builder.onLoad({ filter: /fileTabDrag\.ts$/ }, async ({ path }) => ({ loader: 'ts', contents:
+      builder.onLoad({ filter: /tabPointerDrag\.ts$/ }, async ({ path }) => ({ loader: 'ts', contents:
         (await readFile(path, 'utf8'))
           .replace('event.preventDefault();', '')
-          .replace('source.setPointerCapture(event.pointerId);', '')
+          .replace('source.setPointerCapture(pointerId);', '')
           .replace('if (source.hasPointerCapture(pointerId)) source.releasePointerCapture(pointerId);', '')
       }));
     }}] : [],
@@ -56,7 +46,7 @@ const bundles = { '/previous.js': await bundle(true), '/fixed.js': await bundle(
 const server = createServer((req, res) => {
   if (bundles[req.url]) { res.setHeader('Content-Type', 'text/javascript'); res.end(bundles[req.url]); return; }
   res.setHeader('Content-Type', 'text/html');
-  res.end(`<html><style>body{margin:0;user-select:none}main{display:flex}section{position:relative;width:450px;height:400px;border:1px solid}header{height:40px;background:#ccc}[role=tablist]{display:flex}[role=tablist]>div{display:flex}[role=tab]{height:40px;width:180px}[aria-label="Destinos da tab"]{position:absolute;inset:45px 0 0;pointer-events:none}[data-tab-drop-pane]{pointer-events:auto}[aria-label="Destinos da tab"] button{position:absolute;width:100px;height:80px;left:160px;top:120px}[data-tab-drop-direction]{display:none}</style><div id="root"></div><script src="${req.url === '/previous' ? '/previous.js' : '/fixed.js'}"></script></html>`);
+  res.end(`<html><style>body{margin:0;user-select:none}main{display:flex}section{position:relative;width:350px;height:400px;border:1px solid}header{height:40px;background:#ccc}[role=tablist]{display:flex}[role=tablist]>div{display:flex}[role=tab]{height:40px;width:180px}</style><div id="root"></div><script src="${req.url === '/previous' ? '/previous.js' : '/fixed.js'}"></script></html>`);
 });
 await new Promise(done => server.listen(0, '127.0.0.1', done));
 const profile = await mkdtemp(join(tmpdir(), 'omni-drag-browser-'));
@@ -94,13 +84,23 @@ try {
       await new Promise(done => setTimeout(done, 50));
     }
     await new Promise(done => setTimeout(done, 200));
+    if (version === 'fixed') {
+      // Clique simples ainda troca de aba (captura do ponteiro no pointerdown desviava o click).
+      for (const type of ['mousePressed', 'mouseReleased']) {
+        await call('Input.dispatchMouseEvent', { type, x: 300, y: 20, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: 1 });
+      }
+      const clicked = await evaluate('window.actions.splice(0)');
+      console.log('click', JSON.stringify(clicked));
+      assert.ok(clicked.some(action => action.type === 'SELECT_TAB' && action.tabId === 'file'), 'Click no longer selects the tab');
+    }
     await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 80, y: 20 });
     await call('Input.dispatchMouseEvent', { type: 'mousePressed', x: 80, y: 20, button: 'left', buttons: 1, clickCount: 1 });
-    for (let x = 90; x <= 660; x += 30) {
+    for (let x = 90; x <= 690; x += 30) {
       await call('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y: x < 200 ? 20 : 200, button: 'left', buttons: 1 });
     }
-    console.log(version, await evaluate(`({gestures:window.gestures,overlays:document.querySelectorAll('[aria-label="Destinos da tab"]').length,hit:document.elementFromPoint(660,200)?.outerHTML})`));
-    await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 660, y: 200, button: 'left', buttons: 0, clickCount: 1 });
+    const hover = await evaluate('window.gestures.at(-1)');
+    console.log(version, JSON.stringify(hover));
+    await call('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 690, y: 200, button: 'left', buttons: 0, clickCount: 1 });
     const result = await evaluate('({actions:window.actions,events:window.events})');
     console.log(version, JSON.stringify(result));
     if (version === 'previous') {
@@ -109,11 +109,13 @@ try {
       await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
     }
     else {
-      assert.ok(result.actions.some(action => action.type === 'MOVE_TAB' && action.targetPaneId === 'target'), 'File tab did not reach destination');
+      assert.deepEqual(hover?.target, { paneId: 'target', zone: 'right' }, 'Preview did not follow the pointer to the right edge');
+      assert.ok(result.actions.some(action => action.type === 'SPLIT_WITH_TAB' && action.tabId === 'agent' && action.targetPaneId === 'target'
+        && action.direction === 'horizontal' && action.position === 'after'), 'Agent tab did not split the target pane');
       assert.ok(!result.events.includes('pointercancel'), 'Native drag still cancels the gesture');
     }
   }
-  console.log('PASS: reproduced old cancellation; fixed gesture moves the file in Edge.');
+  console.log('PASS: reproduced old cancellation; agent tab splits the target pane in Edge.');
 } finally {
   socket?.close();
   browser.kill();

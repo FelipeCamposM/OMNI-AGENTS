@@ -14,6 +14,16 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.4.3",
+    date: "2026-09-15",
+    changes: [
+      "Arraste qualquer aba para outro painel ou para a borda de um painel: uma prévia mostra onde ela vai ficar antes de soltar.",
+      "Reiniciar uma sessão parada do Claude volta para a mesma conversa, sem precisar abrir o histórico.",
+      "O uso da conta do Claude no rodapé carrega de forma confiável e mostra o horário exato em que o limite renova.",
+      "A transparência do fundo dos terminais passa a deixar ver o fundo do app de verdade.",
+    ],
+  },
+  {
     version: "0.4.2",
     date: "2026-09-15",
     changes: [

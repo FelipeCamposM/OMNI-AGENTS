@@ -837,7 +837,7 @@ mod tests {
 
     fn fixture() -> (tempfile::TempDir, Arc<EngineState>) {
         let dir = tempfile::tempdir().unwrap();
-        let state = Arc::new(EngineState { persist_lock:Mutex::new(()),usage_cache:Mutex::new(HashMap::new()),mobile:MobileRuntime::new(dir.path()),
+        let state = Arc::new(EngineState { persist_lock:Mutex::new(()),mobile:MobileRuntime::new(dir.path()),
             token:"test-only".into(),state_file:dir.path().join("sessions.json"),sessions:Mutex::new(HashMap::new()),id_sequence:AtomicU64::new(1) });
         atomic_write_json(&dir.path().join("conversations.json"),&json!({"version":1,"conversations":[{
             "id":"c","project_id":"p","cwd":"C:/test","title":"Teste","created_at_ms":1,"segments":[]

@@ -100,6 +100,48 @@ pub fn read_codex(profile_id: &str, config_dir: &Path, now_ms: u64) -> AccountUs
         .unwrap_or_else(|| AccountUsage::unavailable(profile_id, "codex", "Nenhum registro de uso neste perfil"))
 }
 
+/// `.claude.json` da conta: ao lado do config dir no perfil nativo (`~/.claude` → `~/.claude.json`),
+/// dentro dele quando o OMNI isola a conta com `CLAUDE_CONFIG_DIR`.
+pub fn claude_state_path(profile: &crate::Profile) -> std::path::PathBuf {
+    let config_dir = Path::new(&profile.config_dir);
+    match (profile.builtin, config_dir.parent()) {
+        (true, Some(home)) => home.join(".claude.json"),
+        _ => config_dir.join(".claude.json"),
+    }
+}
+
+/// Resultado da última consulta de uso que o próprio Claude Code gravou (`cachedUsageUtilization`,
+/// atualizado quando o `/usage` busca os limites). É número de uso, não credencial. Muito mais
+/// confiável que ler a tela, que depende da altura do painel e do momento do redesenho.
+/// `None` quando o arquivo não tem o campo (versão antiga do CLI), está no meio de uma escrita, ou
+/// o cache é de outra conta que esteve logada antes.
+pub fn read_claude_cache(profile_id: &str, state_file: &Path, now_ms: u64) -> Option<AccountUsage> {
+    let state: Value = serde_json::from_slice(&std::fs::read(state_file).ok()?).ok()?;
+    claude_cache(&state, profile_id, now_ms)
+}
+
+fn claude_cache(state: &Value, profile_id: &str, now_ms: u64) -> Option<AccountUsage> {
+    let cache = state.get("cachedUsageUtilization")?;
+    let account = |value: &Value| value.get("accountUuid").and_then(Value::as_str).map(str::to_owned);
+    if let (Some(cached), Some(current)) = (account(cache), state.get("oauthAccount").and_then(account)) {
+        if cached != current { return None; }
+    }
+    let window = |key: &str, minutes: u64| -> Option<UsageWindow> {
+        let item = cache.pointer(&format!("/utilization/{key}"))?;
+        let used = item.get("utilization")?.as_f64().filter(|v| v.is_finite() && *v >= 0.0)?;
+        let resets_at = item.get("resets_at").and_then(Value::as_str)
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).map(|d| d.timestamp());
+        Some(UsageWindow { used_percent: used, window_minutes: minutes, resets_at, reset_label: None })
+    };
+    let (primary, secondary) = (window("five_hour", 300), window("seven_day", 10080));
+    if primary.is_none() && secondary.is_none() { return None; }
+    let expired = [&primary, &secondary].into_iter().flatten()
+        .any(|w| w.resets_at.is_some_and(|reset| reset as u64 <= now_ms / 1000));
+    Some(AccountUsage { profile_id: profile_id.into(), provider: "claude".into(), source: "claude_cache".into(),
+        status: if expired { "stale" } else { "available" }.into(),
+        observed_at_ms: cache.get("fetchedAtMs").and_then(Value::as_u64), primary, secondary, reason: None })
+}
+
 /// Conservative screen grammar. Reset text is preserved, not interpreted in the PC timezone.
 pub fn parse_claude_screen(screen: &str, profile_id: &str, now_ms: u64) -> AccountUsage {
     let mut result = AccountUsage::unavailable(profile_id, "claude", "Formato de /usage não reconhecido");
@@ -156,6 +198,27 @@ mod tests {
         std::fs::write(&path,format!("{}\n{{\"token_count\":corrupted}}\n",event)).unwrap();
         assert!(read_codex("one",temp.path(),1).primary.is_none());
         assert!(read_codex("other",&temp.path().join("other"),1).primary.is_none());
+    }
+    #[test] fn claude_cache_reads_real_shape_and_rejects_other_account() {
+        // Formato copiado de um ~/.claude.json real (Claude Code 2.1.272).
+        let state = json!({"oauthAccount":{"accountUuid":"a1"},"cachedUsageUtilization":{"fetchedAtMs":1789466241412u64,"accountUuid":"a1",
+            "utilization":{"five_hour":{"utilization":34,"resets_at":"2026-09-15T14:40:00.062389+00:00","limit_dollars":null},
+            "seven_day":{"utilization":61,"resets_at":"2026-09-17T17:00:00.062414+00:00"},"seven_day_opus":null}}});
+        let usage = claude_cache(&state,"p",1789466241412).unwrap();
+        assert_eq!((usage.status.as_str(), usage.observed_at_ms), ("available", Some(1789466241412)));
+        assert_eq!(usage.primary.as_ref().unwrap().used_percent, 34.0);
+        assert_eq!(usage.primary.unwrap().resets_at, Some(1789483200)); // 14:40 UTC
+        assert_eq!(usage.secondary.unwrap().used_percent, 61.0);
+        assert_eq!(claude_cache(&state,"p",1789900000000).unwrap().status, "stale"); // reset já passou
+        let mut other = state.clone(); other["oauthAccount"]["accountUuid"] = json!("b2");
+        assert!(claude_cache(&other,"p",1).is_none());
+        assert!(claude_cache(&json!({"oauthAccount":{}}),"p",1).is_none());
+    }
+    #[test] fn claude_state_path_follows_profile_isolation() {
+        let profile = |builtin, dir: &str| crate::Profile { id:"p".into(), provider:"claude".into(), name:"n".into(),
+            config_dir: dir.into(), builtin, created_at_ms: 0, last_used_at_ms: None, authenticated: false };
+        assert_eq!(claude_state_path(&profile(true, "/home/u/.claude")), Path::new("/home/u/.claude.json"));
+        assert_eq!(claude_state_path(&profile(false, "/data/profiles/work")), Path::new("/data/profiles/work/.claude.json"));
     }
     #[test] fn screen_grammar_rejects_ambiguous_and_remaining_percentages() {
         let screen = "Current session\n██ 12% used\nResets 3pm (America/Sao_Paulo)\nCurrent week (all models)\n8% used\nResets Sep 15 at 3pm (America/Sao_Paulo)\nCurrent week (Sonnet only)\n99% used";

@@ -468,9 +468,14 @@ fn exchange(
 }
 
 fn send_request(request: EngineRequest) -> Result<EngineResponse, String> {
-    let timeout = Duration::from_secs(
-        if matches!(&request, EngineRequest::AccountUsage { .. } | EngineRequest::MobileSettings { .. }) { 15 } else { 2 },
-    );
+    // Consulta de uso pode abrir um Claude oculto e esperar o `/usage` (dezenas de segundos). Na
+    // conexão compartilhada ela seguraria o lock e congelaria terminais, digitação e polls até acabar:
+    // conexão própria, fora do cache.
+    if matches!(&request, EngineRequest::AccountUsage { .. }) {
+        let mut connection = connect()?;
+        return exchange(&mut connection, &request, Duration::from_secs(60)).map(outdated_engine_hint).map_err(|error| error.message);
+    }
+    let timeout = Duration::from_secs(if matches!(&request, EngineRequest::MobileSettings { .. }) { 15 } else { 2 });
     let mut guard = IDLE_CONNECTION.lock().map_err(|_| "engine connection poisoned".to_string())?;
 
     // `take()`: a conexão só volta pro cache quando a troca termina bem. Depois de um erro ela pode

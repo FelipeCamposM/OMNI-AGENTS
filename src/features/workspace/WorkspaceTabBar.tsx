@@ -4,8 +4,7 @@ import { Button } from "../../components/ui";
 import { ChatIcon, KanbanIcon, ListIcon, TerminalIcon, GitBranchIcon } from "../../components/ui/PixelIcon";
 import { iconForPath } from "../files/fileIcons";
 import type { PaneKind, PaneNode, WorkspaceAction } from "../../types/workspace";
-import { TAB_DRAG_TYPE, readDraggedTab } from "./tabDrag";
-import { startFileTabDrag } from "./fileTabDrag";
+import { startTabDrag } from "./tabPointerDrag";
 
 interface WorkspaceTabBarProps {
   pane: PaneNode;
@@ -15,46 +14,18 @@ interface WorkspaceTabBarProps {
 }
 
 export function WorkspaceTabBar({ pane, dispatch, onCloseTab, dirtyTabIds }: WorkspaceTabBarProps) {
-  function moveHere(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    const dragged = readDraggedTab(event.dataTransfer);
-    if (!dragged) return;
-    dispatch({
-      type: "MOVE_TAB",
-      sourcePaneId: dragged.paneId,
-      targetPaneId: pane.id,
-      tabId: dragged.tabId,
-    });
-  }
-
   return (
     <div
       className="flex-1 min-w-0 flex overflow-x-auto"
       role="tablist"
-      data-tab-drop-pane={pane.id}
       aria-label="Tabs do painel"
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={moveHere}
     >
       {pane.tabs.map((item) => (
         <div
           key={item.id}
-          draggable={item.kind === "agent" || item.kind === "terminal"}
           onPointerDown={(event) => {
-            if (item.kind === "agent" || item.kind === "terminal") return;
             if ((event.target as HTMLElement).closest("button[aria-label]")) return;
-            startFileTabDrag(event, { paneId: pane.id, tabId: item.id }, dispatch);
-          }}
-          onDragStart={(event) => {
-            event.stopPropagation();
-            if (item.kind !== "agent" && item.kind !== "terminal") {
-              event.preventDefault();
-              return;
-            }
-            const payload = JSON.stringify({ paneId: pane.id, tabId: item.id });
-            event.dataTransfer.effectAllowed = "move";
-            event.dataTransfer.setData(TAB_DRAG_TYPE, payload);
-            event.dataTransfer.setData("text/plain", payload);
+            startTabDrag(event, { paneId: pane.id, tabId: item.id, title: item.title }, dispatch);
           }}
           className={[
             "group flex shrink-0 items-stretch border-r-2 border-border-subtle max-w-64 select-none touch-none cursor-grab active:cursor-grabbing",

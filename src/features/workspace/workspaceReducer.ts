@@ -372,6 +372,8 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return updateActiveProject(state, (project) => {
         const targetBefore = findPane(project.layout, action.targetPaneId);
         if (!targetBefore) return project;
+        // Dividir o painel com a única aba dele só o esvaziaria para recriar igual.
+        if (action.sourcePaneId === action.targetPaneId && targetBefore.tabs.length === 1) return project;
         const taken = takeTab(project.layout, action.sourcePaneId, action.tabId, true);
         if (!taken) return project;
         const target = findPane(taken.layout, action.targetPaneId);
