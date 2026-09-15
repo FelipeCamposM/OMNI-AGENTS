@@ -1311,6 +1311,21 @@ tela com a pasta do instalado.
 de instalar a 0.4.1 (que reinicia o engine) os terminais nascem limpos. Até lá, `npm run dev` rodado
 dentro do OMNI instalado continua usando o engine instalado.
 
+## Release v0.4.2 publicado (2026-09-15)
+
+- [x] https://github.com/FelipeCamposM/OMNI-AGENTS/releases/tag/v0.4.2 — commit `ca339e4`, tag `v0.4.2`.
+  Publicado manualmente (setup.exe + .sig + latest.json), como a 0.4.0. **Latest**, não pre-release.
+- [x] Verificado depois de publicar: `releases/latest/download/latest.json` devolve 0.4.2 e a URL do
+  instalador responde 200. Nenhum workflow disparou.
+- A 0.4.1 foi só build local, nunca publicada: as notas dela foram fundidas na 0.4.2.
+- **`.github/` ficou fora deste commit de propósito.** O `release.yml` dispara em qualquer tag `v*`: com ele
+  commitado, a tag teria rodado o build multiplataforma **e** brigado com o release manual. Os workflows
+  entram quando o CI for validado e os secrets de assinatura estiverem cadastrados no GitHub.
+- Repositório é **público**: antes do commit foram trocados por valores fictícios o usuário/PC e o caminho
+  de projeto no fixture `claude-composer-vazio.ansi` (mesmo tamanho, para não mexer na tela), o ID de nó
+  do Tailscale num teste do engine e o IP do Tailscale num teste da tela. `.omni-agents/` (imagens
+  coladas nos terminais) entrou no `.gitignore`.
+
 ## Gotchas
 
 - **Bug real encontrado em 2026-08-27 (usuário travado com "tela preta")**: no caso sem split
