@@ -1566,3 +1566,18 @@ de arquivo arrastavam, por pointer events, e o destino eram 5 botões de texto s
 - [ ] Arrastar o painel inteiro pelo cabeçalho continua HTML5 — mesmo problema no Windows. Migrar para o
   mesmo controle se for pedido.
 - [ ] Não conferido no app Tauri.
+
+## Release v0.4.3 (2026-09-15)
+
+- [x] `VERSION` 0.4.3 + `version:sync`; entrada em `src/lib/changelog.ts` (arraste de abas com prévia,
+  reiniciar volta à conversa do Claude, uso da conta confiável, transparência real dos terminais).
+- [x] Verificado antes do build: typecheck, 194 testes front, `cargo test --workspace`, harness do Edge
+  (`scripts/test-tab-drag-browser.mjs`).
+- [x] `npm run build` assinado + `npm run release`; commit `ee38a6e` em `main`.
+- [x] Release `v0.4.3` no GitHub (não pre-release) com `OMNI.AGENTS_0.4.3_x64-setup.exe`, `.sig` e
+  `latest.json`. Conferido: `releases/latest/download/latest.json` responde `0.4.3` e o instalador baixa
+  (200, 6.492.665 bytes).
+- Gotcha: `gh release create --target` recusa SHA curto (`Release.target_commitish is invalid`) — passar
+  o SHA completo ou o nome do branch.
+- [ ] Não conferido no app instalado: atualização 0.4.2 → 0.4.3, arraste de abas no Tauri e reinício
+  retomando a conversa.
