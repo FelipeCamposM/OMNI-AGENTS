@@ -350,9 +350,21 @@ mod tests {
     /// Tela **real** do Claude Code ocioso, capturada de uma sessão aberta pelo celular (30×120).
     /// Os fixtures anteriores eram todos sintéticos; este é o que o engine realmente recebe.
     #[test] fn claude_ocioso_de_verdade_aceita_prompt() {
-        let tela = include_bytes!("../tests-fixtures/claude-composer-vazio.ansi");
+        let fixture = include_bytes!("../tests-fixtures/claude-composer-vazio.ansi");
+        // O stream real da PTY usa CRLF. Em checkouts com `core.autocrlf=false` (Linux/macOS), o Git
+        // normaliza este fixture textual para LF; o VT então mantém a coluna anterior a cada quebra
+        // e o cursor termina no lugar errado. Normalize primeiro para LF para exercitar o mesmo
+        // caminho em todos os sistemas, depois reponha o CR que a PTY entregou na captura real.
+        let tela: Vec<_> = fixture.iter().copied().enumerate()
+            .filter_map(|(index, byte)| (!(byte == b'\r' && fixture.get(index + 1) == Some(&b'\n'))).then_some(byte))
+            .collect();
+        let mut stream = Vec::with_capacity(tela.len() + 32);
+        for byte in tela {
+            if byte == b'\n' { stream.push(b'\r'); }
+            stream.push(byte);
+        }
         let mut context = Interaction::new(30,120);
-        context.parser.process(tela);
+        context.parser.process(&stream);
         assert!(ready(context.parser.screen(),"claude"));
 
         // Digitar de verdade na frente do cursor volta a bloquear.
