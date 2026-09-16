@@ -111,8 +111,14 @@ const binaries = resolve("src-tauri", "binaries");
 mkdirSync(binaries, { recursive: true });
 const destination = resolve(binaries, `omni-engine-${triple}${extension}`);
 if (triple === "universal-apple-darwin") {
-  // App universal do macOS exige sidecar universal: as duas arquiteturas fundidas pelo `lipo`.
-  const parts = ["aarch64-apple-darwin", "x86_64-apple-darwin"].map(buildEngine);
+  // O Tauri monta cada metade do app universal separadamente antes do `lipo`, então procura os
+  // sidecars pelos triples de cada arquitetura. Mantenha também o universal: ele é o artefato
+  // correto quando a resolução acontece diretamente pelo target pedido ao CLI.
+  const targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+  const parts = targets.map(buildEngine);
+  for (let index = 0; index < targets.length; index += 1) {
+    await copyEngine(parts[index], resolve(binaries, `omni-engine-${targets[index]}${extension}`));
+  }
   execFileSync("lipo", ["-create", "-output", destination, ...parts], { stdio: "inherit" });
 } else {
   await copyEngine(buildEngine(requested && requested !== host ? requested : undefined), destination);
