@@ -3,6 +3,7 @@ import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 import { useEffect, useMemo, useState } from "react";
 import { Button, Input, SegmentedControl, Select } from "../../components/ui";
+import { AgentIcon } from "../../components/ui/AgentIcon";
 import { baseName } from "../files/filesService";
 import {
   filterHistory,
@@ -14,8 +15,8 @@ import {
 } from "./historyService";
 
 const PROVIDERS = [
-  { value: "claude" as const, label: "Claude" },
-  { value: "codex" as const, label: "Codex" },
+  { value: "claude" as const, label: "Claude", icon: <AgentIcon provider="claude" size={14} /> },
+  { value: "codex" as const, label: "Codex", icon: <AgentIcon provider="codex" size={14} /> },
 ];
 
 /** Lista longa (centenas de conversas) renderiza aos poucos; a busca é quem acha as antigas. */
@@ -250,7 +251,8 @@ function ConversationDetail({ entry, onResume }: { entry: HistoryEntry; onResume
               message.role === "user" ? "border-accent" : "border-border-subtle",
             ].join(" ")}
           >
-            <p className="text-[10px] font-medium uppercase tracking-wider text-text-muted">
+            <p className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-text-muted">
+              {message.role !== "user" && <AgentIcon provider={entry.provider} size={12} className="shrink-0" />}
               {message.role === "user" ? "Você" : entry.provider === "claude" ? "Claude" : "Codex"}
             </p>
             <div className="prose prose-invert max-w-none text-xs">

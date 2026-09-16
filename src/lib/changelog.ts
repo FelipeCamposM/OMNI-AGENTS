@@ -14,6 +14,17 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.4.4",
+    date: "2026-09-16",
+    changes: [
+      "Nova tela de Skills nas configurações: instale, ative, desative e remova skills por conta ou por projeto.",
+      "As abas agora mostram o ícone do agente, e o terminal identifica o modelo e o nível de esforço em uso na conversa.",
+      "O painel de uso reconhece melhor cada agente e atualiza os limites da conta sem deixar processos ocultos abertos.",
+      "O painel Git diferencia corretamente arquivos preparados e não preparados e explica quando ainda não há nada para commitar.",
+      "Melhorias de legibilidade e identificação dos agentes no desktop e no celular.",
+    ],
+  },
+  {
     version: "0.4.3",
     date: "2026-09-15",
     changes: [

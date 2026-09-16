@@ -1,7 +1,8 @@
 import type { Project, WorkspacesAction } from "../../types/workspace";
 import type { KanbanAction, KanbanState } from "../../types/kanban";
 import type { AttentionItem } from "../terminal/useAttention";
-import { ClaudeUsageStatus } from "../terminal/ClaudeUsageStatus";
+import { AgentUsageStatus } from "../terminal/AgentUsageStatus";
+import { findPane } from "./workspaceReducer";
 import { LayoutPresetPicker } from "./LayoutPresetPicker";
 import { PaneTree } from "./PaneTree";
 import { useWorkspaceKeymap } from "./useWorkspaceKeymap";
@@ -40,6 +41,9 @@ export function WorkspaceView({
   }
 
   const paneCount = countPanes(project.layout);
+  // Aba em foco: é ela que decide de quem é o uso no rodapé.
+  const panePrincipal = findPane(project.layout, project.activePaneId);
+  const abaAtiva = panePrincipal?.tabs.find((tab) => tab.id === panePrincipal.activeTabId) ?? null;
 
   return (
     <div className="h-full min-h-0 flex flex-col">
@@ -72,7 +76,7 @@ export function WorkspaceView({
       <footer className="h-7 shrink-0 px-3 flex items-center justify-between gap-3 overflow-hidden whitespace-nowrap border-t-2 border-border-subtle bg-bg-elevated text-[10px] text-text-muted">
         <span className="hidden md:inline">● UI CONNECTED</span>
         <span className="flex min-w-0 flex-1 md:flex-none items-center justify-between md:justify-end gap-3 lg:gap-4">
-          <ClaudeUsageStatus engineOnline={engineOnline} />
+          <AgentUsageStatus engineOnline={engineOnline} activeSessionId={abaAtiva?.resourceId ?? null} />
           <span className="shrink-0">ENGINE: {engineOnline ? "ONLINE" : "CONNECTING"}</span>
         </span>
       </footer>

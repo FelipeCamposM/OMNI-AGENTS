@@ -1,5 +1,6 @@
 import { CheckIcon as Check, ChevronDownIcon as ChevronDown, SearchIcon as Search } from "./PixelIcon";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import type { FieldSize } from "./Input";
 
 export interface SelectOption<T extends string | number> {
@@ -7,6 +8,8 @@ export interface SelectOption<T extends string | number> {
   label: string;
   /** Linha secundária dentro da opção (peso do modelo, explicação curta). */
   hint?: string;
+  /** Marca à esquerda do rótulo (logo do provider). Some da busca — é só visual. */
+  icon?: ReactNode;
   disabled?: boolean;
 }
 
@@ -204,8 +207,9 @@ export function Select<T extends string | number>({
           aberto ? "select-aberto" : "",
         ].join(" ")}
       >
-        <span className={selecionado ? "truncate" : "truncate text-text-muted"}>
-          {selecionado?.label ?? placeholder}
+        <span className={["flex min-w-0 items-center gap-1.5", selecionado ? "" : "text-text-muted"].join(" ")}>
+          {selecionado?.icon}
+          <span className="truncate">{selecionado?.label ?? placeholder}</span>
         </span>
         <ChevronDown
           aria-hidden="true"
@@ -282,7 +286,10 @@ export function Select<T extends string | number>({
                   ].join(" ")}
                 />
                 <span className="min-w-0">
-                  <span className="block text-xs leading-snug">{o.label}</span>
+                  <span className="flex items-center gap-1.5 text-xs leading-snug">
+                    {o.icon}
+                    {o.label}
+                  </span>
                   {o.hint && (
                     <span className="block text-text-muted text-[10px] leading-snug">{o.hint}</span>
                   )}

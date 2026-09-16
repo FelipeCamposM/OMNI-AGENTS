@@ -3,6 +3,7 @@ import { Button } from "../components/ui/Button";
 import { request, actionKey, ApiError, salvarToken, type Conversation, type Projects, type Timeline } from "./api";
 import { AgentWorking, MessageBubble, PairingScreen } from "./Chat";
 import { usePoll } from "./usePoll";
+import { AgentIcon } from "../components/ui/AgentIcon";
 
 const STATES: Record<string,string> = { working: "Trabalhando", answered: "Resposta disponível", approval_required: "Possível aprovação pendente", stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido" };
 
@@ -94,7 +95,9 @@ function NovaSessao({ project, catalog, onCriada }: {
 function ConversationList({ conversations, select }: { conversations: Conversation[]; select: (id: string) => void }) {
   return <div>{conversations.length === 0 ? <p className="text-text-secondary">Nenhuma conversa registrada.</p> : conversations.map(c =>
     <article key={c.id} className="mobile-card"><h2 className="font-semibold">{c.title}</h2>
-      <p className="text-sm text-text-secondary">{[c.provider, c.profile_id, STATES[c.state ?? ""] ?? "Sem sessão ativa"].filter(Boolean).join(" · ")}</p>
+      <p className="text-sm text-text-secondary">
+        <AgentIcon provider={c.provider} size={12} className="mr-1 inline-block align-[-1px]" />
+        {[c.provider, c.profile_id, STATES[c.state ?? ""] ?? "Sem sessão ativa"].filter(Boolean).join(" · ")}</p>
       {c.capabilities?.approve && <p className="text-warning">Aguardando aprovação</p>}
       <Button className="mt-3" onClick={() => select(c.id)}>Abrir conversa</Button>
     </article>)}</div>;
@@ -179,6 +182,7 @@ function ConversationDetail({ conversation, refresh }: { conversation: Conversat
     <header className="mb-2">
       <h2 className="text-lg font-semibold">{conversation.title}</h2>
       <p className="chat-state"><span className={`chat-state-dot${ativo ? " ativo" : ""}`} aria-hidden />
+        <AgentIcon provider={conversation.provider} size={12} className="mr-1 inline-block align-[-1px]" />
         {[conversation.provider, estado].filter(Boolean).join(" · ")}</p>
     </header>
 
@@ -192,7 +196,8 @@ function ConversationDetail({ conversation, refresh }: { conversation: Conversat
       {data && mensagens.length === 0 && !enviado && !ativo && !data.timeline.unavailable_segments.length && cursor === 0 &&
         <p className="text-sm text-text-secondary text-center my-6">Nenhuma mensagem ainda. Mande o primeiro prompt abaixo.</p>}
       {mensagens.map(message => <MessageBubble key={message.id} lado={message.role === "user" ? "user" : "agent"}
-        autor={message.role === "user" ? "Você" : message.provider}>{message.text}</MessageBubble>)}
+        autor={message.role === "user" ? "Você" : message.provider}
+        provider={message.role === "user" ? undefined : message.provider}>{message.text}</MessageBubble>)}
       {enviado && <MessageBubble lado="user" autor="Você" pendente>{enviado.texto}</MessageBubble>}
       {conversation.capabilities?.approve && <div className="bubble bubble-agent">
         <p className="bubble-author">Aprovação pendente</p>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button, Select } from "../../components/ui";
+import { AgentIcon } from "../../components/ui/AgentIcon";
 import {
   AGENT_RESUME_FLAG,
   listAgentClis,
@@ -18,7 +19,7 @@ interface AgentLauncherProps {
 const FALLBACK_AGENTS: AgentCliStatus[] = [
   { id: "claude", label: "Claude", command: "claude", path: null, available: false, authenticated: false },
   { id: "codex", label: "Codex", command: "codex", path: null, available: false, authenticated: false },
-  { id: "cursor", label: "Cursor", command: "cursor-agent", path: null, available: false, authenticated: false },
+  { id: "cursor", label: "Cursor", command: "agent", path: null, available: false, authenticated: false },
 ];
 
 export function AgentLauncher({ projectName, onLaunch }: AgentLauncherProps) {
@@ -81,6 +82,7 @@ export function AgentLauncher({ projectName, onLaunch }: AgentLauncherProps) {
   const options = agents.map((item) => ({
     value: item.id,
     label: item.label,
+    icon: <AgentIcon provider={item.id} size={14} className="shrink-0" />,
     hint: !item.available
       ? `${item.command} · não encontrado`
       : item.authenticated
@@ -134,7 +136,14 @@ export function AgentLauncher({ projectName, onLaunch }: AgentLauncherProps) {
         )}
         <div className="mt-5 flex gap-2">
           <Button className="flex-1" disabled={loading || !agent?.available} onClick={() => launch()}>
-            {loading ? "Detectando CLIs…" : `Abrir ${agent?.label ?? "agente"}`}
+            {loading ? (
+              "Detectando CLIs…"
+            ) : (
+              <span className="inline-flex items-center gap-1.5">
+                {agent && <AgentIcon provider={agent.id} size={14} className="shrink-0" />}
+                {`Abrir ${agent?.label ?? "agente"}`}
+              </span>
+            )}
           </Button>
           {agent && AGENT_RESUME_FLAG[agent.id] && (
             <Button

@@ -10,6 +10,7 @@ src-tauri/target/
 target/
 target-engine/
 target-tauri/
+target-release-check*/
 src-tauri/binaries/
 src-tauri/gen/
 

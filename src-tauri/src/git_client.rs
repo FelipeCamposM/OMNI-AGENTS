@@ -67,6 +67,12 @@ pub struct GitStatus {
 /// Porcelain v1 com `-z`: cada entrada é "XY caminho", separadas por NUL. Uma entrada de
 /// rename/copy (X ou Y = R/C) é seguida por outra entrada só com o caminho antigo — descartada
 /// aqui (não precisamos do caminho de origem pra status/stage).
+///
+/// **O espaço vira ponto de propósito.** No v1, "nada nesta coluna" é ESPAÇO; no v2 é PONTO — e o
+/// front (`isStaged`/`isUnstaged` em `gitService.ts`) fala v2. Repassando o espaço cru, `" " != "."`
+/// fazia todo arquivo modificado contar como preparado E como não preparado ao mesmo tempo: o
+/// painel oferecia "Commit" sem nada no índice e o git respondia com o `status` longo inteiro
+/// ("no changes added to commit"), que chegava na tela como um muro de texto vermelho.
 fn parse_status_v1(output: &str) -> Vec<GitStatusEntry> {
     let mut entries = Vec::new();
     let mut chunks = output.split('\0').filter(|chunk| !chunk.is_empty());
@@ -77,7 +83,8 @@ fn parse_status_v1(output: &str) -> Vec<GitStatusEntry> {
         if x == 'R' || x == 'C' || y == 'R' || y == 'C' {
             chunks.next();
         }
-        entries.push(GitStatusEntry { path, x, y });
+        let ponto = |coluna: char| if coluna == ' ' { '.' } else { coluna };
+        entries.push(GitStatusEntry { path, x: ponto(x), y: ponto(y) });
     }
     entries
 }
@@ -136,6 +143,13 @@ pub fn git_unstage(project_path: String, files: Vec<String>) -> Result<(), Strin
 
 #[tauri::command]
 pub fn git_commit(project_path: String, message: String) -> Result<(), String> {
+    // `diff --cached --quiet` sai 0 quando NÃO há nada preparado. Sem esta checagem, o git recusa o
+    // commit imprimindo o `status` longo inteiro no stdout, e aquilo chega na UI como um parágrafo
+    // vermelho de sete linhas em inglês. O painel já esconde o botão sem nada preparado — isto
+    // cobre a corrida (algo desfez o stage entre o último refresh e o clique).
+    if run_git(&project_path, &["diff", "--cached", "--quiet"]).is_ok() {
+        return Err("Nada preparado para commit. Marque arquivos com + antes.".into());
+    }
     run_git(&project_path, &["commit", "-m", &message]).map(|_| ())
 }
 
@@ -219,4 +233,36 @@ pub fn git_log_graph(project_path: String) -> Result<Vec<GitCommit>, String> {
             Some(GitCommit { hash, parents, author, date, message, refs })
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// O bug que isto trava: com as colunas cruas do v1, um arquivo modificado e NÃO preparado
+    /// tinha `x == ' '`, e o front (que fala v2, onde vazio é '.') o classificava como preparado.
+    /// Resultado: botão de commit aparecia com o índice vazio e o git recusava com o status longo.
+    #[test]
+    fn porcelain_v1_usa_espaco_onde_o_front_espera_ponto() {
+        let entries = parse_status_v1(" M src/app/api/contact/route.ts\0M  src/components/HeroV3.tsx\0?? novo.txt\0");
+        assert_eq!(entries.len(), 3);
+
+        // Modificado só na árvore: nada no índice.
+        assert_eq!((entries[0].x, entries[0].y), ('.', 'M'));
+        assert_eq!(entries[0].path, "src/app/api/contact/route.ts");
+
+        // Modificado e já preparado: nada sobrando na árvore.
+        assert_eq!((entries[1].x, entries[1].y), ('M', '.'));
+
+        // Não rastreado continua "??" — o front depende disso pra mostrar o rótulo.
+        assert_eq!((entries[2].x, entries[2].y), ('?', '?'));
+    }
+
+    #[test]
+    fn entrada_de_rename_descarta_o_caminho_antigo() {
+        let entries = parse_status_v1("R  novo.txt\0antigo.txt\0 M outro.txt\0");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, "novo.txt");
+        assert_eq!(entries[1].path, "outro.txt");
+    }
 }

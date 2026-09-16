@@ -2,6 +2,7 @@
 pub mod usage;
 pub mod conversations;
 pub mod history;
+pub mod runtime;
 
 use serde::{Deserialize, Serialize};
 use std::{fs, path::{Path, PathBuf}};

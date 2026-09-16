@@ -15,6 +15,9 @@ export interface WorkspaceTab {
   kind: PaneKind;
   title: string;
   resourceId?: string;
+  /** CLI que roda nesta aba (`claude`, `codex`, `cursor`). Só existe em aba de agente e é o que
+   *  troca o ícone da aba pela marca do provider. */
+  provider?: string;
 }
 
 export interface PaneNode {
@@ -72,7 +75,7 @@ export type WorkspaceAction =
   | { type: "FOCUS_PANE"; paneId: string }
   | { type: "SELECT_TAB"; paneId: string; tabId: string }
   | { type: "CREATE_TAB"; paneId: string; kind?: PaneKind; title?: string; resourceId?: string }
-  | { type: "BIND_TAB_RESOURCE"; paneId: string; tabId: string; resourceId: string; title?: string }
+  | { type: "BIND_TAB_RESOURCE"; paneId: string; tabId: string; resourceId: string; title?: string; provider?: string }
   | { type: "ATTACH_TERMINAL"; sessionId: string; title: string }
   | { type: "RENAME_TAB_RESOURCE"; fromResourceId: string; toResourceId: string; title?: string }
   | { type: "CLOSE_TABS_BY_RESOURCE_PREFIX"; prefix: string }

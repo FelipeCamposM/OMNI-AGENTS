@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button } from "../../components/ui";
+import { AgentIcon } from "../../components/ui/AgentIcon";
 import {
   listAgentClis,
   listProfiles,
@@ -123,7 +124,10 @@ export function AgentSwitcher({
           <ul className="mt-2 space-y-1">
             {otherProviders.map((agent) => (
               <li key={agent.id} className="flex items-center gap-3">
-                <span className="min-w-0 flex-1 truncate text-[11px] text-text-secondary">{agent.label}</span>
+                <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] text-text-secondary">
+                  <AgentIcon provider={agent.id} size={14} className="shrink-0" />
+                  <span className="truncate">{agent.label}</span>
+                </span>
                 <Button
                   size="sm"
                   variant="ghost"

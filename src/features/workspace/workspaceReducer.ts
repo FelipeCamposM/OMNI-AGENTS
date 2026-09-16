@@ -57,7 +57,7 @@ function mapNode(node: LayoutNode, mapper: (node: LayoutNode) => LayoutNode): La
   return { ...mapped, first: mapNode(mapped.first, mapper), second: mapNode(mapped.second, mapper) };
 }
 
-function findPane(node: LayoutNode, paneId: string): PaneNode | null {
+export function findPane(node: LayoutNode, paneId: string): PaneNode | null {
   if (node.type === "pane") return node.id === paneId ? node : null;
   return findPane(node.first, paneId) ?? findPane(node.second, paneId);
 }
@@ -267,6 +267,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
                         kind: tab.kind === "terminal" ? "terminal" : "agent",
                         resourceId: action.resourceId,
                         title: action.title ?? tab.title,
+                        provider: action.provider ?? tab.provider,
                       }
                     : tab
                 ),

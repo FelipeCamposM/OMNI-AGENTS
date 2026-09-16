@@ -21,12 +21,12 @@ vi.mock("../features/terminal/terminalService", async (original) => ({
   ...engine,
 }));
 
-function snapshot(seq: number) {
+function snapshot(seq: number, extra: Record<string, unknown> = {}) {
   return {
     data: "",
     from_seq: seq,
     next_seq: seq + 1,
-    session: { id: "s1", state: "working", input_locked: false },
+    session: { id: "s1", state: "working", input_locked: false, ...extra },
   };
 }
 
@@ -73,5 +73,41 @@ describe("TerminalPane — resiliência do poll", () => {
     // Engine voltou: o banner sai sozinho, sem precisar trocar de projeto e voltar.
     engine.terminalSnapshot.mockResolvedValue(snapshot(1));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument(), { timeout: 4_000 });
+  });
+});
+
+describe("TerminalPane — etiqueta de modelo", () => {
+  it("aparece em sessão restaurada, que nunca passou pelo seletor de agente", async () => {
+    // O caso que falhou de verdade: app reaberto, aba reatachada. `launch` é null para sempre,
+    // então tudo que identifica o agente tem de sair do snapshot da sessão.
+    engine.terminalSnapshot.mockResolvedValue(
+      snapshot(1, {
+        provider: "claude",
+        profile_id: "claude-padrao",
+        external_session_id: "c962cd0e",
+      })
+    );
+    const { invoke } = await import("@tauri-apps/api/core");
+    vi.mocked(invoke).mockResolvedValue({
+      model: "claude-opus-5",
+      effort: "high",
+      cli_version: "2.1.273",
+    });
+
+    renderPane();
+
+    expect(await screen.findByLabelText(/modelo em uso: opus 5, esforço alto/i)).toBeInTheDocument();
+    expect(vi.mocked(invoke)).toHaveBeenCalledWith(
+      "agent_runtime",
+      expect.objectContaining({ provider: "claude", externalSessionId: "c962cd0e" })
+    );
+  });
+
+  it("terminal puro (sem provider) não mostra etiqueta nenhuma", async () => {
+    engine.terminalSnapshot.mockResolvedValue(snapshot(1));
+    renderPane();
+
+    await waitFor(() => expect(engine.terminalSnapshot).toHaveBeenCalled());
+    expect(screen.queryByLabelText(/modelo em uso/i)).not.toBeInTheDocument();
   });
 });

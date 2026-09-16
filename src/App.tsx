@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AppBackground } from "./components/backgrounds/AppBackground";
 import { SettingsView } from "./components/SettingsView";
 import { Sidebar } from "./components/Sidebar";
@@ -9,6 +9,7 @@ import { collectResourceIds } from "./features/workspace/workspaceReducer";
 import { WorkspaceView } from "./features/workspace/WorkspaceView";
 import { useKanban } from "./features/kanban/useKanban";
 import { useKanbanDispatcher } from "./features/kanban/useKanbanDispatcher";
+import { SessionProvidersContext } from "./features/terminal/sessionProviders";
 import { useTerminalSessions } from "./features/terminal/useTerminalSessions";
 import { useAttention, type AttentionItem } from "./features/terminal/useAttention";
 import { useAttentionNotifier } from "./features/terminal/useAttentionNotifier";
@@ -45,6 +46,13 @@ export function App() {
   );
 
   useAttentionNotifier(allAttention, settings.notifyAttention);
+
+  // Sessões por id: a barra de abas troca o ícone de conversa pela marca do agente, e o rodapé
+  // descobre provider, conta e transcript da aba em foco.
+  const sessionsById = useMemo(
+    () => Object.fromEntries(sessions.map((session) => [session.id, session])),
+    [sessions]
+  );
 
   function focusSession(item: AttentionItem) {
     dispatch({
@@ -98,6 +106,7 @@ export function App() {
   }
 
   return (
+    <SessionProvidersContext.Provider value={sessionsById}>
     <div className="flex h-screen overflow-hidden">
       <AppBackground settings={settings} />
       <QuickOpen projectPath={activeProject?.path ?? null} onOpenFile={(path) => openFile(path, fileKind(path))} />
@@ -205,6 +214,7 @@ export function App() {
                   onChange={updateSettings}
                   onReset={resetSettings}
                   initialSection={settingsSection}
+                  projectPath={activeProject?.path ?? null}
                 />
               </div>
             </div>
@@ -222,5 +232,6 @@ export function App() {
         </main>
       </div>
     </div>
+    </SessionProvidersContext.Provider>
   );
 }

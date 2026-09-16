@@ -1,9 +1,12 @@
+import type { ReactNode } from "react";
 import { Button } from "./Button";
 import type { ButtonSize } from "./Button";
 
 export interface SegmentedOption<T> {
   value: T;
   label: string;
+  /** Marca à esquerda do rótulo (logo do provider). */
+  icon?: ReactNode;
   disabled?: boolean;
   title?: string;
 }
@@ -47,8 +50,11 @@ export function SegmentedControl<T extends string | number>({
             disabled={o.disabled}
             title={o.title}
             onClick={() => onChange(o.value)}
-            className={grow ? "flex-1" : undefined}
+            className={[grow ? "flex-1" : "", o.icon ? "inline-flex items-center gap-1.5" : ""]
+              .filter(Boolean)
+              .join(" ") || undefined}
           >
+            {o.icon}
             {o.label}
           </Button>
         ))}

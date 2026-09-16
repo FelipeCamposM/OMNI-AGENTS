@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { AgentIcon } from "../components/ui/AgentIcon";
 
 /** Os quadros do spinner do Claude Code, em vai-e-volta — é o que faz parecer que ele "respira". */
 const QUADROS = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
@@ -41,16 +42,21 @@ function sortearOutra(atual: string): string {
 interface MessageBubbleProps {
   lado: "user" | "agent";
   autor: string;
+  /** Id da CLI que respondeu, quando houver: põe a marca do provider ao lado do autor. */
+  provider?: string;
   /** Mensagem mandada daqui e ainda não confirmada no transcript. */
   pendente?: boolean;
   children: ReactNode;
 }
 
 /** Balão de uma mensagem: do usuário à direita, do agente à esquerda. */
-export function MessageBubble({ lado, autor, pendente, children }: MessageBubbleProps) {
+export function MessageBubble({ lado, autor, provider, pendente, children }: MessageBubbleProps) {
   return (
     <article className={`bubble ${lado === "user" ? "bubble-user" : "bubble-agent"}${pendente ? " bubble-pending" : ""}`}>
-      <p className="bubble-author">{autor}</p>
+      <p className="bubble-author">
+        {provider && <AgentIcon provider={provider} size={11} className="mr-1 inline-block align-[-1px]" />}
+        {autor}
+      </p>
       <div className="mobile-message">{children}</div>
     </article>
   );

@@ -109,7 +109,9 @@ pub fn spawn_terminal(
 const AGENT_CLIS: [(&str, &str, &[&str], &[&str]); 3] = [
     ("claude", "Claude", &["claude"], &[]),
     ("codex", "Codex", &["codex"], &["login"]),
-    ("cursor", "Cursor", &["cursor-agent", "agent"], &["login"]),
+    // `agent` é o nome atual do CLI do Cursor; `cursor-agent` é o antigo, mantido no fim da lista
+    // para quem ainda não atualizou. Quem tiver os dois no PATH abre pelo novo.
+    ("cursor", "Cursor", &["agent", "cursor-agent"], &["login"]),
 ];
 
 #[derive(Serialize)]

@@ -164,8 +164,9 @@ pub fn account_usage(state: &Arc<EngineState>, profile_id: &str, refresh: bool) 
         };
     }
     let Some(profile) = profile else { return with_reason(before, "Conta Claude não encontrada.") };
-    // Clique repetido: uma leitura de segundos atrás não precisa consultar de novo.
-    if let Some(usage) = before.as_ref().filter(|u| u.observed_at_ms.is_some_and(|at| now_ms().saturating_sub(at) < 20_000)) {
+    // Leitura de menos de 1 min: o Claude devolveria a mesma (ele só busca de novo depois de alguns
+    // minutos — medido: 4 min depois repetiu, 7 min depois buscou).
+    if let Some(usage) = before.as_ref().filter(|u| u.observed_at_ms.is_some_and(|at| now_ms().saturating_sub(at) < 60_000)) {
         return Ok(EngineResponse::AccountUsage { usage: usage.clone() });
     }
     let previous_fetch = before.as_ref().and_then(|u| u.observed_at_ms);
@@ -196,11 +197,41 @@ pub fn account_usage(state: &Arc<EngineState>, profile_id: &str, refresh: bool) 
         if !wait_claude_ready(&session, Duration::from_secs(25)) { return Ok(None); }
         run_usage_command(state, &session, profile_id, &read_cache, previous_fetch)
     });
-    let _ = close_session(state, &id);
+    end_hidden_claude(state, &id);
     match result? {
         Some(usage) => Ok(EngineResponse::AccountUsage { usage }),
         None => with_reason(before, "O Claude não trouxe o uso a tempo; mostrando a última leitura."),
     }
+}
+
+/// Encerra o Claude oculto. Só matar a sessão não basta no Windows: o shell morre e o `claude.exe`
+/// neto fica órfão (visto no teste). `/exit` primeiro; se ele ainda estiver vivo, derruba a árvore.
+fn end_hidden_claude(state: &Arc<EngineState>, id: &str) {
+    let session = match state.sessions.lock().ok().as_ref().and_then(|sessions| sessions.get(id)) {
+        Some(SessionEntry::Live(session)) => Some(session.clone()),
+        _ => None,
+    };
+    if let Some(session) = session {
+        let write = |bytes: &[u8]| if let Ok(mut writer) = session.writer.lock() { let _ = writer.write_all(bytes); let _ = writer.flush(); };
+        let pid = session.meta.lock().ok().and_then(|meta| meta.pid);
+        write(b"\x1b");
+        std::thread::sleep(Duration::from_millis(300));
+        write(b"/exit");
+        std::thread::sleep(Duration::from_millis(250));
+        write(b"\r");
+        let started = Instant::now();
+        while provider_running(pid, "claude") && started.elapsed() < Duration::from_secs(3) {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        #[cfg(windows)]
+        if let Some(pid) = pid.filter(|pid| provider_running(Some(*pid), "claude")) {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()])
+                .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+                .creation_flags(0x0800_0000).status();
+        }
+    }
+    let _ = close_session(state, id);
 }
 
 /// Espera o Claude recém-aberto chegar no composer vazio, passando pelo "confiar nesta pasta" (a
@@ -272,7 +303,9 @@ fn run_usage_command(state: &Arc<EngineState>, session: &Arc<LiveSession>, profi
     write(b"\r")?;
     let started = Instant::now();
     let mut result = None;
-    let mut settled_polls = 0;
+    // Momento em que o diálogo terminou de carregar: o "Refreshing…" apareceu e sumiu, ou (CLI sem
+    // esse aviso) os limites ficaram na tela por 2 s.
+    let (mut saw_refreshing, mut loaded_at, mut limits_since) = (false, None::<Instant>, None::<Instant>);
     while started.elapsed() < Duration::from_secs(15) && result.is_none() {
         std::thread::sleep(Duration::from_millis(250));
         if !state.sessions.lock().map_err(|_|anyhow!("sessions poisoned"))?.values().any(|entry| matches!(entry,SessionEntry::Live(s) if Arc::ptr_eq(s,session))) { break; }
@@ -283,28 +316,18 @@ fn run_usage_command(state: &Arc<EngineState>, session: &Arc<LiveSession>, profi
             break;
         }
         let text = session.interaction.lock().map_err(|_|anyhow!("screen poisoned"))?.parser.screen().contents();
-        if let Ok(path) = std::env::var("OMNI_USAGE_DEBUG") { // DEBUG-TEMP
-            use std::io::Write as _;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                let _ = writeln!(f, "==== t={}ms cache={:?}
-{}", started.elapsed().as_millis(), cached.as_ref().and_then(|u| u.observed_at_ms), text.lines().filter(|l| !l.trim().is_empty()).rev().take(14).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("
-"));
-            }
+        let refreshing = text.contains("Refreshing");
+        saw_refreshing |= refreshing;
+        if text.contains("Current session") { limits_since.get_or_insert_with(Instant::now); }
+        if loaded_at.is_none() && ((saw_refreshing && !refreshing) || limits_since.is_some_and(|at| !saw_refreshing && at.elapsed() >= Duration::from_secs(2))) {
+            loaded_at = Some(Instant::now());
         }
-        let settled = text.contains("Current session") && !text.contains("Refreshing");
-        settled_polls = if settled { settled_polls + 1 } else { 0 };
-        if settled_polls >= 2 {
+        // Carregou e o arquivo não mudou: ou o Claude ainda vai gravar (1,5 s de folga), ou ele não
+        // buscou de novo porque consultou há poucos minutos — nesse caso o arquivo é o valor atual,
+        // o mesmo que o `/usage` mostraria no terminal.
+        if loaded_at.is_some_and(|at| at.elapsed() >= Duration::from_millis(1500)) {
             result = cached.or_else(|| Some(parse_claude_screen(&text, profile_id, now_ms())).filter(|u| u.status == "available"));
-        }
-    }
-    if let Ok(secs) = std::env::var("OMNI_USAGE_LINGER") { // DEBUG-TEMP
-        let limit = Instant::now() + Duration::from_secs(secs.parse().unwrap_or(0));
-        while Instant::now() < limit {
-            std::thread::sleep(Duration::from_millis(500));
-            if let (Ok(path), Some(u)) = (std::env::var("OMNI_USAGE_DEBUG"), read_cache()) {
-                use std::io::Write as _;
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) { let _ = writeln!(f, "linger cache={:?} 5h={:?}", u.observed_at_ms, u.primary.map(|w| w.used_percent)); }
-            }
+            break;
         }
     }
     // Fecha o diálogo que NÓS abrimos: a sessão estava ociosa e com a entrada reservada, então uma

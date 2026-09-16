@@ -1351,6 +1351,111 @@ esperado de atualizar.
   `codex resume --last` pegaria a mais recente da pasta, que pode não ser a mesma.
 - [ ] Chega ao app instalado só na próxima versão.
 
+## Painel Git: muro de texto vermelho no lugar de commit (2026-09-16)
+
+Sintoma: o painel GIT mostrava a saida longa do `git status` em vermelho ("On branch main... no
+changes added to commit"), com "tentar de novo".
+
+**Causa raiz: v1 x v2 do porcelain.** `git_client.rs` roda `git status --porcelain=v1` e repassava
+as colunas cruas. No **v1**, coluna sem alteracao e ESPACO; no **v2** e PONTO — e o front sempre
+falou v2 (`isStaged`: `x !== "."`, `isUnstaged`: `y !== "."`, em `gitService.ts`). Com espaco cru,
+`" " !== "."` dava verdadeiro nos dois lados: **todo arquivo modificado contava como preparado E
+como nao preparado**. Dai o painel mostrava o botao Commit com o indice vazio, o git recusava
+imprimindo o `status` longo no stdout, e `run_git` (que devolve stdout quando o stderr vem vazio)
+entregava aquilo como mensagem de erro.
+
+- [x] `parse_status_v1` normaliza espaco -> ponto. Duas linhas; o resto do app ja estava certo.
+- [x] `git_commit` checa `diff --cached --quiet` antes e devolve "Nada preparado para commit" em
+  vez de deixar o git cuspir o status inteiro — cobre a corrida (algo desfaz o stage entre o
+  refresh e o clique).
+- [x] Testes espelhados nos dois lados: `git_client.rs` (parser, com o caso do rename que descarta
+  o caminho antigo) e `src/test/gitService.test.ts` (classificacao). O teste do TS documenta de
+  proposito o caso do espaco cru — se alguem remover a normalizacao no Rust, esta escrito ali o que
+  volta a acontecer.
+
+Verificado: `cargo test --manifest-path src-tauri/Cargo.toml` 11/11, `npm run test` 199/199,
+typecheck limpo.
+
+## Modelo e esforco na aba do agente (2026-09-16)
+
+Pedido: a aba de agente tem que dizer, no canto inferior direito, qual IA esta atendendo e com
+qual esforco.
+
+**De onde vem o dado.** O OMNI nao escolhe o modelo — a CLI escolhe, e pode trocar no meio da
+conversa (`/model`). Entao configuracao nao serve: `~/.claude/settings.json` diz so `"model":
+"opus"` (apelido, sem versao, sem esforco) e nao reflete troca feita na sessao. A fonte que nao
+mente e o registro que a propria CLI grava por turno:
+
+| Provider | Arquivo | Campos |
+|---|---|---|
+| Claude | `projects/<slug>/<session>.jsonl`, entrada `assistant` | `message.model` (`claude-opus-5`), envelope `effort` (`high`) e `version` |
+| Codex | `sessions/**/rollout-*.jsonl`, entrada `turn_context` | `payload.model` (`gpt-6-astra`); esforco nem sempre presente |
+
+- [x] `crates/omni-core/src/runtime.rs`: `claude_runtime` e `codex_runtime`. **Leitura sempre pela
+  cauda** (1 MB): o transcript deste projeto ja passou de 4 MB e o poll ler o arquivo inteiro seria
+  custo proporcional ao tamanho da conversa. A primeira linha da cauda pode vir cortada — quem le
+  descarta o que nao for JSON valido, sem tratamento especial.
+- [x] `perTurnEffort` ganha de `effort`: um e o esforco daquele turno, o outro o ajuste vigente.
+- [x] Comando `agent_runtime` (`src-tauri/src/agent_runtime.rs`), no app e nao no engine: e leitura
+  de arquivo local, sem PTY e sem estado — passar pelo engine so somaria um salto de rede.
+- [x] `AgentRuntimeBadge` no canto inferior direito da pane, poll de 5s (o dado so muda quando o
+  usuario roda `/model`; 1s como o terminal seria desperdicio). **Some por completo** quando nao ha
+  o que dizer — etiqueta escrevendo "modelo desconhecido" ocuparia o mesmo espaco sem informar.
+- [x] `nomeCurtoDoModelo`: `claude-opus-5` -> `Opus 5`, `claude-sonnet-4-5-20250929` -> `Sonnet 4.5`.
+  Numeros seguidos viram versao com ponto; carimbo de data (8 digitos) sai fora — identifica build,
+  nao modelo. Id cru e versao da CLI ficam no `title`.
+
+### A etiqueta nasceu invisivel: condicionada ao launcher
+
+Primeira versao gatilhava em `launch` (o estado que o `AgentLauncher` preenche). Isso so existe
+quando foi AQUELA montagem da pane que abriu o agente — numa sessao restaurada (app reaberto, aba
+reatachada) `launch` e `null` para sempre, que e justamente o caso mais comum. Agora provider,
+profile e `external_session_id` saem do **snapshot da sessao**, com `launch` so como reserva para o
+instante antes do primeiro poll. `src/test/TerminalPane.test.tsx` cobre exatamente esse caso.
+
+### Por que o Claude aparecia vazio e o Codex vinha sem esforco
+
+Dois motivos diferentes, os dois descobertos olhando os arquivos reais da maquina:
+
+1. **Claude sem turno.** A aba estava aberta mas a sessao nunca chamou a API — o `.jsonl` existia
+   com 14 linhas, so metadados (`mode`, `permission-mode`, `cost-state` com
+   `totalAPIDuration: 0`), nenhuma entrada `assistant`. Sem turno nao ha modelo gravado. Agora cai
+   no `settings.json` da conta (`"model": "opus"`), marcado `source: Config`, e a etiqueta avisa
+   com `?` + tooltip "configurado — esta sessao ainda nao respondeu". Sem isso a etiqueta ficava
+   invisivel da abertura da aba ate a primeira resposta, que e quando mais interessa saber com quem
+   se esta falando.
+2. **Codex com esforco nulo.** O rollout tem o campo, mas com `reasoning_effort: null` — o modelo
+   nao expoe esforco. Agora completa pelo `model_reasoning_effort` do `config.toml`.
+   `plan_mode_reasoning_effort` fica **de fora de proposito**: vale so no modo plano, e exibi-lo
+   como esforco da sessao seria afirmar algo falso (tem teste travando isso).
+
+Conferido contra os arquivos reais: Claude sem turno -> `opus`/Config; Claude com turno ->
+`claude-opus-5` + `high`/Sessao; Codex -> `gpt-6-astra` + CLI 0.153.1.
+
+Armadilha achada de passagem: a etiqueta nasceu com `pointer-events-none`, o que **impede o tooltip
+de abrir** — e e no tooltip que mora o id cru do modelo e o aviso de "configurado". Ha teste.
+
+### `<synthetic>` no lugar do modelo
+
+A CLI grava entradas `assistant` com `model: "<synthetic>"` para mensagens que ela mesma fabrica
+(interrupcao do usuario, erro local). Num transcript deste projeto: **677 entradas reais e uma
+dessas** — e bastou ela ser a ULTIMA para a etiqueta exibir "<SYNTHETIC>" no canto da pane.
+`claude_runtime` agora pula qualquer modelo que comece com `<` e continua procurando para tras;
+o `AgentRuntimeBadge` repete a checagem (cinto e suspensorio) para que um marcador novo no futuro
+nao estreie na tela do usuario. Teste dos dois lados.
+
+### Limites conhecidos
+
+- **Claude sem `external_session_id` nao mostra nada.** Sem ele nao da para saber QUAL transcript e
+  o desta aba, e chutar o mais recente mostraria o modelo de outra sessao do mesmo projeto.
+- **Codex casa por `cwd`**, porque o OMNI nao fixa id de sessao nele como faz no Claude: duas
+  sessoes do Codex na mesma pasta ao mesmo tempo mostram o modelo da mais recente nas duas
+  (marcado com `ponytail:` no codigo).
+
+Verificado: `cargo test -p omni-core` (4 testes novos), `cargo test --manifest-path src-tauri`
+11/11, `npm run test` 218/218 (11 novos), typecheck limpo. **Falta ver na tela** — precisa de
+`npm run dev` com um agente Claude aberto.
+
 ## Gotchas
 
 - **Bug real encontrado em 2026-08-27 (usuário travado com "tela preta")**: no caso sem split
@@ -1581,3 +1686,111 @@ de arquivo arrastavam, por pointer events, e o destino eram 5 botões de texto s
   o SHA completo ou o nome do branch.
 - [ ] Não conferido no app instalado: atualização 0.4.2 → 0.4.3, arraste de abas no Tauri e reinício
   retomando a conversa.
+
+### `/usage` mostrava número velho (34% com 53% real) — 2026-09-15
+
+- Causa: o arquivo só muda quando alguém roda `/usage`; o app de dev não tinha agente Claude, então o
+  ↻ nunca consultava e o rodapé exibia a leitura das 06:57.
+- [x] Sem agente ocioso, o engine abre um **Claude oculto** (sessão headless na pasta do engine,
+  `SessionOrigin.headless`), roda `/usage`, lê o arquivo e encerra (`end_hidden_claude`: Esc, `/exit`,
+  e `taskkill /T` se o `claude.exe` sobreviver — matar só a sessão deixava o neto órfão no Windows).
+- [x] Diálogo de confiança da pasta (2.1.272 vem com **"No, exit" selecionado**): `trust_dialog_keys`
+  navega com seta até "Yes, …" e só confirma quando a tela mostra o `❯` nela. Testado.
+- [x] Pronto = `fetchedAtMs` mudou, ou "Refreshing…" apareceu e sumiu + 1,5 s. Medido: o Claude não
+  busca de novo se consultou há poucos minutos (4 min depois repetiu; 7 min depois buscou) — nesse
+  intervalo o arquivo é o valor atual. Leitura < 60 s não consulta.
+- [x] `engine_client::send_request`: `AccountUsage` em conexão própria (timeout 60 s). Na conexão
+  compartilhada ela segurava o lock e congelava terminais/polls durante a consulta.
+- Medido com engine isolado: 3,7–7,6 s por consulta; 5H 61% → 63% acompanhando o consumo real; nenhuma
+  sessão ou `claude.exe` sobrando na versão final.
+- Engine de dev recompilado. **App instalado** só com build + instalação.
+
+### Marcas das CLIs na interface — 2026-09-16
+
+- [x] `src/components/ui/AgentIcon.tsx`: `ClaudeIcon` (16×16, `#d97757`), `GptIcon` (57×57) e
+  `CursorIcon` (33×35 numa caixa 35×35), traçados das artes de referência na grade nativa de cada
+  uma. Ficam fora de `PixelIcon.tsx` porque aquele arquivo é gerado do `pixelarticons`, que não traz
+  logos. GPT e Cursor herdam a cor do texto — as duas marcas são pretas e sumiriam no tema escuro.
+- [x] `SelectOption.icon` e `SegmentedOption.icon` (`src/components/ui/`): slot opcional à esquerda do
+  rótulo, usado pelo seletor de CLI e pelo filtro de provider do Histórico.
+- [x] Marca ao lado do nome em: seletor de CLI e botão "Abrir <agente>" (`AgentLauncher`), lista de
+  conexões (`AgentConnections`), "Trocar de IA" (`AgentSwitcher`), filtro e autor das mensagens do
+  Histórico (`HistoryView`), rodapé do uso (`ClaudeUsageStatus`), lista de terminais do menu lateral
+  (`Sidebar`) e, no celular, lista de conversas, cabeçalho do chat e autor do balão (`MobileApp`,
+  `Chat`).
+- [x] Aba de agente troca o ícone de conversa pela marca da CLI (`WorkspaceTabBar`). Duas fontes
+  porque nem toda aba nasce do seletor: `WorkspaceTab.provider`, gravado no `BIND_TAB_RESOURCE`
+  (imediato), e `SessionProvidersContext` (`src/features/terminal/sessionProviders.tsx`), alimentado
+  pelo poll de sessões — cobre aba anexada do menu lateral, duplicada ou focada por notificação.
+  O campo `provider` já vinha serializado do engine; faltava no espelho TS de `TerminalSession`.
+- [x] `src/test/AgentIcon.test.tsx` (5) e `src/test/WorkspaceTabBar.icon.test.tsx` (3). Suíte: 207
+  testes, typecheck limpo.
+- [ ] O `<select>` nativo da tela do celular não aceita ícone na opção — continua só com o texto.
+- [ ] Não conferido no app instalado.
+
+### Configurações → Skills — 2026-09-16
+
+- [x] Aba nova em Configurações (`SectionId "skills"`), painel em
+  `src/features/skills/SkillsManager.tsx`. Um escopo por conta cadastrada de Claude/Codex
+  (`<config_dir>/skills`) mais o projeto aberto (`.claude/skills`), escolhidos num `Select` com a
+  marca da CLI. Mostra o caminho real e o contador de ativas.
+- [x] Ações: **instalar** (escolhe pasta com `SKILL.md` na raiz e copia recursivamente),
+  **ativar/desativar**, **remover** (com confirmação em dois passos) e **abrir pasta** no Explorer.
+- [x] Desativar move a pasta para `skills-disabled/` ao lado de `skills/`. Não existe flag de
+  "desativada" no formato e a CLI descobre skill varrendo `skills/`; mexer no `SKILL.md` de uma
+  skill em link mudaria o original, que outras CLIs também usam.
+- [x] **Bug corrigido na raiz:** `readDir` do plugin usa `entry.file_type()`, que não segue link —
+  skill instalada como link chegava com `isDirectory: false` e o filtro antigo de `listProjectSkills`
+  descartava. Nesta máquina eram 11 das 12 skills globais. O leitor compartilhado agora aceita
+  `isDirectory || isSymlink` e confirma pelo `exists(SKILL.md)`, que segue link. Vale também para a
+  lista da barra lateral, que usa o mesmo leitor.
+- [x] Remover usa `recursive: !symlink`: com `recursive: true` o plugin chama `remove_dir_all` e
+  levaria junto a pasta original compartilhada. Em link, `remove_dir` apaga só o link (conferido no
+  código de `tauri-plugin-fs` 2.5.1).
+- [x] `src/test/skillsManage.test.ts` (12) cobrindo escopos, link, ativar/desativar com conflito,
+  remoção de link e instalação. Suíte: 230 testes, typecheck limpo.
+- [ ] Skills de **plugin** (`~/.claude/plugins/`) não entram na lista — são geridas por
+  `enabledPlugins` no `settings.json`, outro mecanismo.
+- [ ] Escopo de projeto só cobre `.claude/skills`; não foi confirmado se o Codex lê `.codex/skills`
+  dentro do projeto.
+- [ ] Não conferido no app instalado.
+
+### CLI do Cursor virou `agent` — 2026-09-16
+
+- [x] `AGENT_CLIS` em `src-tauri/src/engine_client.rs`: candidatos do Cursor passam a
+  `["agent", "cursor-agent"]`. O nome novo vem primeiro; o antigo fica no fim para quem não
+  atualizou o Cursor. Conferido nesta máquina: o instalador deixa `agent.cmd` e `cursor-agent.cmd`
+  lado a lado em `%LOCALAPPDATA%\cursor-agent`, e `.CMD` está no `PATHEXT`, então `resolve_on_path`
+  acha os dois — com a ordem nova, abre pelo `agent`.
+- [x] `FALLBACK_AGENTS` do `AgentLauncher.tsx` e o fixture de `AgentConnections.test.tsx` seguem o
+  mesmo nome (é o que aparece na UI antes de o `invoke` responder).
+- [x] Verificado: typecheck, 235 testes front, `cargo check`.
+- [ ] **Achado, não corrigido:** `provider_running` (`crates/omni-engine/src/interaction.rs`) procura
+  o processo por `{provider}.exe`, ou seja `cursor.exe` — nunca casou com `cursor-agent.exe` nem casa
+  com `agent.exe`. Afeta só a checagem de sessão ociosa (celular/headless) do Cursor.
+- [ ] Não conferido no app instalado.
+
+### Rodapé: uso do agente em foco, com barra colorida — 2026-09-16
+
+- [x] `ClaudeUsageStatus` virou `AgentUsageStatus` (arquivo e teste renomeados). Não é mais só do
+  Claude: quem manda é a **aba em foco**. `WorkspaceView` acha a pane ativa (`findPane`, agora
+  exportado do reducer), pega a aba ativa dela e passa o `resourceId` como `activeSessionId`.
+- [x] Barra de progresso por janela (5H e SEMANA) com as faixas pedidas: verde até 60%, amarelo até
+  85%, vermelho de 86% em diante (`usageTone`). O corte é por valor, não por arredondamento — 85,4%
+  já é vermelho. O número acompanha a mesma cor. `role="progressbar"` com `aria-valuenow`.
+- [x] Modelo e esforço da sessão em foco ao lado do nome do provider, lidos do mesmo `agent_runtime`
+  que alimenta a etiqueta da pane, relidos a cada 30 s (um `/model` no meio da conversa troca os
+  dois). Deps do efeito são os campos da sessão, não o objeto: o poll devolve objetos novos a cada
+  segundo e depender dele piscaria o texto.
+- [x] `SessionProvidersContext` passou a carregar a `TerminalSession` inteira por id (antes só o
+  provider). `useSessionProvider` continua para a barra de abas; `useSession` serve o rodapé.
+  `TerminalSession` no TS ganhou `profile_id` e `external_session_id`, que já vinham do engine.
+- [x] Aba que não é de agente (terminal puro, arquivo, kanban) cai na conta usada mais recentemente
+  entre Claude e Codex — esvaziar o rodapé a cada clique num arquivo seria pior.
+- [x] `src/test/AgentUsageStatus.test.tsx` (5): cache ao abrir, `/usage` só no botão, troca de agente
+  pela aba em foco com modelo/esforço, largura e cor da barra, e as três faixas. Suíte: 238 testes.
+- [ ] **Cursor não tem número para mostrar:** `account_usage` responde `unavailable` ("Provider sem
+  consulta de uso") e `agent_runtime` responde `None` para ele. O rodapé exibe CURSOR com `—` nas
+  duas janelas e o `!` do motivo. Para ter uso e modelo do Cursor é preciso uma fonte nova em
+  `omni-core` (`usage.rs` e `runtime.rs`).
+- [ ] Não conferido no app instalado.

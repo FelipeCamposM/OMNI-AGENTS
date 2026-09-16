@@ -52,6 +52,13 @@ describe("listProjectSkills", () => {
     mockReadTextFile.mockResolvedValueOnce("# só um título, sem frontmatter");
 
     const skills = await listProjectSkills("C:\\dev\\projeto");
-    expect(skills).toEqual([{ id: "sem-frontmatter", name: "sem-frontmatter", description: "", path: "C:\\dev\\projeto\\.claude\\skills\\sem-frontmatter" }]);
+    expect(skills).toEqual([{
+      id: "sem-frontmatter",
+      name: "sem-frontmatter",
+      description: "",
+      path: "C:\\dev\\projeto\\.claude\\skills\\sem-frontmatter",
+      enabled: true,
+      symlink: false,
+    }]);
   });
 });

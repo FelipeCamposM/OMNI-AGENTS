@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "../../components/ui";
 import { ChatIcon, KanbanIcon, ListIcon, TerminalIcon, GitBranchIcon } from "../../components/ui/PixelIcon";
+import { AGENT_ICON } from "../../components/ui/AgentIcon";
+import { useSessionProvider } from "../terminal/sessionProviders";
 import { iconForPath } from "../files/fileIcons";
 import type { PaneKind, PaneNode, WorkspaceAction } from "../../types/workspace";
 import { startTabDrag } from "./tabPointerDrag";
@@ -170,7 +172,12 @@ const ICONE_POR_KIND: Partial<Record<PaneNode["tabs"][number]["kind"], React.Com
 };
 
 function TabIcon({ item, className }: { item: PaneNode["tabs"][number]; className?: string }) {
-  const doKind = ICONE_POR_KIND[item.kind];
+  // Aba de agente mostra a marca da CLI que está rodando nela — o ícone de conversa era igual
+  // para Claude, Codex e Cursor e não dizia com quem a aba está falando.
+  const daSessao = useSessionProvider(item.resourceId);
+  const provider = item.provider ?? daSessao;
+  const daMarca = provider ? AGENT_ICON[provider] : undefined;
+  const doKind = daMarca ?? ICONE_POR_KIND[item.kind];
   // git-diff carrega `staged::<caminho>` no resourceId, e não um caminho puro — usar o ícone do
   // kind nesses casos evita inventar extensão a partir de um prefixo.
   const Icone = doKind ?? iconForPath(item.resourceId ?? item.title);

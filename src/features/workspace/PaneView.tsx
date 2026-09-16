@@ -90,8 +90,8 @@ export function PaneView({
   }
 
   const bindSession = useCallback(
-    (sessionId: string, title: string) => {
-      if (tabId) dispatch({ type: "BIND_TAB_RESOURCE", paneId: pane.id, tabId, resourceId: sessionId, title });
+    (sessionId: string, title: string, provider?: string) => {
+      if (tabId) dispatch({ type: "BIND_TAB_RESOURCE", paneId: pane.id, tabId, resourceId: sessionId, title, provider });
     },
     [dispatch, pane.id, tabId]
   );

@@ -25,6 +25,7 @@ import {
 import { handleTerminalKey } from "./keyBindings";
 import { AgentLauncher } from "./AgentLauncher";
 import { AgentSwitcher } from "./AgentSwitcher";
+import { AgentRuntimeBadge } from "./AgentRuntimeBadge";
 
 /** Colar imagem numa CLI de agente: ESC v (meta+v) — o que o Alt+V já mandava e funcionava.
  *  Se alguma CLI passar a escutar ^V (0x16) em vez disso, é aqui que muda. */
@@ -39,7 +40,7 @@ interface TerminalPaneProps {
   projectPath: string;
   paneId: string;
   tab: WorkspaceTab;
-  onSessionCreated: (sessionId: string, title: string) => void;
+  onSessionCreated: (sessionId: string, title: string, provider?: string) => void;
 }
 
 export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCreated }: TerminalPaneProps) {
@@ -54,6 +55,16 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   const [switching, setSwitching] = useState(false);
   const [inputLocked, setInputLocked] = useState(false);
   const conversationRef = useRef<string | null>(null);
+  /** Quem está atendendo esta aba, do ponto de vista da SESSÃO (e não do launcher).
+   *
+   *  Tem de vir do snapshot: `launch` só existe quando foi esta montagem da pane que abriu o
+   *  agente. Numa sessão restaurada (app reaberto, aba reatachada) ele é `null` para sempre — foi
+   *  o que deixou a etiqueta de modelo invisível justamente no caso mais comum. */
+  const [sessao, setSessao] = useState<{
+    provider?: string;
+    profileId?: string;
+    externalSessionId?: string;
+  }>({});
   const agent = launch?.agent ?? null;
 
   useEffect(() => {
@@ -141,7 +152,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
             await attachTerminal(conversationRef.current, session.id).catch(() => undefined);
           }
           setState(session.state);
-          onSessionCreated(session.id, session.name);
+          onSessionCreated(session.id, session.name, agent?.id);
         }
         poll();
       } catch (reason) {
@@ -157,6 +168,21 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         if (snapshot.data) terminal.write(snapshot.data);
         setState(snapshot.session.state);
         setInputLocked(Boolean(snapshot.session.input_locked));
+        // Mantém o que já sabia quando o campo vier vazio: o engine só preenche `external_session_id`
+        // depois que o provider grava a sessão dele.
+        setSessao((anterior) => {
+          const proximo = {
+            provider: snapshot.session.provider ?? anterior.provider,
+            profileId: snapshot.session.profile_id ?? anterior.profileId,
+            externalSessionId: snapshot.session.external_session_id ?? anterior.externalSessionId,
+          };
+          const igual =
+            proximo.provider === anterior.provider &&
+            proximo.profileId === anterior.profileId &&
+            proximo.externalSessionId === anterior.externalSessionId;
+          // Isto roda 10x por segundo: devolver o objeto anterior evita re-render a cada poll.
+          return igual ? anterior : proximo;
+        });
         terminal.options.disableStdin = Boolean(snapshot.session.input_locked);
         sequenceRef.current = snapshot.next_seq;
         // Voltou a responder: derruba um aviso que tenha sobrado. Atualização funcional porque
@@ -307,6 +333,15 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
           </button>
         )}
       </div>
+      {(sessao.provider ?? agent?.id) && (
+        <AgentRuntimeBadge
+          provider={(sessao.provider ?? agent?.id) as string}
+          profileId={sessao.profileId ?? launch?.profile?.id}
+          cwd={projectPath}
+          externalSessionId={sessao.externalSessionId}
+          className="absolute bottom-2 right-3 z-10"
+        />
+      )}
       {switching && conversationRef.current && agent && (
         <AgentSwitcher
           conversationId={conversationRef.current}

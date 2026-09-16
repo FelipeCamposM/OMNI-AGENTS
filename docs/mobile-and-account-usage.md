@@ -15,9 +15,11 @@ reset e origem da observação. Ausência de dado não significa 0%.
   uso, não credencial. Cache de outra conta (`accountUuid` diferente do `oauthAccount`) é ignorado.
   Abrir a tela ou o rodapé só lê o arquivo (e relê a cada 30 s). O botão de atualizar digita `/usage`
   numa sessão Claude ociosa do perfil (prompt vazio, processo Claude descendente da PTY, entrada
-  reservada), espera o `fetchedAtMs` mudar (até 12 s) e fecha o diálogo com Esc — com sucesso ou não.
-  Leitura de menos de 20 s não digita de novo. Sem sessão ociosa, devolve a última leitura do
-  arquivo com o motivo.
+  reservada); sem nenhuma, abre um Claude oculto e temporário na pasta do engine (aceita a confiança
+  da pasta na primeira vez), consulta e encerra com `/exit`. Pronto quando o `fetchedAtMs` muda ou o
+  "Refreshing…" termina — o Claude só busca de novo depois de alguns minutos; antes disso o arquivo é
+  o valor atual. O diálogo é fechado com Esc, com sucesso ou não. Leitura de menos de 1 min não
+  consulta. Falhou: última leitura do arquivo com o motivo.
 - Plano B, para CLI sem o campo: leitura da tela (`Current session`, `Current week (all models)`,
   `% used`, `Resets`). Ler a tela sozinho falhava conforme a altura do painel: o diálogo tem ~40
   linhas e a lista "What's contributing" empurra os limites para fora de um painel baixo.

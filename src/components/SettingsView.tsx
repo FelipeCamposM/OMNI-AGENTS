@@ -7,13 +7,15 @@ import { PALETAS } from "../lib/palettes";
 import { CHANGELOG } from "../lib/changelog";
 import { Button, Field, Input, SegmentedControl, Slider } from "./ui";
 import { AgentConnections } from "../features/terminal/AgentConnections";
+import { SkillsManager } from "../features/skills/SkillsManager";
 import { MobileSettings } from "../features/mobile/MobileSettings";
 import { testarAviso } from "../features/terminal/useAttentionNotifier";
 
-type SectionId = "aparencia" | "agentes" | "mobile" | "sobre";
+type SectionId = "aparencia" | "agentes" | "skills" | "mobile" | "sobre";
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "agentes", label: "Agentes" },
+  { id: "skills", label: "Skills" },
   { id: "mobile", label: "Celular" },
   { id: "aparencia", label: "Aparência" },
   { id: "sobre", label: "Sobre" },
@@ -54,9 +56,11 @@ interface SettingsViewProps {
   onReset: () => void;
   /** Abre direto numa seção (usado pelo sino de notificações). */
   initialSection?: SectionId;
+  /** Projeto aberto — a aba de Skills lista o `.claude/skills` dele além dos escopos globais. */
+  projectPath: string | null;
 }
 
-export function SettingsView({ settings, onChange, onReset, initialSection }: SettingsViewProps) {
+export function SettingsView({ settings, onChange, onReset, initialSection, projectPath }: SettingsViewProps) {
   const [section, setSection] = useState<SectionId>(initialSection ?? "aparencia");
 
   // Reabrir pelo sino noutra pendência tem de pular de seção mesmo com a
@@ -94,6 +98,7 @@ export function SettingsView({ settings, onChange, onReset, initialSection }: Se
         <div className="flex-1 min-w-0 space-y-4">
           {section === "aparencia" && <AparenciaSection settings={settings} onChange={onChange} />}
           {section === "agentes" && <AgentConnections />}
+          {section === "skills" && <SkillsManager projectPath={projectPath} />}
           {section === "mobile" && <MobileSettings />}
           {section === "sobre" && <SobreSection onReset={onReset} />}
         </div>

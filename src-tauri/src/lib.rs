@@ -1,5 +1,6 @@
 mod conversations;
 mod account_usage;
+mod agent_runtime;
 mod mobile;
 mod engine_client;
 mod git_client;
@@ -20,6 +21,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             engine_client::engine_status,
             account_usage::account_usage,
+            agent_runtime::agent_runtime,
             mobile::mobile_settings,
             mobile::publish_workspace,
             mobile::mobile_check,

@@ -1,0 +1,52 @@
+# Compila e testa nas três plataformas a cada push/PR. Não gera instalador — isso é o release.yml.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Dependências do Tauri (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+
+      - run: npm ci
+
+      # O engine embute o bundle mobile e o Tauri exige o sidecar e o dist existirem para compilar.
+      - run: node scripts/build-engine.mjs
+      - run: mkdir -p dist
+
+      - run: cargo test -p omni-engine -p omni-core -p omni-protocol
+      - run: cargo check -p omni-agents
+
+      - name: Front (typecheck + testes)
+        if: runner.os == 'Linux'
+        run: npm run typecheck && npm test

@@ -59,7 +59,7 @@ describe("AgentConnections", () => {
     listAgentClis.mockResolvedValue([
       agent({ id: "claude", label: "Claude", authenticated: true }),
       // Cursor é o provider sem isolamento de config dir: é ele que mantém o botão único "Entrar".
-      agent({ id: "cursor", label: "Cursor", command: "cursor-agent", authenticated: false }),
+      agent({ id: "cursor", label: "Cursor", command: "agent", authenticated: false }),
       agent({ id: "codex", label: "Codex", command: "codex", path: null, available: false, authenticated: false }),
     ]);
 

@@ -23,6 +23,7 @@ import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useStagger } from "../lib/motion";
+import { AgentIcon } from "./ui/AgentIcon";
 import { NotificationBell } from "./NotificationBell";
 import type { SettingsSection } from "../hooks/useNotifications";
 import type { KanbanState } from "../types/kanban";
@@ -229,6 +230,7 @@ export function Sidebar({
                       title={`${session.name} · ${session.state}`}
                     >
                       <SessionStateIcon state={session.state} />
+                      <AgentIcon provider={session.provider} size={12} className="mr-1 inline-block align-[-2px]" />
                       {session.name}
                     </button>
                     <button

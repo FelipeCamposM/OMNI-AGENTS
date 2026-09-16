@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Input } from "../../components/ui";
+import { AgentIcon } from "../../components/ui/AgentIcon";
 import { AccountUsage } from "./AccountUsage";
 import {
   MULTI_ACCOUNT_PROVIDERS,
@@ -110,7 +111,8 @@ export function AgentConnections() {
               <div className="flex items-center gap-4">
                 <span className={`h-2 w-2 shrink-0 ${DOT[connection]}`} />
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium text-text-primary">
+                  <p className="flex items-center gap-1.5 text-xs font-medium text-text-primary">
+                    <AgentIcon provider={agent.id} size={14} className="shrink-0" />
                     {agent.label}
                     {connection === "connected" && <span className="ml-2 text-[10px] text-success">conectado</span>}
                     {connection === "installed" && <span className="ml-2 text-[10px] text-warning">sem login</span>}

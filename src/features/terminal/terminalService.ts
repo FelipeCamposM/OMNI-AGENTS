@@ -20,6 +20,12 @@ export interface TerminalSession {
   rows: number;
   cols: number;
   input_locked?: boolean;
+  /** CLI que roda na sessão (`claude`, `codex`, `cursor`). Vazio em terminal puro. */
+  provider?: string | null;
+  /** Conta usada na sessão. É a chave de `account_usage`. */
+  profile_id?: string | null;
+  /** Id da sessão do lado do provider — é o que acha o transcript e, com ele, modelo e esforço. */
+  external_session_id?: string | null;
   /** Por que a sessão parou, quando o motivo não cabe no `state` (o engine só distingue seis).
    *  Ortogonal ao `state` de propósito: `state` é reescrito a cada chunk de saída. */
   notice?: "usage_limit" | "api_error";
