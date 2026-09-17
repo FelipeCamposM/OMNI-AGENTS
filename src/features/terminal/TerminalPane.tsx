@@ -72,6 +72,8 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     if (!host) return;
     let cancelled = false;
     let pollTimer: number | undefined;
+    let firstPoll = true;
+    let reviving = false;
     const terminal = new Terminal({
       convertEol: true,
       cursorBlink: true,
@@ -160,10 +162,30 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
       }
     }
 
+    /** Religa a sessão que o engine só conhece como histórica (engine reiniciado por update ou
+     *  reabertura do app) ou cuja CLI saiu. Mesmo caminho do botão "reiniciar": mesmo id, e conversa
+     *  Claude volta com `--resume`. Sem isto a aba ficava preta e digitar dava "session is not running". */
+    async function revive(sessionId: string) {
+      if (reviving) return;
+      reviving = true;
+      try {
+        await restartTerminal(sessionId);
+      } catch (reason) {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        reviving = false;
+      }
+    }
+
     async function poll() {
       if (cancelled || !sessionRef.current) return;
       try {
         const snapshot = await terminalSnapshot(sessionRef.current, sequenceRef.current);
+        // Sessão histórica: o engine devolve `next_seq` 0 e nenhuma saída. Só na primeira leitura,
+        // para não ressuscitar em loop quem o usuário parou nesta mesma montagem.
+        const dead = snapshot.session.state === "stopped" || snapshot.session.state === "crashed";
+        if (firstPoll && dead && snapshot.next_seq === 0) void revive(sessionRef.current);
+        firstPoll = false;
         if (snapshot.from_seq > sequenceRef.current) terminal.write("\r\n[scrollback anterior descartado]\r\n");
         if (snapshot.data) terminal.write(snapshot.data);
         setState(snapshot.session.state);
@@ -206,8 +228,11 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     }
 
     const dataSubscription = terminal.onData((data) => {
-      if (sessionRef.current) void writeTerminal(sessionRef.current, data).catch((reason) => {
+      const sessionId = sessionRef.current;
+      if (sessionId) void writeTerminal(sessionId, data).catch((reason) => {
         if (String(reason).includes("Consulta de uso")) setInputLocked(true);
+        // Digitar numa sessão morta é pedido para voltar a ela, não motivo de banner.
+        else if (String(reason).includes("session is not running")) void revive(sessionId);
         else setError(String(reason));
       });
     });
@@ -287,7 +312,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   // Aba de terminal puro não passa pelo seletor de CLI: sobe direto no shell do sistema.
   if (tab.kind !== "terminal" && !tab.resourceId && !agent) {
     const projectName = projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath;
-    return <AgentLauncher projectName={projectName} onLaunch={setLaunch} />;
+    return <AgentLauncher projectName={projectName} projectPath={projectPath} onLaunch={setLaunch} />;
   }
 
   return (
@@ -359,6 +384,12 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
             variant="danger"
             className="mt-2"
             onClick={() => {
+              const sessionId = sessionRef.current;
+              if (sessionId && error.includes("session is not running")) {
+                setError(null);
+                void restartTerminal(sessionId).catch((reason) => setError(String(reason)));
+                return;
+              }
               if (isSessionMissing(error)) sessionRef.current = undefined;
               setRetry((value) => value + 1);
             }}
@@ -372,7 +403,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
 }
 
 function isSessionMissing(error: string) {
-  return error.includes("session not found") || error.includes("session is not running");
+  return error.includes("session not found");
 }
 
 function stateGlyph(state: TerminalState) {

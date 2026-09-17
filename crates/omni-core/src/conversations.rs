@@ -89,7 +89,13 @@ fn resolve(segment: &Segment, conversation: &Conversation, profiles: &[crate::Pr
 #[derive(Serialize)]
 pub struct Message { pub id: String, pub role: String, pub text: String, pub provider: String, pub timestamp: Option<String> }
 #[derive(Serialize)]
-pub struct Timeline { pub messages: Vec<Message>, pub next_cursor: Option<usize>, pub unavailable_segments: Vec<usize> }
+pub struct Timeline {
+    pub messages: Vec<Message>,
+    pub next_cursor: Option<usize>,
+    /// Onde começa a página anterior a esta. `None` = esta já começa na primeira mensagem.
+    pub prev_cursor: Option<usize>,
+    pub unavailable_segments: Vec<usize>,
+}
 
 pub(crate) fn text_message(value: &Value, provider: &str) -> Option<(String, String)> {
     if value["isSidechain"] == true { return None; }
@@ -107,11 +113,16 @@ pub(crate) fn text_message(value: &Value, provider: &str) -> Option<(String, Str
     (!text.trim().is_empty()).then_some((role.into(), text))
 }
 
-pub fn timeline(conversation: &Conversation, profiles: &[crate::Profile], cursor: usize, limit: usize) -> Timeline {
-    let mut result = Timeline { messages: Vec::new(), next_cursor: None, unavailable_segments: Vec::new() };
+/// Uma página da conversa. `cursor: None` devolve as **últimas** `limit` mensagens — é o que um chat
+/// abre mostrando. Antes só existia a leitura a partir do início, e numa conversa com mais de 100
+/// mensagens a resposta nova nunca aparecia na tela sem paginar até o fim.
+pub fn timeline(conversation: &Conversation, profiles: &[crate::Profile], cursor: Option<usize>, limit: usize) -> Timeline {
+    let limit = limit.clamp(1,100);
+    let mut result = Timeline { messages: Vec::new(), next_cursor: None, prev_cursor: None, unavailable_segments: Vec::new() };
+    let mut fim: std::collections::VecDeque<Message> = std::collections::VecDeque::with_capacity(limit + 1);
     let mut seen = HashSet::new();
     let mut count = 0;
-    for (segment_index, segment) in conversation.segments.iter().enumerate() {
+    'segmentos: for (segment_index, segment) in conversation.segments.iter().enumerate() {
         // O Claude só grava o `.jsonl` depois da primeira mensagem. Conversa recém-aberta tem o
         // caminho já fixado (`--session-id`) mas nenhum arquivo: isso é "vazia", não "indisponível".
         // Antes caía no aviso de histórico perdido logo na primeira abertura. Nada é lido aqui, então
@@ -125,13 +136,27 @@ pub fn timeline(conversation: &Conversation, profiles: &[crate::Profile], cursor
             // Claude UUIDs survive profile copies. Codex records preserve timestamp/content.
             let identity = value["uuid"].as_str().map(str::to_owned).unwrap_or_else(|| line.clone());
             if !seen.insert(format!("{}:{identity}",segment.provider)) { continue; }
-            if count >= cursor {
-                if result.messages.len() >= limit.clamp(1,100) { result.next_cursor = Some(count); return result; }
-                result.messages.push(Message { id: format!("{}:{count}",conversation.id),role,text,provider:segment.provider.clone(),timestamp:value["timestamp"].as_str().map(str::to_owned) });
+            let mensagem = |role,text| Message { id: format!("{}:{count}",conversation.id),role,text,
+                provider:segment.provider.clone(),timestamp:value["timestamp"].as_str().map(str::to_owned) };
+            match cursor {
+                Some(inicio) if count >= inicio => {
+                    if result.messages.len() >= limit { result.next_cursor = Some(count); break 'segmentos; }
+                    result.messages.push(mensagem(role,text));
+                }
+                Some(_) => {}
+                None => {
+                    fim.push_back(mensagem(role,text));
+                    if fim.len() > limit { fim.pop_front(); }
+                }
             }
             count += 1;
         }
     }
+    let inicio = match cursor {
+        Some(inicio) => inicio,
+        None => { result.messages = fim.into(); count - result.messages.len() }
+    };
+    result.prev_cursor = (inicio > 0).then(|| inicio.saturating_sub(limit));
     result
 }
 
@@ -151,12 +176,41 @@ mod tests {
         let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false};
         let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(transcript.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
         let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),created_at_ms:0,segments:vec![segment.clone(),segment]};
-        let first = timeline(&conversation,std::slice::from_ref(&profile),0,100);
-        assert_eq!(first.messages.len(),100); assert_eq!(first.next_cursor,Some(100));
-        let second = timeline(&conversation,std::slice::from_ref(&profile),100,100);
-        assert_eq!(second.messages.len(),5); assert!(second.next_cursor.is_none());
+        let first = timeline(&conversation,std::slice::from_ref(&profile),Some(0),100);
+        assert_eq!(first.messages.len(),100); assert_eq!(first.next_cursor,Some(100)); assert!(first.prev_cursor.is_none());
+        let second = timeline(&conversation,std::slice::from_ref(&profile),Some(100),100);
+        assert_eq!(second.messages.len(),5); assert!(second.next_cursor.is_none()); assert_eq!(second.prev_cursor,Some(0));
         let wrong = crate::Profile{config_dir:dir.path().join("other").to_string_lossy().into_owned(),..profile};
-        assert_eq!(timeline(&conversation,&[wrong],0,100).unavailable_segments,vec![0,1]);
+        assert_eq!(timeline(&conversation,&[wrong],Some(0),100).unavailable_segments,vec![0,1]);
+    }
+
+    /// O chat abre no fim: sem cursor vêm as últimas mensagens, com a mais nova por último, e o
+    /// cursor para buscar as anteriores. Os ids batem com os da leitura paginada.
+    #[test] fn sem_cursor_devolve_o_fim_da_conversa() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("transcript.jsonl");
+        std::fs::write(&transcript,(0..250).map(|i|json!({"uuid":format!("m{i}"),"type":"user","message":{"role":"user","content":format!("message {i}")}}).to_string()).collect::<Vec<_>>().join("\n")).unwrap();
+        let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false};
+        let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(transcript.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
+        let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),created_at_ms:0,segments:vec![segment]};
+
+        let fim = timeline(&conversation,std::slice::from_ref(&profile),None,100);
+        assert_eq!(fim.messages.len(),100);
+        assert_eq!(fim.messages.first().unwrap().text,"message 150");
+        assert_eq!(fim.messages.last().unwrap().text,"message 249");
+        assert!(fim.next_cursor.is_none());
+        assert_eq!(fim.prev_cursor,Some(50));
+
+        let antes = timeline(&conversation,std::slice::from_ref(&profile),fim.prev_cursor,100);
+        assert_eq!(antes.messages.first().unwrap().text,"message 50");
+        assert_eq!(antes.next_cursor,Some(150));
+        assert_eq!(antes.prev_cursor,Some(0));
+        assert_eq!(antes.messages[0].id,"c:50");
+        assert_eq!(fim.messages[0].id,"c:150");
+
+        // Conversa curta: tudo numa página, sem nada antes.
+        let curta = timeline(&conversation,std::slice::from_ref(&profile),None,500);
+        assert_eq!(curta.messages.len(),100, "limite continua travado em 100");
     }
 
     /// Conversa recém-aberta: caminho do transcript já fixado, arquivo ainda não gravado. Isso é
@@ -167,7 +221,7 @@ mod tests {
         let futuro = dir.path().join("projects").join("x").join("ainda-nao-existe.jsonl");
         let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:Some("s".into()),transcript_path:Some(futuro.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
         let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),created_at_ms:0,segments:vec![segment]};
-        let vazia = timeline(&conversation,std::slice::from_ref(&profile),0,100);
+        let vazia = timeline(&conversation,std::slice::from_ref(&profile),None,100);
         assert!(vazia.messages.is_empty());
         assert!(vazia.unavailable_segments.is_empty(),"arquivo ainda não gravado não é histórico perdido");
     }

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button, Select } from "../../components/ui";
 import { AgentIcon } from "../../components/ui/AgentIcon";
+import { HistoryView } from "../history/HistoryView";
+import { resumeCommand, type HistoryEntry, type HistoryProvider } from "../history/historyService";
 import {
   AGENT_RESUME_FLAG,
   listAgentClis,
@@ -13,6 +15,7 @@ import {
 
 interface AgentLauncherProps {
   projectName: string;
+  projectPath: string;
   onLaunch: (launch: AgentLaunch) => void;
 }
 
@@ -22,13 +25,14 @@ const FALLBACK_AGENTS: AgentCliStatus[] = [
   { id: "cursor", label: "Cursor", command: "agent", path: null, available: false, authenticated: false },
 ];
 
-export function AgentLauncher({ projectName, onLaunch }: AgentLauncherProps) {
+export function AgentLauncher({ projectName, projectPath, onLaunch }: AgentLauncherProps) {
   const [agents, setAgents] = useState(FALLBACK_AGENTS);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selected, setSelected] = useState<AgentCliId>(FALLBACK_AGENTS[0].id);
   const [selectedProfile, setSelectedProfile] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +81,36 @@ export function AgentLauncher({ projectName, onLaunch }: AgentLauncherProps) {
   function launch(command?: string) {
     if (!agent) return;
     onLaunch({ agent: command ? { ...agent, command } : agent, profile });
+  }
+
+  // Reabre a conversa escolhida na conta em que ela foi gravada, não na selecionada no card.
+  function resume(entry: HistoryEntry) {
+    if (!agent) return;
+    onLaunch({
+      agent: { ...agent, command: resumeCommand(agent.command, entry) },
+      profile: profiles.find((item) => item.id === entry.profile_id) ?? profile,
+    });
+  }
+
+  if (picking && agent) {
+    return (
+      <div className="h-full bg-bg-surface">
+        <HistoryView
+          lock={{ provider: agent.id as HistoryProvider, cwd: projectPath }}
+          onResume={resume}
+          actions={
+            <>
+              <Button variant="ghost" size="sm" onClick={() => launch(`${agent.command} ${AGENT_RESUME_FLAG[agent.id]}`)}>
+                Continuar a última
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setPicking(false)}>
+                Voltar
+              </Button>
+            </>
+          }
+        />
+      </div>
+    );
   }
 
   const options = agents.map((item) => ({
@@ -150,8 +184,8 @@ export function AgentLauncher({ projectName, onLaunch }: AgentLauncherProps) {
               variant="ghost"
               className="flex-1"
               disabled={loading || !agent.available}
-              title="Continua a última conversa deste projeto, já com as mensagens anteriores"
-              onClick={() => launch(`${agent.command} ${AGENT_RESUME_FLAG[agent.id]}`)}
+              title="Escolhe uma conversa anterior deste projeto, com prévia das mensagens"
+              onClick={() => setPicking(true)}
             >
               Retomar conversa
             </Button>

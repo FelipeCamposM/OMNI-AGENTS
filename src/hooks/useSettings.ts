@@ -4,7 +4,8 @@ import type { AppSettings } from "../types/settings";
 import { DEFAULT_SETTINGS } from "../types/settings";
 import { loadSettings, saveSettings } from "../services/settingsService";
 import { setMotionLevel } from "../lib/motion";
-import { coresDaPaleta, hexParaRgbCss } from "../lib/palettes";
+import { aplicarPaleta } from "../lib/aplicarTema";
+import { aplicarIconeDaJanela } from "../features/appIcon";
 import { isBackgroundEffect } from "../components/backgrounds/registry";
 
 export function useSettings() {
@@ -35,16 +36,10 @@ export function useSettings() {
     const root = document.documentElement;
 
     const aplicar = (claro: boolean) => {
-      root.dataset.theme = claro ? "claro" : "escuro";
-      const { base, deep } = coresDaPaleta(settings.accent, claro);
-      // Sobrescreve as vars do index.css no próprio <html>. Inline e não uma
-      // regra `[data-accent]` no CSS porque a tabela de paletas já precisa
-      // existir em TS para alimentar os efeitos em WebGL — duplicá-la no CSS
-      // é convite para as duas divergirem.
-      root.style.setProperty("--c-accent", hexParaRgbCss(base));
-      root.style.setProperty("--c-accent-hover", hexParaRgbCss(deep));
-      root.style.setProperty("--c-selected", hexParaRgbCss(base));
-      root.style.setProperty("--c-selected-deep", hexParaRgbCss(deep));
+      const logo = aplicarPaleta(root, settings.accent, claro);
+      // A janela (e a barra de tarefas) recebe a mesma logo rasterizada. Assíncrono e sem await:
+      // nada na tela depende disso, e a função já ignora a repintura quando a cor não mudou.
+      void aplicarIconeDaJanela(logo);
     };
 
     if (settings.theme !== "sistema") {

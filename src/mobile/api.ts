@@ -1,3 +1,5 @@
+import type { TemaPublicado } from "./tema";
+
 export interface Conversation {
   id: string; title: string; project_id: string; provider: string | null; profile_id: string | null; state: string | null;
   capabilities: { prompt: boolean; approve: boolean; revision: string; approval_text: string | null; reason: string | null } | null;
@@ -8,9 +10,17 @@ export interface Projects {
   projects: { id: string; name: string; path: string }[];
   agents: { id: string; label: string; command: string; resume: string | null }[];
   profiles: { id: string; provider: string; name: string }[];
+  /** Aparência publicada pelo PC. `null` quando o PC é de uma versão que ainda não publicava. */
+  theme: TemaPublicado | null;
 }
 export interface Timeline {
-  timeline: { messages: { id: string; role: string; text: string; provider: string }[]; next_cursor: number | null; unavailable_segments: number[] };
+  timeline: {
+    messages: { id: string; role: string; text: string; provider: string; timestamp?: string | null }[];
+    next_cursor: number | null;
+    /** Onde começa a página anterior. Sem cursor o servidor devolve o fim da conversa. */
+    prev_cursor?: number | null;
+    unavailable_segments: number[];
+  };
   actions: { id: string; state: string; error: string | null }[];
 }
 export class ApiError extends Error {

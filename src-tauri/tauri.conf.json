@@ -1,6 +1,6 @@
 {
   "productName": "OMNI AGENTS",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "identifier": "com.omni.agents",
   "build": {
     "frontendDist": "../dist",

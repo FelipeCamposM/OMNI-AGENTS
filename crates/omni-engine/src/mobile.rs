@@ -1,7 +1,7 @@
 use super::*;
 use axum::{Router, Json, extract::{State, Path as RoutePath, Query, DefaultBodyLimit, Request},
     http::{StatusCode, HeaderMap}, response::{IntoResponse, Response}, routing::{get,post}, middleware::{self, Next}};
-use omni_protocol::{MobileConfig, PublishedAgent, PublishedProject, PublishedWorkspace, TotpAction};
+use omni_protocol::{MobileConfig, PublishedAgent, PublishedProject, PublishedTheme, PublishedWorkspace, TotpAction};
 use serde::{Serialize, Deserialize};
 use serde_json::{Value, json};
 use std::net::{SocketAddr, IpAddr};
@@ -132,7 +132,46 @@ fn motivo_do_serve(saida: &str) -> String {
     if texto.is_empty() { "O Tailscale não respondeu.".into() } else { texto.to_owned() }
 }
 
-fn serve_reset() { let _ = tailscale(&["serve","reset"],15); }
+/// A configuração do Serve inteira é só a publicação que este app cria (`serve --bg <porta>`)?
+///
+/// `tailscale serve reset` apaga tudo que está publicado **no PC**, não só o que o OMNI publicou.
+/// Isto é o que separa "desfazer o nosso" de "destruir o dos outros": reset só quando não há mais
+/// nada lá. Separado da CLI para testar sem um Tailscale de verdade.
+fn serve_e_so_o_nosso(status: &Value, porta: u16) -> bool {
+    let Some(config) = status.as_object() else { return false };
+    let alvo = format!("http://127.0.0.1:{porta}");
+    let vazio = |v: &Value| v.is_null() || v == &Value::Bool(false)
+        || v.as_object().is_some_and(|o| o.is_empty()) || v.as_array().is_some_and(|a| a.is_empty());
+    // Qualquer campo além de TCP/Web com conteúdo (Services, Foreground, Funnel…) é de outra coisa.
+    if config.iter().any(|(chave, valor)| chave != "TCP" && chave != "Web" && !vazio(valor)) { return false }
+    let tcp_ok = config.get("TCP").and_then(Value::as_object)
+        .is_some_and(|tcp| tcp.keys().all(|porta_tcp| porta_tcp == "443"));
+    let Some(web) = config.get("Web").and_then(Value::as_object) else { return false };
+    let [(host, site)] = web.iter().collect::<Vec<_>>()[..] else { return false };
+    let Some(handlers) = site.get("Handlers").and_then(Value::as_object) else { return false };
+    let [(caminho, handler)] = handlers.iter().collect::<Vec<_>>()[..] else { return false };
+    tcp_ok && host.ends_with(":443") && caminho == "/"
+        && handler.get("Proxy").and_then(Value::as_str) == Some(alvo.as_str())
+}
+
+/// Tira do ar a publicação que este engine criou — e nada além dela. Com qualquer outra coisa
+/// publicada no PC, deixa como está: sobrar uma rota velha é bem menos grave que apagar a de outro.
+fn serve_desfazer(porta: u16) {
+    let Some((true, saida)) = tailscale(&["serve","status","--json"],5) else { return };
+    let Ok(status) = serde_json::from_str::<Value>(&saida) else { return };
+    if serve_e_so_o_nosso(&status, porta) { let _ = tailscale(&["serve","reset"],15); }
+}
+
+/// A publicação deste engine está de pé no Tailscale agora? `None` = não deu para perguntar.
+fn serve_ativo(porta: u16) -> Option<bool> {
+    let (ok, saida) = tailscale(&["serve","status","--json"],5)?;
+    if !ok { return None }
+    let status: Value = serde_json::from_str(&saida).ok()?;
+    let alvo = format!("http://127.0.0.1:{porta}");
+    Some(status.get("Web").and_then(Value::as_object).is_some_and(|web| web.values().any(|site|
+        site.get("Handlers").and_then(Value::as_object).is_some_and(|h| h.values().any(|handler|
+            handler.get("Proxy").and_then(Value::as_str) == Some(alvo.as_str()))))))
+}
 
 /// Resolve MagicDNS e publica (ou despublica) pelo Serve. Roda na tarefa do servidor, fora do
 /// caminho da tela, porque a CLI do Tailscale pode levar dezenas de segundos para responder.
@@ -144,7 +183,11 @@ async fn publicar(state: &Arc<EngineState>, config: &MobileConfig) {
     let porta: u16 = config.bind.rsplit(':').next().and_then(|p|p.parse().ok()).unwrap_or(0);
     let resultado = tokio::task::spawn_blocking(move || {
         let nome = magic_dns();
-        if !serve { serve_reset(); return (nome,Ok(())) }
+        // Modo direto **não mexe** no Serve. Antes isto rodava `serve reset` em toda subida — e o
+        // engine de desenvolvimento (modo direto) apagava a publicação HTTPS do app instalado toda
+        // vez que `npm run dev` abria: o QR do celular passava a apontar para um endereço sem nada
+        // atrás. Desfazer a própria publicação é trabalho do `settings`, na troca de modo.
+        if !serve { return (nome,Ok(())) }
         let publicado = serve_start(porta);
         (nome,publicado)
     }).await;
@@ -183,6 +226,15 @@ pub fn check(state: &EngineState) -> Result<EngineResponse> {
     let mut resposta = String::new();
     let _ = fluxo.take(256).read_to_string(&mut resposta);
 
+    // No Serve, o servidor local responder não basta: o celular entra pelo Tailscale, e a
+    // publicação pode ter sido apagada por fora (outro programa, `tailscale serve reset` à mão).
+    if config.serve && resposta.contains(" 401") && serve_ativo(address.port()) == Some(false) {
+        // Reiniciar o listener refaz a publicação (`publicar` roda na subida).
+        state.mobile.changed.notify_one();
+        return Ok(EngineResponse::MobileCheck{ok:false,
+            message:"O servidor está no ar, mas o endereço HTTPS tinha saído do Tailscale — por isso o QR não abria. Publicando de novo; aguarde alguns segundos e teste outra vez.".into()});
+    }
+
     // 401 é o resultado **bom**: prova que o servidor atendeu e que o token está sendo exigido.
     Ok(if resposta.contains(" 401") {
         EngineResponse::MobileCheck{ok:true,message:"Servidor no ar e exigindo o código de acesso, como deve ser.".into()}
@@ -210,6 +262,12 @@ fn preferir_ip(config: &mut MobileConfig, tailscale: Option<IpAddr>) -> bool {
 fn preferir_tailscale(config: &mut MobileConfig) -> bool {
     if config.serve || !config.bind.starts_with("127.") { return false }
     preferir_ip(config,tailscale_ip())
+}
+
+/// Este engine publicava pelo Serve e, com a config nova, não publica mais (trocou para o modo
+/// direto ou desligou o acesso). É o único momento em que a publicação dele deve sair do ar.
+fn deixou_de_publicar(anterior: &MobileConfig, nova: &MobileConfig) -> bool {
+    (anterior.enabled && anterior.serve) && !(nova.enabled && nova.serve)
 }
 
 fn validate(config: &MobileConfig) -> Result<SocketAddr> {
@@ -241,7 +299,13 @@ pub fn settings(state: &EngineState, config: Option<MobileConfig>, rotate: bool)
             config.totp_confirmed = guardado.totp_confirmed;
         }
         if config.enabled { preferir_tailscale(&mut config); validate(&config)?; }
+        let anterior = state.mobile.config.lock().map_err(|_|anyhow!("config poisoned"))?.clone();
         atomic_write_json(&state.state_file.with_file_name("mobile.json"),&config)?;
+        if deixou_de_publicar(&anterior,&config) {
+            let porta = anterior.bind.rsplit(':').next().and_then(|p|p.parse().ok()).unwrap_or(0);
+            // Fora do caminho da tela: a CLI do Tailscale pode demorar, e a resposta não depende disto.
+            std::thread::spawn(move || serve_desfazer(porta));
+        }
         *state.mobile.config.lock().map_err(|_|anyhow!("config poisoned"))? = config;
         // Rotacionar reinicia o listener junto: é o que derruba quem estava com o token antigo.
         state.mobile.changed.notify_one();
@@ -429,6 +493,9 @@ fn router(state: Arc<EngineState>) -> Router {
         .route("/conversas/{id}/timeline",get(timeline))
         .route("/conversas/{id}/prompt",post(prompt))
         .route("/conversas/{id}/aprovar",post(approve))
+        // O limite global (32 KB) é para JSON. Anexo tem o dele, aplicado **só** nesta rota: por
+        // dentro da camada global, e o extrator lê o limite mais interno.
+        .route("/conversas/{id}/anexos",post(anexar).layer(DefaultBodyLimit::max(ANEXO_MAX_BYTES)))
         .route("/atencao",get(attention))
         .route("/sessoes",post(create_session))
         .route("/parear",post(parear))
@@ -493,7 +560,7 @@ async fn same_origin(State(state): State<Arc<EngineState>>, request: Request, ne
     headers.insert("cache-control","no-store".parse().unwrap());
     headers.insert("x-content-type-options","nosniff".parse().unwrap());
     headers.insert("referrer-policy","no-referrer".parse().unwrap());
-    headers.insert("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap());
+    headers.insert("content-security-policy","default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap());
     response
 }
 
@@ -530,8 +597,10 @@ fn summaries(state: &EngineState) -> Vec<Value> {
     }).collect()
 }
 
-pub fn publish(state: &EngineState, projects: Vec<PublishedProject>, agents: Vec<PublishedAgent>) -> Result<EngineResponse> {
-    let published = PublishedWorkspace { projects, agents, published_at_ms: now_ms() };
+pub fn publish(state: &EngineState, projects: Vec<PublishedProject>, agents: Vec<PublishedAgent>, theme: Option<PublishedTheme>) -> Result<EngineResponse> {
+    // Desktop antigo publica sem tema: mantém o último conhecido em vez de apagar.
+    let theme = theme.or_else(|| state.mobile.workspace.lock().ok().and_then(|w| w.theme.clone()));
+    let published = PublishedWorkspace { projects, agents, theme, published_at_ms: now_ms() };
     atomic_write_json(&state.state_file.with_file_name("workspace.json"),&published)?;
     *state.mobile.workspace.lock().map_err(|_|anyhow!("workspace poisoned"))? = published;
     Ok(EngineResponse::Ok)
@@ -555,14 +624,14 @@ fn known_projects(state: &EngineState) -> Vec<PublishedProject> {
 async fn projects(State(state): State<Arc<EngineState>>) -> Json<Value> {
     Json(tokio::task::spawn_blocking(move || {
         let dir = state.state_file.parent().unwrap();
-        let (agents,published_at_ms) = {
+        let (agents,published_at_ms,theme) = {
             let workspace = state.mobile.workspace.lock().expect("workspace poisoned");
-            (workspace.agents.clone(),workspace.published_at_ms)
+            (workspace.agents.clone(),workspace.published_at_ms,workspace.theme.clone())
         };
         // `config_dir` fica de fora de propósito: é caminho de credencial e o celular não precisa.
         let profiles: Vec<_> = omni_core::profiles(dir).into_iter()
             .map(|p| json!({"id":p.id,"provider":p.provider,"name":p.name})).collect();
-        json!({"published_at_ms":published_at_ms,"projects":known_projects(&state),"agents":agents,"profiles":profiles})
+        json!({"published_at_ms":published_at_ms,"projects":known_projects(&state),"agents":agents,"profiles":profiles,"theme":theme})
     }).await.unwrap_or(json!({"published_at_ms":0,"projects":[],"agents":[],"profiles":[]})))
 }
 
@@ -573,7 +642,8 @@ async fn attention(State(state): State<Arc<EngineState>>) -> Json<Value> {
     Json(tokio::task::spawn_blocking(move || json!(summaries(&state).into_iter().filter(|c|
         c["capabilities"]["approve"] == true || c["capabilities"]["prompt"] == true || c["state"] == "approval_required").collect::<Vec<_>>())).await.unwrap_or(json!([])))
 }
-#[derive(Deserialize)] struct Page { #[serde(default)] cursor: usize }
+/// Sem `cursor` a timeline abre no fim da conversa, como um chat.
+#[derive(Deserialize)] struct Page { #[serde(default)] cursor: Option<usize> }
 async fn timeline(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, Query(page): Query<Page>) -> Result<Json<Value>, ApiError> {
     tokio::task::spawn_blocking(move || {
         let (conversation,_) = current(&state,&id)?;
@@ -583,6 +653,77 @@ async fn timeline(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePat
         Ok(Json(json!({"timeline":timeline,"actions":actions})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler timeline"))?
 }
+/// Tamanho máximo de um anexo vindo do celular. Cobre foto de câmera, PDF e print com folga, e
+/// ainda cabe na memória sem susto — o corpo é lido inteiro antes de gravar.
+const ANEXO_MAX_BYTES: usize = 25 * 1024 * 1024;
+/// Pasta dos anexos, dentro do projeto da conversa. Dentro do projeto de propósito: a CLI lê sem
+/// pedir permissão extra, e é a mesma família do `.omni-agents/pasted/` que o desktop já usa.
+const PASTA_ANEXOS: [&str; 2] = [".omni-agents", "anexos"];
+
+/// Nome seguro para gravar: só o último componente, sem nada que o shell ou o Windows interpretem.
+/// O caminho vai cru no prompt, então espaço e vírgula também saem — a CLI leria só o pedaço.
+fn nome_seguro(bruto: &str) -> String {
+    let base = bruto.rsplit(['/', '\\']).next().unwrap_or("");
+    let limpo: String = base.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let limpo = limpo.trim_matches(|c| c == '.' || c == '-');
+    // Nome reservado do Windows (`CON`, `NUL`…) ou vazio vira genérico em vez de falhar na escrita.
+    let tronco = limpo.split('.').next().unwrap_or("").to_ascii_uppercase();
+    let reservado = matches!(tronco.as_str(), "CON"|"PRN"|"AUX"|"NUL") || ((tronco.starts_with("COM") || tronco.starts_with("LPT"))
+        && tronco.len() == 4 && tronco.as_bytes()[3].is_ascii_digit());
+    let limpo = if limpo.is_empty() || reservado { "anexo" } else { limpo };
+    // Nome longo quebra caminho no Windows (MAX_PATH) sem ganho nenhum: corta, preservando a extensão.
+    match limpo.rsplit_once('.') {
+        Some((tronco, ext)) if !tronco.is_empty() && ext.len() <= 10 => format!("{}.{}", &tronco[..tronco.len().min(60)], ext),
+        _ => limpo[..limpo.len().min(70)].to_owned(),
+    }
+}
+
+async fn anexar(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, headers: HeaderMap, corpo: axum::body::Bytes) -> Result<Json<Value>,ApiError> {
+    if corpo.is_empty() { return Err(error(StatusCode::BAD_REQUEST,"Arquivo vazio")); }
+    let nome = headers.get("x-omni-nome").and_then(|v| v.to_str().ok())
+        .map(|v| percent_decode(v)).unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        // A pasta sai da conversa registrada no servidor — o celular nunca manda caminho.
+        let (conversation,_) = current(&state,&id)?;
+        let mut pasta = std::path::PathBuf::from(&conversation.cwd);
+        if !pasta.is_dir() { return Err(error(StatusCode::CONFLICT,"A pasta do projeto não existe mais neste PC")); }
+        for parte in PASTA_ANEXOS { pasta.push(parte); }
+        std::fs::create_dir_all(&pasta).map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Não foi possível criar a pasta de anexos"))?;
+        // Prefixo com data e sequência: dois "image.png" colados seguidos não se sobrescrevem.
+        let seguro = nome_seguro(&nome);
+        let destino = pasta.join(format!("{}-{:04x}-{}", now_ms(), uuid::Uuid::new_v4().as_u128() as u16, seguro));
+        let mut arquivo = std::fs::OpenOptions::new().write(true).create_new(true).open(&destino)
+            .map_err(|_| error(StatusCode::CONFLICT,"Já existe um anexo com esse nome; tente de novo"))?;
+        use std::io::Write as _;
+        if arquivo.write_all(&corpo).is_err() {
+            drop(arquivo);
+            let _ = std::fs::remove_file(&destino);
+            return Err(error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao gravar o anexo no PC"));
+        }
+        Ok(Json(json!({"caminho":destino.to_string_lossy(),"nome":seguro,"bytes":corpo.len()})))
+    }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao gravar o anexo"))?
+}
+
+/// `X-Omni-Nome` chega com `encodeURIComponent` (cabeçalho HTTP não carrega acento). Sequência
+/// inválida vira o próprio texto: o nome ainda passa pelo `nome_seguro` depois.
+fn percent_decode(valor: &str) -> String {
+    let bytes = valor.as_bytes();
+    let mut saida = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        // Bytes, não `&valor[..]`: fatiar a `str` no meio de um caractere acentuado dá pânico.
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let par = std::str::from_utf8(&bytes[i + 1..i + 3]).ok().and_then(|hex| u8::from_str_radix(hex, 16).ok());
+            if let Some(byte) = par { saida.push(byte); i += 3; continue; }
+        }
+        saida.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&saida).into_owned()
+}
+
 #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct PromptBody { texto: String }
 #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct ApprovalBody { permitir: bool }
 async fn prompt(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, headers: HeaderMap, Json(body): Json<PromptBody>) -> Result<(StatusCode,Json<Value>),ApiError> {
@@ -847,16 +988,53 @@ mod tests {
 
     /// Local visual harness: no real profiles, credentials, sessions or user data.
     #[tokio::test]
-    #[ignore = "Run explicitly while checking the mobile UI in a browser (3 minutes)"]
+    #[ignore = "Run explicitly while checking the mobile UI in a browser (10 minutes)"]
     async fn browser_fixture() {
-        let (_dir,state) = fixture();
+        let (dir,state) = fixture();
         *state.mobile.config.lock().unwrap() = MobileConfig{enabled:true,bind:"127.0.0.1:47329".into(),token:"fixture-token".into(),serve:false,totp_secret:String::new(),totp_confirmed:false};
+
+        // Conteúdo de mentira, mas com cara de uso real: é para julgar o visual, não a lógica.
+        let conta = dir.path().join("claude");
+        let transcript = conta.join("projects").join("fixture").join("sessao.jsonl");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        let linha = |i: usize, role: &str, texto: &str| json!({"uuid":format!("m{i}"),"type":role,"timestamp":format!("2026-09-17T13:0{i}:00Z"),
+            "message":{"role":role,"content":texto}}).to_string();
+        let mensagens = [
+            linha(0,"user","O login está lento no celular. Consegue ver o que está acontecendo?"),
+            linha(1,"assistant","Achei a causa. O **token é validado duas vezes** a cada requisição:\n\n1. no middleware de sessão\n2. de novo em `authGuard`\n\n```ts\nexport function authGuard(req: Request) {\n  return validar(req.token); // duplicado\n}\n```\n\n| Etapa | Antes | Depois |\n|---|---|---|\n| Login | 1,8 s | 0,6 s |\n| Refresh | 900 ms | 310 ms |"),
+            linha(2,"user","Perfeito. Segue o print do erro que aparece e o log do servidor.\n\n[Anexos enviados pelo celular]\n- C:\\dev\\omni-agents\\.omni-agents\\anexos\\1726000000000-ab12-print-erro.png\n- C:\\dev\\omni-agents\\.omni-agents\\anexos\\1726000000001-cd34-servidor.log"),
+            linha(3,"assistant","Vi os dois. O erro do print é o `401` que o segundo `authGuard` devolve quando o token acabou de ser renovado. Removi a validação duplicada e os testes passaram."),
+        ];
+        std::fs::write(&transcript,mensagens.join("\n")).unwrap();
+        atomic_write_json(&dir.path().join("profiles.json"),&json!({"profiles":[
+            {"id":"claude-p","provider":"claude","name":"Pessoal","config_dir":conta.to_string_lossy(),"builtin":false,"created_at_ms":0},
+            {"id":"codex-p","provider":"codex","name":"Trabalho","config_dir":dir.path().join("codex").to_string_lossy(),"builtin":false,"created_at_ms":0},
+        ]})).unwrap();
+        let segmento = |provider: &str, perfil: &str, caminho: Option<String>| json!({"provider":provider,"profile_id":perfil,
+            "external_session_id":null,"transcript_path":caminho,"terminal_session_id":null,"started_at_ms":1,"ended_at_ms":null});
+        atomic_write_json(&dir.path().join("conversations.json"),&json!({"version":1,"conversations":[
+            {"id":"c","project_id":"p","cwd":"C:/dev/omni-agents","title":"Login lento no celular","created_at_ms":3,
+                "segments":[segmento("claude","claude-p",Some(transcript.to_string_lossy().into_owned()))]},
+            {"id":"c2","project_id":"p","cwd":"C:/dev/omni-agents","title":"Revisar PR de pagamentos","created_at_ms":2,
+                "segments":[segmento("codex","codex-p",None)]},
+            {"id":"c3","project_id":"loja","cwd":"C:/dev/loja","title":"Migrar para Next 16","created_at_ms":1,"segments":[]},
+        ]})).unwrap();
+        publish(&state,
+            vec![PublishedProject{id:"p".into(),name:"omni-agents".into(),path:"C:/dev/omni-agents".into()},
+                 PublishedProject{id:"loja".into(),name:"loja-virtual".into(),path:"C:/dev/loja".into()}],
+            vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:Some("--continue".into())},
+                 PublishedAgent{id:"codex".into(),label:"Codex".into(),command:"codex".into(),resume:None}],
+            Some(PublishedTheme{accent:std::env::var("OMNI_FIXTURE_ACCENT").unwrap_or_else(|_|"roxo".into()),
+                theme:std::env::var("OMNI_FIXTURE_THEME").unwrap_or_else(|_|"escuro".into()),
+                background:"gradient-waves".into(),glass:"forte".into()}),
+        ).unwrap();
+
         let listener = TcpListener::bind("127.0.0.1:47329").await.unwrap();
         let stop = Arc::new(Notify::new());
         let notify = stop.clone();
         let app = router(state).route("/__test_stop",post(move || { let notify = notify.clone(); async move { notify.notify_one(); StatusCode::OK } }));
         axum::serve(listener,app).with_graceful_shutdown(async move {
-            tokio::select! { _ = stop.notified() => {}, _ = tokio::time::sleep(std::time::Duration::from_secs(180)) => {} }
+            tokio::select! { _ = stop.notified() => {}, _ = tokio::time::sleep(std::time::Duration::from_secs(600)) => {} }
         }).await.unwrap();
     }
     fn req(method:&str, uri:&str, origin:&str, body:&str) -> Request {
@@ -871,6 +1049,7 @@ mod tests {
         publish(&state,
             vec![PublishedProject{id:"p".into(),name:"Teste".into(),path:"C:/test".into()}],
             vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:None}],
+            None,
         ).unwrap();
         let app = router(state.clone());
         let post = |corpo:&str| req("POST","/sessoes","http://127.0.0.1:47322",corpo);
@@ -898,6 +1077,7 @@ mod tests {
         publish(&state,
             vec![PublishedProject{id:"p".into(),name:"Teste".into(),path:".".into()}],
             vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:None}],
+            None,
         ).unwrap();
         let plan = resolve_spawn(&state,&SpawnBody{
             project_id:"p".into(),provider:"claude".into(),profile_id:None,titulo:None,
@@ -978,6 +1158,7 @@ mod tests {
         publish(&state,
             vec![PublishedProject{id:"publicado".into(),name:"Publicado".into(),path:"C:/pub".into()}],
             vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:Some("--continue".into())}],
+            None,
         ).unwrap();
 
         let response = router(state).oneshot(req("GET","/projetos","","")).await.unwrap();
@@ -993,7 +1174,7 @@ mod tests {
 
     #[test] fn publicacao_sobrevive_ao_reinicio_do_engine() {
         let (dir,state) = fixture();
-        publish(&state,vec![PublishedProject{id:"p1".into(),name:"Um".into(),path:"C:/um".into()}],vec![]).unwrap();
+        publish(&state,vec![PublishedProject{id:"p1".into(),name:"Um".into(),path:"C:/um".into()}],vec![],None).unwrap();
         // Um `MobileRuntime` novo é o que o engine monta ao subir de novo.
         let renascido = MobileRuntime::new(dir.path());
         assert_eq!(renascido.workspace.lock().unwrap().projects[0].id,"p1");
@@ -1051,6 +1232,110 @@ mod tests {
 
     /// Saída real do `tailscale serve --bg` com o Serve desabilitado, capturada depois de matar o
     /// processo — ele não sai sozinho. O link tem de sobreviver até a tela.
+    #[test] fn reset_so_quando_a_config_do_serve_e_so_a_nossa() {
+        let nosso = json!({"TCP":{"443":{"HTTPS":true}},
+            "Web":{"pc.tail0000.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47322"}}}}});
+        assert!(serve_e_so_o_nosso(&nosso,47322));
+        // Outra porta local: é de outro programa (ou de outro engine), não nosso.
+        assert!(!serve_e_so_o_nosso(&nosso,47399));
+        // Qualquer coisa a mais publicada no PC impede o reset.
+        let com_outra_rota = json!({"TCP":{"443":{"HTTPS":true}},
+            "Web":{"pc.tail0000.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47322"},"/grafana":{"Proxy":"http://127.0.0.1:3000"}}}}});
+        assert!(!serve_e_so_o_nosso(&com_outra_rota,47322));
+        let com_tcp = json!({"TCP":{"443":{"HTTPS":true},"22":{"TCPForward":"127.0.0.1:22"}},
+            "Web":{"pc.tail0000.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47322"}}}}});
+        assert!(!serve_e_so_o_nosso(&com_tcp,47322));
+        let com_funnel = json!({"TCP":{"443":{"HTTPS":true}},"AllowFunnel":{"pc.tail0000.ts.net:443":true},
+            "Web":{"pc.tail0000.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:47322"}}}}});
+        assert!(!serve_e_so_o_nosso(&com_funnel,47322));
+        // Config vazia ou ilegível: nada a desfazer, e reset não é chamado.
+        assert!(!serve_e_so_o_nosso(&json!({}),47322));
+        assert!(!serve_e_so_o_nosso(&json!(null),47322));
+    }
+
+    #[test] fn so_desfaz_a_publicacao_quando_este_engine_deixa_de_publicar() {
+        let cfg = |enabled, serve| MobileConfig{enabled,serve,bind:"127.0.0.1:47322".into(),token:String::new(),
+            totp_secret:String::new(),totp_confirmed:false};
+        // O caso do bug: engine em modo direto (o de dev) nunca desfaz nada, nem ligando nem salvando.
+        assert!(!deixou_de_publicar(&cfg(true,false),&cfg(true,false)));
+        assert!(!deixou_de_publicar(&cfg(false,false),&cfg(true,false)));
+        // Continuar publicando também não.
+        assert!(!deixou_de_publicar(&cfg(true,true),&cfg(true,true)));
+        // Serve → direto, e Serve → desligado: aí sim.
+        assert!(deixou_de_publicar(&cfg(true,true),&cfg(true,false)));
+        assert!(deixou_de_publicar(&cfg(true,true),&cfg(false,true)));
+        // Serve configurado mas desligado nunca publicou.
+        assert!(!deixou_de_publicar(&cfg(false,true),&cfg(true,false)));
+    }
+
+    #[test] fn nome_de_anexo_nao_escapa_da_pasta_nem_quebra_o_prompt() {
+        assert_eq!(nome_seguro("foto.png"),"foto.png");
+        assert_eq!(nome_seguro("../../Windows/System32/evil.dll"),"evil.dll");
+        assert_eq!(nome_seguro("C:\\Users\\x\\segredo.txt"),"segredo.txt");
+        assert_eq!(nome_seguro("Captura de Tela 2026-09-17, às 10.00.png"),"Captura-de-Tela-2026-09-17---s-10.00.png");
+        assert_eq!(nome_seguro(""),"anexo");
+        assert_eq!(nome_seguro(".."),"anexo");
+        assert_eq!(nome_seguro("CON.txt"),"anexo");
+        assert_eq!(nome_seguro("com1"),"anexo");
+        assert!(nome_seguro(&"a".repeat(300)).len() <= 70);
+        assert_eq!(nome_seguro(&format!("{}.pdf","b".repeat(300))).len(),64);
+    }
+
+    #[test] fn nome_do_cabecalho_chega_com_acento() {
+        assert_eq!(percent_decode("relat%C3%B3rio%20final.pdf"),"relatório final.pdf");
+        assert_eq!(percent_decode("100%"),"100%");
+        assert_eq!(percent_decode("%zz"),"%zz");
+        assert_eq!(percent_decode("%é"),"%é");
+    }
+
+    #[tokio::test] async fn anexo_grava_na_pasta_do_projeto_e_exige_token() {
+        let (dir,state) = fixture();
+        let projeto = dir.path().join("projeto");
+        std::fs::create_dir_all(&projeto).unwrap();
+        atomic_write_json(&dir.path().join("conversations.json"),&json!({"version":1,"conversations":[{
+            "id":"c","project_id":"p","cwd":projeto.to_string_lossy(),"title":"Teste","created_at_ms":1,"segments":[]
+        }]})).unwrap();
+        *state.mobile.config.lock().unwrap() = MobileConfig{enabled:true,bind:"127.0.0.1:47322".into(),token:"segredo".into(),
+            serve:false,totp_secret:String::new(),totp_confirmed:false};
+        let app = router(state.clone());
+        // Maior que o limite global de 32 KB: prova que a rota tem o limite dela.
+        let conteudo = vec![7_u8; 200 * 1024];
+        let pedido = |token: &str| Request::builder().method("POST").uri("/conversas/c/anexos")
+            .header("host","127.0.0.1:47322").header("origin","http://127.0.0.1:47322")
+            .header("x-omni-token",token).header("x-omni-nome","..%2F..%2Ffoto%20nova.png")
+            .body(Body::from(conteudo.clone())).unwrap();
+
+        assert_eq!(app.clone().oneshot(pedido("errado")).await.unwrap().status(),StatusCode::UNAUTHORIZED);
+
+        let resposta = app.clone().oneshot(pedido("segredo")).await.unwrap();
+        assert_eq!(resposta.status(),StatusCode::OK);
+        let valor: Value = serde_json::from_slice(&to_bytes(resposta.into_body(),usize::MAX).await.unwrap()).unwrap();
+        let caminho = std::path::PathBuf::from(valor["caminho"].as_str().unwrap());
+        assert!(caminho.starts_with(projeto.join(".omni-agents").join("anexos")),"{caminho:?}");
+        assert!(caminho.file_name().unwrap().to_string_lossy().ends_with("-foto-nova.png"));
+        assert_eq!(std::fs::read(&caminho).unwrap(),conteudo);
+
+        // Conversa desconhecida não grava nada em lugar nenhum.
+        let outra = Request::builder().method("POST").uri("/conversas/nao-existe/anexos")
+            .header("host","127.0.0.1:47322").header("origin","http://127.0.0.1:47322")
+            .header("x-omni-token","segredo").body(Body::from(vec![1_u8])).unwrap();
+        assert_eq!(app.clone().oneshot(outra).await.unwrap().status(),StatusCode::NOT_FOUND);
+
+        // Acima do limite da rota: recusado.
+        let grande = Request::builder().method("POST").uri("/conversas/c/anexos")
+            .header("host","127.0.0.1:47322").header("origin","http://127.0.0.1:47322")
+            .header("x-omni-token","segredo").body(Body::from(vec![0_u8; ANEXO_MAX_BYTES + 1])).unwrap();
+        assert_eq!(app.oneshot(grande).await.unwrap().status(),StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test] fn tema_publicado_vai_para_o_celular_e_desktop_antigo_nao_apaga() {
+        let (_dir,state) = fixture();
+        let tema = PublishedTheme{accent:"roxo".into(),theme:"claro".into(),background:"pixel-grid".into(),glass:"forte".into()};
+        publish(&state,vec![],vec![],Some(tema.clone())).unwrap();
+        publish(&state,vec![],vec![],None).unwrap();
+        assert_eq!(state.mobile.workspace.lock().unwrap().theme.as_ref(),Some(&tema));
+    }
+
     #[test] fn link_de_liberacao_sai_da_saida_do_serve() {
         let saida = "Serve is not enabled on your tailnet.\nTo enable, visit:\n\n         https://login.tailscale.com/f/serve?node=nEXEMPLO0000CNTRL\n";
         assert_eq!(motivo_do_serve(saida),"https://login.tailscale.com/f/serve?node=nEXEMPLO0000CNTRL");

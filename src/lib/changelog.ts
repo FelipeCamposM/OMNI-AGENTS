@@ -14,6 +14,23 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.4.5",
+    date: "2026-09-17",
+    changes: [
+      "No celular, anexe qualquer arquivo pelo clipe ou cole prints e imagens direto na mensagem para o agente.",
+      "O app do celular ganhou a mesma cara do PC, com a cor e o tema claro ou escuro que você escolheu aqui.",
+      "Atualizar a página no celular mantém você na conversa aberta, e o gesto de voltar anda entre as telas.",
+      "As conversas longas no celular abrem já nas mensagens mais recentes.",
+      "O código QR do celular volta a abrir: o endereço seguro não some mais do Tailscale.",
+      "O Git Graph foi redesenhado: ramos coloridos, etiquetas de branch e tag, autor, data e cópia do hash com um clique.",
+      "A logo do app e o ícone na barra de tarefas acompanham a cor escolhida.",
+      "Feche abas clicando com o botão do meio do mouse.",
+      "O painel Git se atualiza sozinho quando o agente muda arquivos e permite commitar tudo de uma vez.",
+      "Em Novo agente, escolha qual conversa antiga retomar em vez de só a última.",
+      "Terminais que ficavam pretos depois de reabrir o app voltam para a sessão sozinhos.",
+    ],
+  },
+  {
     version: "0.4.4",
     date: "2026-09-16",
     changes: [

@@ -147,6 +147,26 @@ export function escurecer(hex: string, t: number): string {
   return misturar(hex, "#000000", t);
 }
 
+/* ── Cores da logo ─────────────────────────────────────────────────────── */
+
+/**
+ * As seis camadas do pixel-art da logo, derivadas da paleta.
+ *
+ * Derivar em vez de listar: são 6 cores × 9 paletas × 2 temas. Os fatores reproduzem a rampa do
+ * SVG de referência (contorno quase preto → sombra → cor → dois clareados → branco).
+ */
+export function coresDaLogo(id: string | undefined, temaClaro: boolean) {
+  const { base, deep } = coresDaPaleta(id, temaClaro);
+  return {
+    outline: escurecer(deep, 0.72),
+    shadow: deep,
+    primary: base,
+    secondary: clarear(base, 0.22),
+    accent: clarear(base, 0.55),
+    highlight: "#FFFFFF",
+  };
+}
+
 /* ── Cores dos fundos animados ─────────────────────────────────────────── */
 
 export interface CoresEfeito {

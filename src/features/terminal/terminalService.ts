@@ -144,6 +144,14 @@ export interface PublishedProject {
   path: string;
 }
 
+/** Aparência do PC que o celular copia. Só identificadores — o celular valida contra as tabelas. */
+export interface PublishedTheme {
+  accent: string;
+  theme: string;
+  background: string;
+  glass: string;
+}
+
 /**
  * Publica no engine a lista de projetos abertos e as CLIs disponíveis, para o celular poder
  * escolher entre elas. O engine não tem tabela de projetos — isso só existe no `localStorage`
@@ -151,7 +159,7 @@ export interface PublishedProject {
  *
  * Os agentes são montados aqui, e não no Rust, porque `AGENT_RESUME_FLAG` mora neste arquivo.
  */
-export async function publishWorkspace(projects: PublishedProject[]) {
+export async function publishWorkspace(projects: PublishedProject[], theme: PublishedTheme | null = null) {
   const clis = await listAgentClis();
   const agents = clis
     .filter((cli) => cli.available)
@@ -161,7 +169,7 @@ export async function publishWorkspace(projects: PublishedProject[]) {
       command: cli.command,
       resume: AGENT_RESUME_FLAG[cli.id] ?? null,
     }));
-  await invoke("publish_workspace", { projects, agents });
+  await invoke("publish_workspace", { projects, agents, theme });
 }
 
 /** Pré-aprova o diálogo de "trust this folder" do CLI antes de abrir a PTY (equivalente ao

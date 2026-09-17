@@ -135,6 +135,10 @@ const ICONS = {
   EyeIcon: "eye",
   CalendarIcon: "calendar",
   ClockIcon: "clock",
+  // Chat do celular: anexar, enviar, voltar
+  AttachmentIcon: "attachment",
+  SendIcon: "send",
+  ArrowLeftIcon: "arrow-left",
 };
 
 /**

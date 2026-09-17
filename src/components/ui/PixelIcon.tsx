@@ -4,7 +4,7 @@ import type { SVGProps } from "react";
  * ARQUIVO GERADO — não editar à mão.
  * Rode `node scripts/gen-pixel-icons.mjs` depois de mexer na lista ICONS do script.
  *
- * Ícones pixel-art de `pixelarticons` v2.4.1 (MIT), inlineados: o app usa ~101 dos
+ * Ícones pixel-art de `pixelarticons` v2.4.1 (MIT), inlineados: o app usa ~104 dos
  * 1036 do pacote, e nenhum runtime externo entra no bundle por causa disso.
  */
 type IconProps = SVGProps<SVGSVGElement> & { size?: number | string };
@@ -421,4 +421,16 @@ export const CalendarIcon = makeIcon(
 
 export const ClockIcon = makeIcon(
   "M6 2h12v2H6zM2 6h2v12H2zm18 0h2v12h-2zm-2-2h2v2h-2zM4 4h2v2H4zm2 18h12v-2H6zm12-2h2v-2h-2zM4 20h2v-2H4zm7-14h2v7h-2zm2 7h2v2h-2zm2 2h2v2h-2z"
+);
+
+export const AttachmentIcon = makeIcon(
+  "M7 7v10H5V7zm12 0v12h-2V7zm-8 2v10H9V9zm4 0v8h-2V9zm0-6v2H9V3zm-2 4v2h-2V7zm4 12v2h-6v-2zm0-14v2h-2V5zM9 5v2H7V5z"
+);
+
+export const SendIcon = makeIcon(
+  "M4 19h4v2H2v-8h2v6Zm8 0H8v-2h4v2Zm4-2h-4v-2h4v2Zm4-2h-4v-2h4v2Zm-10-2H4v-2h6v2Zm12 0h-2v-2h2v2ZM8 5H4v6H2V3h6v2Zm12 6h-4V9h4v2Zm-4-2h-4V7h4v2Zm-4-2H8V5h4v2Z"
+);
+
+export const ArrowLeftIcon = makeIcon(
+  "M20 11v2H4v-2zM8 13v2H6v-2zm2 2v2H8v-2zm2 2v2h-2v-2zm-4-6V9H6v2zM10 15V7H8v8zm2 2V5h-2v12z"
 );

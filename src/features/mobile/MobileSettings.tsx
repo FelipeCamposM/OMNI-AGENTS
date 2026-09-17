@@ -48,6 +48,7 @@ export function MobileSettings() {
   const [erroAuthy, setErroAuthy] = useState<string | null>(null);
   const [confirmarRefazer, setConfirmarRefazer] = useState(false);
   const [falhouAbrir, setFalhouAbrir] = useState(false);
+  const [falhouAbrirEndereco, setFalhouAbrirEndereco] = useState(false);
 
   const carregar = useCallback(async () => invoke<Settings>("mobile_settings", { config: null }), []);
 
@@ -221,8 +222,19 @@ export function MobileSettings() {
             className="bg-white p-3" width={240} height={240} />}
           <p className="text-xs text-text-secondary">
             O código já leva o acesso junto — não precisa digitar senha. Abre em:{" "}
-            <a className="text-accent underline" href={status!.public_url!} target="_blank" rel="noreferrer">{status!.public_url}</a>
+            {/* Botão com `openUrl`, não `<a target="_blank">`: dentro do Tauri o link comum não abre
+                navegador nenhum, e o clique parecia simplesmente não fazer nada. */}
+            <button type="button" className="text-accent underline break-all" onClick={() => {
+              setFalhouAbrirEndereco(false);
+              // Barra no fim: a permissão casa `https://*.ts.net/*` na string crua, e o engine manda
+              // o endereço sem ela.
+              const url = status!.public_url!;
+              openUrl(url.endsWith("/") ? url : `${url}/`).catch(() => setFalhouAbrirEndereco(true));
+            }}>{status!.public_url}</button>
           </p>
+          {falhouAbrirEndereco && <p className="text-[10px] text-text-muted break-all">
+            Não consegui abrir o navegador. Copie e cole: <code>{status!.public_url}</code>
+          </p>}
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="ghost" disabled={busy} onClick={() => {
               void navigator.clipboard.writeText(status!.qr!).catch(() => undefined); setCopiado(true);

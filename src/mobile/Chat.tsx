@@ -1,5 +1,11 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import ReactMarkdown from "react-markdown";
+import rehypeSanitize from "rehype-sanitize";
+import remarkGfm from "remark-gfm";
 import { AgentIcon } from "../components/ui/AgentIcon";
+import { OmniLogo } from "../components/ui/OmniLogo";
+import { iconForPath } from "../features/files/fileIcons";
+import { nomeDoCaminho, separarAnexos } from "./anexos";
 
 /** Os quadros do spinner do Claude Code, em vai-e-volta — é o que faz parecer que ele "respira". */
 const QUADROS = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
@@ -39,25 +45,79 @@ function sortearOutra(atual: string): string {
   return opcoes[Math.floor(Math.random() * opcoes.length)];
 }
 
-interface MessageBubbleProps {
-  lado: "user" | "agent";
-  autor: string;
-  /** Id da CLI que respondeu, quando houver: põe a marca do provider ao lado do autor. */
-  provider?: string;
-  /** Mensagem mandada daqui e ainda não confirmada no transcript. */
-  pendente?: boolean;
-  children: ReactNode;
+/** "14:32" hoje, "17/09 14:32" em outro dia. Horário inválido some em vez de mostrar lixo. */
+export function horarioCurto(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const data = new Date(iso);
+  if (Number.isNaN(data.getTime())) return null;
+  const hora = data.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  return data.toDateString() === new Date().toDateString()
+    ? hora
+    : `${data.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${hora}`;
 }
 
-/** Balão de uma mensagem: do usuário à direita, do agente à esquerda. */
-export function MessageBubble({ lado, autor, provider, pendente, children }: MessageBubbleProps) {
+const NOME_DO_AGENTE: Record<string, string> = { claude: "Claude", codex: "Codex", cursor: "Cursor" };
+
+/** Anexo já no PC (caminho) ou ainda só no celular (com prévia local). */
+interface AnexoVisivel { nome: string; previa?: string | null }
+
+function CartoesDeAnexo({ anexos }: { anexos: AnexoVisivel[] }) {
+  if (anexos.length === 0) return null;
   return (
-    <article className={`bubble ${lado === "user" ? "bubble-user" : "bubble-agent"}${pendente ? " bubble-pending" : ""}`}>
-      <p className="bubble-author">
-        {provider && <AgentIcon provider={provider} size={11} className="mr-1 inline-block align-[-1px]" />}
-        {autor}
-      </p>
-      <div className="mobile-message">{children}</div>
+    <ul className="bubble-anexos" aria-label="Anexos da mensagem">
+      {anexos.map((anexo, i) => {
+        const Icone = iconForPath(anexo.nome);
+        return (
+          <li key={`${anexo.nome}-${i}`} className="bubble-anexo">
+            {anexo.previa
+              ? <img src={anexo.previa} alt="" className="bubble-anexo-previa" />
+              : <Icone aria-hidden className="h-4 w-4 shrink-0" />}
+            <span className="truncate">{anexo.nome}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+interface MessageBubbleProps {
+  lado: "user" | "agent";
+  /** Id da CLI que respondeu, quando houver: dá o nome e a marca do autor. */
+  provider?: string | null;
+  texto: string;
+  horario?: string | null;
+  /** Mensagem mandada daqui e ainda não confirmada no transcript. */
+  pendente?: boolean;
+  /** Anexos com prévia local — só no balão otimista, antes de o transcript chegar. */
+  anexosLocais?: AnexoVisivel[];
+}
+
+/**
+ * Balão de uma mensagem: do usuário à direita, do agente à esquerda.
+ *
+ * Resposta do agente é markdown (listas, código, tabelas), renderizada igual ao Histórico do PC e
+ * com o mesmo `rehype-sanitize`. Mensagem do usuário fica em texto puro — reinterpretar o que a
+ * pessoa digitou mudaria o que ela vê do próprio prompt — e a lista de anexos vira cartões.
+ */
+export function MessageBubble({ lado, provider, texto, horario, pendente, anexosLocais }: MessageBubbleProps) {
+  const doUsuario = lado === "user";
+  const { texto: corpo, anexos } = doUsuario ? separarAnexos(texto) : { texto, anexos: [] as string[] };
+  const cartoes = anexosLocais ?? anexos.map((caminho) => ({ nome: nomeDoCaminho(caminho) }));
+  const autor = doUsuario ? "Você" : NOME_DO_AGENTE[provider ?? ""] ?? provider ?? "Agente";
+  const hora = horarioCurto(horario);
+  return (
+    <article className={`bubble ${doUsuario ? "bubble-user" : "bubble-agent"}${pendente ? " bubble-pending" : ""}`}>
+      <header className="bubble-author">
+        {!doUsuario && <AgentIcon provider={provider} size={12} className="shrink-0" />}
+        <span>{autor}</span>
+        {pendente ? <span className="bubble-time">enviando…</span> : hora && <time className="bubble-time">{hora}</time>}
+      </header>
+      {corpo && (doUsuario
+        ? <div className="mobile-message">{corpo}</div>
+        : <div className="bubble-markdown prose prose-sm max-w-none">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{corpo}</ReactMarkdown>
+          </div>)}
+      <CartoesDeAnexo anexos={cartoes} />
     </article>
   );
 }
@@ -65,6 +125,7 @@ export function MessageBubble({ lado, autor, provider, pendente, children }: Mes
 interface AgentWorkingProps {
   /** Quando o trabalho começou (ms). Vira o contador "(12s)" igual ao do Claude Code. */
   desde: number;
+  provider?: string | null;
 }
 
 /**
@@ -73,7 +134,7 @@ interface AgentWorkingProps {
  * O texto que muda fica `aria-hidden`: anunciar cada frase nova num leitor de tela seria barulho
  * a cada poucos segundos. Quem usa leitor recebe uma única mensagem estável.
  */
-export function AgentWorking({ desde }: AgentWorkingProps) {
+export function AgentWorking({ desde, provider }: AgentWorkingProps) {
   const [quadro, setQuadro] = useState(0);
   const [frase, setFrase] = useState(() => sortearOutra(""));
   const [agora, setAgora] = useState(() => Date.now());
@@ -88,9 +149,10 @@ export function AgentWorking({ desde }: AgentWorkingProps) {
 
   const segundos = Math.max(0, Math.floor((agora - desde) / 1000));
   return (
-    <div className="bubble bubble-agent" role="status">
+    <div className="bubble bubble-agent bubble-working" role="status">
       <span className="sr-only">O agente está trabalhando</span>
       <span className="working" aria-hidden>
+        {provider && <AgentIcon provider={provider} size={12} className="shrink-0 self-center" />}
         <span className="working-glyph">{reduzirMovimento() ? "✻" : QUADROS[quadro]}</span>
         <span className="working-verb">{frase}…</span>
         <span className="working-time">({segundos}s)</span>
@@ -127,22 +189,25 @@ export function PairingScreen({ parear }: PairingScreenProps) {
 
   return (
     <section className="pairing">
-      <img src="/apple-touch-icon.png" alt="" width={72} height={72} className="pairing-icon" />
-      <h2 className="text-lg font-semibold">Parear este aparelho</h2>
-      <p className="text-sm text-text-secondary">
-        Abra o <strong>Authy</strong> e digite o código de 6 dígitos do <strong>OMNI AGENTS</strong>.
-      </p>
-      <form onSubmit={(event) => void enviar(event)} className="pairing-form">
-        <label htmlFor="codigo-authy" className="sr-only">Código do Authy</label>
-        <input id="codigo-authy" className="pairing-input" inputMode="numeric" autoComplete="one-time-code"
-          pattern="[0-9]*" maxLength={6} value={codigo} placeholder="000000"
-          onChange={(event) => setCodigo(event.target.value.replace(/\D/g, "").slice(0, 6))} />
-        <button type="submit" className="btn btn-glass px-4 py-2.5 text-sm pairing-button" disabled={codigo.length !== 6 || enviando}>
-          {enviando ? "Conferindo…" : "Parear"}
-        </button>
-      </form>
-      {erro && <p role="alert" className="text-danger text-sm">{erro}</p>}
-      <p className="text-xs text-text-muted">
+      <OmniLogo className="neon-glow pairing-logo" />
+      <h1 className="pixel-text text-lg text-text-primary">OMNI AGENTS</h1>
+      <div className="glass pairing-card">
+        <h2 className="text-sm font-semibold">Parear este aparelho</h2>
+        <p className="text-xs text-text-secondary">
+          Abra o <strong>Authy</strong> e digite o código de 6 dígitos do <strong>OMNI AGENTS</strong>.
+        </p>
+        <form onSubmit={(event) => void enviar(event)} className="pairing-form">
+          <label htmlFor="codigo-authy" className="sr-only">Código do Authy</label>
+          <input id="codigo-authy" className="field pairing-input" inputMode="numeric" autoComplete="one-time-code"
+            pattern="[0-9]*" maxLength={6} value={codigo} placeholder="000000"
+            onChange={(event) => setCodigo(event.target.value.replace(/\D/g, "").slice(0, 6))} />
+          <button type="submit" className="btn btn-primary px-4 py-2.5 text-sm pairing-button" disabled={codigo.length !== 6 || enviando}>
+            {enviando ? "Conferindo…" : "Parear"}
+          </button>
+        </form>
+        {erro && <p role="alert" className="text-danger text-xs">{erro}</p>}
+      </div>
+      <p className="text-[11px] text-text-muted">
         Ainda não tem o OMNI no Authy? No PC, abra Configurações → Celular → Proteger com o Authy.
       </p>
     </section>

@@ -93,6 +93,12 @@ pub fn list_conversations(project_id: String) -> Vec<Conversation> {
     conversations
 }
 
+fn resumed_session_id(command: &str) -> Option<String> {
+    let mut parts = command.split_whitespace();
+    parts.find(|part| *part == "--resume")?;
+    parts.next().filter(|id| !id.starts_with('-')).map(str::to_owned)
+}
+
 /// Abre uma conversa nova. Para o Claude, gera o UUID e devolve `claude --session-id <uuid>`:
 /// escolher o id na largada é o que torna o caminho do transcript conhecido desde já, sem precisar
 /// vigiar diretório atrás do arquivo que acabou de nascer.
@@ -111,12 +117,15 @@ pub fn begin_conversation(
         .or_else(|| crate::profiles::preferred(&provider));
 
     let (external_session_id, transcript_path, initial_command) = if provider == "claude" {
-        let session_id = uuid::Uuid::new_v4().to_string();
+        // Retomada escolhida no histórico (`claude --resume <id>`): a conversa já tem id e
+        // transcript; somar um `--session-id` novo faria o Claude recusar a combinação.
+        let resumed = resumed_session_id(&command);
+        let session_id = resumed.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let transcript = profile
             .as_ref()
             .map(|profile| claude_transcript_path(Path::new(&profile.config_dir), &cwd, &session_id))
             .map(|path| path.to_string_lossy().into_owned());
-        let command = format!("{command} --session-id {session_id}");
+        let command = if resumed.is_some() { command } else { format!("{command} --session-id {session_id}") };
         (Some(session_id), transcript, command)
     } else {
         // Codex não deixa escolher o id da sessão; o trecho nasce sem transcript e só
@@ -398,6 +407,14 @@ fn tail_within_budget(turns: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resumed_session_id_reads_resume_flag() {
+        assert_eq!(resumed_session_id("claude --resume abc-123").as_deref(), Some("abc-123"));
+        assert_eq!(resumed_session_id("claude"), None);
+        assert_eq!(resumed_session_id("claude --continue"), None);
+        assert_eq!(resumed_session_id("claude --resume --verbose"), None);
+    }
 
     #[test]
     fn transcript_parser_keeps_text_and_drops_tool_traffic() {

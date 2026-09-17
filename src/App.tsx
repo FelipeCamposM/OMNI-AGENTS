@@ -33,7 +33,12 @@ export function App() {
   const [view, setView] = useState<View>("workspace");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>();
   const { settings, updateSettings, resetSettings } = useSettings();
-  const { workspace, activeProject, dispatch, workspaces, activeWorkspaceId } = useWorkspace();
+  // Memo: o objeto novo a cada render faria o `useWorkspace` recalcular a projeção à toa.
+  const temaPublicado = useMemo(
+    () => ({ accent: settings.accent, theme: settings.theme, background: settings.background, glass: settings.glass }),
+    [settings.accent, settings.theme, settings.background, settings.glass]
+  );
+  const { workspace, activeProject, dispatch, workspaces, activeWorkspaceId } = useWorkspace(temaPublicado);
   const { sessions, online: engineOnline } = useTerminalSessions();
   const { kanban, dispatch: kanbanDispatch } = useKanban();
   useKanbanDispatcher(kanban, kanbanDispatch, workspace.projects, sessions);

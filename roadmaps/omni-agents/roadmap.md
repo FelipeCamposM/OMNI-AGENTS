@@ -1794,3 +1794,194 @@ de arquivo arrastavam, por pointer events, e o destino eram 5 botões de texto s
   duas janelas e o `!` do motivo. Para ter uso e modelo do Cursor é preciso uma fonte nova em
   `omni-core` (`usage.rs` e `runtime.rs`).
 - [ ] Não conferido no app instalado.
+
+### Logo temática, e o ícone da janela junto — 2026-09-16
+
+- [x] `assets/omni-agents-pixel-themeable.svg` (708 `<rect>`, 6 camadas) virou
+  `src/components/ui/OmniLogo.tsx`: um `path` por camada, 3× menor que os retângulos originais.
+  Conversão conferida por round-trip — os 708 retângulos voltam idênticos do path.
+- [x] Cada camada pinta com `var(--omni-<camada>, <hex laranja>)`. O `<style>` do SVG original saiu
+  de propósito: inline no documento, `.shadow`/`.primary`/`.accent` são nomes genéricos demais e
+  vazariam para o resto da página (`.shadow` é utilitário do Tailwind).
+- [x] `coresDaLogo` (`src/lib/palettes.ts`) deriva a rampa das duas cores da paleta com os
+  `clarear`/`escurecer` que já existiam: contorno (deep escurecido 72%) → sombra (deep) → cor
+  (base) → base+22% branco → base+55% branco → branco. `useSettings` escreve as seis no `<html>`
+  junto com `--c-accent`, então a logo acompanha paleta **e** variante clara/escura.
+- [x] `viewBox` recortado para `2 1 63 63`: a arte nasce 47×61 numa tela 64×66 cheia de margem
+  morta, e usá-la crua esmagava a logo no slot `w-7 h-7` da barra lateral.
+- [x] **Ícone da janela/barra de tarefas** repintado em tempo real
+  (`src/features/appIcon.ts`): `svgDaLogo` monta o SVG com as cores literais, rasteriza num canvas
+  252×252 (63 × 4, múltiplo inteiro para o pixel sair quadrado) e manda o RGBA cru para
+  `Image.new` + `setIcon`. RGBA em vez de PNG porque `Image.new` não exige a feature `image-png` no
+  Rust. Guarda a última assinatura de cor para não repintar à toa. Permissão nova:
+  `core:window:allow-set-icon` em `src-tauri/capabilities/default.json` (validada por `cargo check`).
+- [x] `src/test/OmniLogo.test.tsx` (7): camadas por var, pixel art sem curva, viewBox quadrado,
+  markup do ícone sem `var()`, e a rampa em todas as 9 paletas nos dois temas. Suíte: 245 testes.
+- [ ] **Não muda em tempo real:** o ícone do atalho fixado, o do instalador e o do Explorer — esses
+  são o `.ico` gravado no executável (`src-tauri/icons/`), e trocar exigiria reinstalar. Só a janela
+  viva recebe a cor da paleta.
+- [ ] Não conferido no app rodando (typecheck, 245 testes e `cargo check` apenas).
+
+### Fechar aba com o botão do meio — 2026-09-16
+
+- [x] `WorkspaceTabBar`: `auxclick` com `button === 1` chama o mesmo `onCloseTab` do ×, então vale
+  para qualquer tipo de aba e segue o mesmo fluxo de fechamento. `mousedown` do meio tem
+  `preventDefault` para não abrir a rolagem automática do Windows. O arraste já ignorava botão ≠ 0.
+- [x] 2 testes em `src/test/WorkspaceTabBar.icon.test.tsx`. Não conferido no app rodando.
+
+### Retomar conversa escolhida no Novo agente — 2026-09-16
+
+- [x] "Retomar conversa" do `AgentLauncher` agora abre o `HistoryView` dentro da própria pane,
+  travado na CLI escolhida e na pasta do projeto (prop `lock`, que esconde provider e seletor de
+  projeto). Clicar mostra as mensagens; "Retomar no terminal" lança `resumeCommand` na conta em que
+  a conversa foi gravada. "Continuar a última" (`--continue`/`resume --last`) e "Voltar" ficam no
+  cabeçalho (prop `actions`).
+- [x] `begin_conversation` (`src-tauri/src/conversations.rs`): comando com `--resume <id>` reaproveita
+  o id (transcript certo) e não soma `--session-id` novo. Teste `resumed_session_id_reads_resume_flag`.
+- [x] `src/test/AgentLauncher.resume.test.tsx`. Suíte: 248 testes. Não conferido no app rodando.
+- [ ] A ver: `claude --continue` ainda recebe `--session-id` somado — conferir se o Claude aceita
+  a combinação sem `--fork-session`.
+
+### Aba preta com "session is not running" — 2026-09-17
+
+- [x] Diagnóstico: engine e CLIs vivos, sem crash nem corte de scrollback. A aba guardava o id de uma
+  sessão que o engine só conhecia como **histórica** (engine reiniciado por update/reabertura, ou CLI
+  que saiu). Snapshot de histórica volta vazio (`next_seq` 0) → tela preta; `write_terminal` →
+  "session is not running". Trocar de aba/minimizar só remontava a pane e expunha isso.
+- [x] `TerminalPane`: religa sozinho com `restartTerminal` (mesmo id; Claude volta com `--resume`)
+  quando a primeira leitura mostra sessão histórica parada, e quando digitar dá "session is not
+  running". O banner, nesse erro, reinicia a sessão em vez de abrir um shell novo sem agente.
+- [x] 2 testes em `src/test/TerminalPane.test.tsx`. Suíte: 250. Não conferido no app rodando.
+- [ ] Codex religado volta com `codex` puro (conversa nova) — `comando_ao_reiniciar` só sabe
+  retomar Claude.
+
+### QR do celular não abria — engine de dev apagava o Serve do app instalado — 2026-09-17
+
+- **Sintoma:** o QR (`https://pc-felipe.tail68f850.ts.net/#t=…`) não abria no celular, mas a tela do
+  app instalado continuava mostrando o código como pronto.
+- **Diagnóstico (estado real da máquina):** `mobile.json` do instalado com `serve=true`;
+  `tailscale serve status` → **"No serve config"**; HTTPS liberado no tailnet (`CertDomains`
+  presente, cap `https`), iPhone online. Bundle do celular confirmado dentro do
+  `omni-engine.exe` instalado (hipótese de asset faltando descartada). O `mobile.json` do **dev**
+  estava `enabled=true, serve=false`.
+- **Causa:** `publicar()` rodava `tailscale serve reset` em **toda subida em modo direto**. Serve é
+  config do PC inteiro, então o engine de dev apagava a publicação HTTPS do instalado a cada
+  `npm run dev`. A tela do instalado seguia exibindo o QR porque o `serve_state` dele é o
+  resultado da publicação antiga — nada reconferia.
+- [x] `crates/omni-engine/src/mobile.rs`: modo direto não toca mais no Serve na subida. Desfazer a
+  publicação passou para o `settings`, só quando **este** engine deixa de publicar
+  (`deixou_de_publicar`: Serve→direto ou Serve→desligado).
+- [x] Mesmo nesse caso, `serve reset` só roda se a config do Tailscale for **exatamente** a nossa
+  (`serve_e_so_o_nosso`: TCP só na 443, um site, uma rota `/` → `http://127.0.0.1:<porta>`, nada
+  em Services/Funnel/Foreground). Qualquer outra publicação do PC fica intacta — antes o reset
+  apagaria também serviços que o usuário publicou por fora.
+- [x] **Testar**, no modo Serve, confere `serve status --json` e, se a rota sumiu, reinicia o
+  listener (que republica) e diz isso na tela.
+- [x] Tela do PC: o endereço era `<a target="_blank">`, que no Tauri não abre navegador — virou botão
+  com `openUrl` e fallback para copiar. Permissão do opener ganhou `https://*.ts.net/*` e
+  `http://100.*/*`; a URL é aberta com barra final porque o plugin casa `glob` na string crua e o
+  engine manda o endereço sem ela. O token **não** vai para o navegador do PC.
+- [x] Testes: 2 Rust novos (`reset_so_quando_a_config_do_serve_e_so_a_nossa`,
+  `so_desfaz_a_publicacao_quando_este_engine_deixa_de_publicar`) e 2 no `MobileSettings.test.tsx`.
+  Front 252, Rust do workspace verde, `cargo check` ok.
+- [ ] **Formato do `serve status --json` populado não foi observado ao vivo** (a máquina estava sem
+  publicação). As chaves seguem o `ipn.ServeConfig` (`TCP`/`Web`/`Handlers`/`Proxy`); vale conferir
+  com o app rodando.
+- [ ] Engine de dev e instalado continuam usando a mesma porta de celular (47322) por padrão —
+  funciona porque escutam em IPs diferentes, mas o dev em modo Serve tentaria o mesmo loopback.
+- [ ] Chega ao app instalado só com build + instalação.
+
+### Painel Git sem Commit apesar de haver mudanças — 2026-09-17
+
+- [x] `GitPanel` só lia o status ao montar: mudanças feitas pelo agente não apareciam (ficava em
+  "árvore limpa"). Agora relê em silêncio a cada 3s e ao focar a janela, sem piscar "Carregando…".
+- [x] Commit/Commit e push apareciam só com arquivo em stage. Agora aparecem com qualquer mudança;
+  sem nada em stage, o commit faz `git add` de tudo antes (como o VS Code). Com stage, respeita.
+- [x] 3 testes novos em `src/test/GitPanel.test.tsx`. Não conferido no app rodando.
+
+### Celular: anexos, colar arquivo, tema do PC e navegação que sobrevive ao refresh — 2026-09-17
+
+- [x] **Anexos.** Rota nova `POST /conversas/{id}/anexos` (`crates/omni-engine/src/mobile.rs`): corpo
+  cru até 25 MB com limite **só nesta rota** (o global continua 32 KB), token e origem exigidos como
+  no resto da API. Grava em `<cwd da conversa>/.omni-agents/anexos/<ms>-<hex>-<nome>` — a pasta sai
+  da conversa registrada, nunca do celular. `nome_seguro` fica só com o último componente, troca o
+  que não é `[A-Za-z0-9._-]`, recusa nomes reservados do Windows e corta nome longo preservando a
+  extensão; `create_new` impede sobrescrever. Nome chega em `X-Omni-Nome` com `encodeURIComponent`.
+- [x] O prompt leva os caminhos depois do texto, sob `[Anexos enviados pelo celular]` — é como as
+  CLIs recebem arquivo (o PC cola pelo clipboard do próprio PC, que o celular não alcança). Só
+  anexo, sem texto, também envia; o marcador abre a mensagem, nunca um caminho com `/`.
+- [x] Celular (`src/mobile/Composer.tsx`, `anexos.ts`): botão de clipe (`<label>` em volta do
+  `input type=file`, sem `accept`), colar arquivo/print no campo vira anexo, cartões com prévia de
+  imagem e ícone por tipo (`iconForPath` do PC), remover, estado de envio, recusa local acima de
+  25 MB. O caminho subido fica guardado no anexo: reenvio após timeout monta o mesmo texto e reusa
+  a mesma chave de idempotência, sem duplicar arquivo. CSP do celular ganhou `img-src blob:`.
+- [x] **Mesmo tema do PC.** `PublishWorkspace` leva `theme` (`PublishedTheme`: paleta, claro/escuro,
+  fundo, relevo), publicado pelo `useWorkspace` junto com os projetos e devolvido em `/projetos`.
+  Desktop antigo publicando sem tema mantém o último. O celular aplica com o mesmo
+  `aplicarPaleta` do PC (extraído de `useSettings` para `src/lib/aplicarTema.ts`), segue o sistema
+  quando o PC usa "Sistema", troca fundo animado (WebGL) pela grade de pixels e acompanha a cor da
+  barra de status. Último tema fica no `localStorage` para o pareamento e o primeiro quadro.
+- [x] **Visual.** Barra de cima com logo/voltar/atualizar, cartões `.glass` para projeto e conversa
+  (marca do agente, ponto de estado, contagens), `SegmentedControl` e `Select` do PC, respostas do
+  agente em markdown com `rehype-sanitize` (cores do `prose` mapeadas para os tokens do tema),
+  horário em cada balão, anexos como cartões, aprovação em painel de alerta, pareamento com a
+  `OmniLogo`. Ícones novos pelo gerador: `AttachmentIcon`, `SendIcon`, `ArrowLeftIcon`.
+- [x] **Refresh não volta mais ao início.** A tela vive no endereço (`#/p/<projeto>`, `#/c/<conversa>`,
+  `src/mobile/rota.ts`); o gesto de voltar do celular anda pelas telas, e aberto direto pelo
+  endereço o "voltar" vai para a tela-pai. Rascunho e filtro "Atenção" ficam no `sessionStorage`.
+- [x] **Chat abre no fim.** `timeline(cursor: None)` devolve as últimas 100 mensagens com
+  `prev_cursor` (`crates/omni-core/src/conversations.rs`); antes abria nas 100 **mais antigas** e,
+  numa conversa longa, a resposta nova nunca aparecia sem paginar. Balão otimista some também
+  quando chega qualquer mensagem do usuário com índice acima da última vista no envio.
+- [x] Testes: engine +4 (anexo com token/limite/pasta, nome seguro, cabeçalho com acento, tema
+  publicado), core +1 (fim da conversa), celular 21 (anexar, colar, só anexo, falha de upload,
+  limite, formato do prompt, refresh na conversa, rascunho, voltar, paginação, tema).
+  Front 266, core 19, engine 52, `cargo check`, `npm run build:mobile`.
+- [x] Conferido no navegador pelo `browser_fixture` (agora com projeto publicado, contas, transcript
+  com markdown/tabela/anexos e tema por `OMNI_FIXTURE_THEME`/`OMNI_FIXTURE_ACCENT`): roxo escuro e
+  verde claro. Achados corrigidos na hora: barra de cima translúcida deixando o texto vazar e faixa
+  do compositor com margens transparentes. A aba de automação do Chrome se declara oculta — o poll
+  pausa nela de propósito, então a checagem forçou `visibilityState`.
+- [ ] Não conferido em aparelho real (iPhone/Android), nem o upload pelo Tailscale de verdade.
+- [ ] A CLI lê imagem pelo caminho com a ferramenta dela; não foi medido se o Codex abre imagem
+  assim tão bem quanto o Claude.
+- [ ] `.omni-agents/` dentro do projeto não entra no `.gitignore` dele automaticamente.
+- [ ] Chega ao app instalado só com build + instalação.
+
+### Git Graph redesenhado — 2026-09-17
+
+- [x] `@gitgraph/react` saiu (dependência removida). Os defeitos dele não se resolviam com template:
+  etiquetas internas `lane-N`/`root-N` na tela, cores e fundo fixos (não seguiam tema claro nem a
+  paleta), sem data, autor nem hash.
+- [x] `src/features/git/graphLayout.ts`: trilhas no estilo do Git Graph do VS Code, em cima do
+  `git log --topo-order` que o backend já entrega. Cada trilha espera um hash; o nó cai na primeira
+  que o espera e as demais convergem (fork); o primeiro pai herda trilha e cor, os outros pais
+  abrem trilha nova ou desembocam na que já os esperava. Trilhas não trocam de coluna enquanto
+  vivem, então só há diagonal em fork e merge. Pai fora da janela encerra a trilha.
+  `parseRefs` transforma o `%D` em etiquetas (branch atual, local, remoto, tag; `origin/HEAD` sai).
+- [x] `GitGraphPane.tsx`: uma linha por commit — trilhas em SVG com curvas, nó quadrado (merge
+  vazado, HEAD com moldura), etiquetas com a cor do ramo, mensagem (merge mais apagado), autor,
+  data relativa na última semana e data depois, hash curto que copia ao clicar. Cabeçalho com
+  contagem de commits/branches e botão de atualizar. Primeira cor das trilhas é a da paleta.
+  Janela subiu de 200 para 500 commits.
+- [x] CSS em `src/index.css` (`.gg-*`): tokens do tema, etiquetas pixel, container query que
+  esconde autor (< 640 px) e data (< 460 px) quando o painel está dividido; etiquetas encolhem
+  sem invadir o hash.
+- [x] Conferido no navegador com uma prévia temporária (histórico sintético com develop, features,
+  hotfix, merges, tags e remotos) em escuro/laranja, escuro/roxo e claro/azul, largo e estreito.
+  Prévia apagada depois.
+- [x] `src/test/gitGraph.test.tsx` (8): linear, merge + fork, duas pontas no mesmo pai, ramo
+  paralelo, pai fora da janela, refs, render com etiquetas reais e sem `lane-`, repositório vazio.
+  Front 274, typecheck, `vite build`.
+- [ ] Sem virtualização: acima de 500 commits a lista corta (o cabeçalho avisa).
+- [ ] Não conferido no app Tauri rodando.
+
+## Release v0.4.5 (2026-09-17)
+
+- [x] `VERSION` 0.4.5 + `version:sync`; entrada em `src/lib/changelog.ts` (anexos e tema no celular,
+  refresh que mantém a conversa, QR que volta a abrir, Git Graph novo, logo na cor da paleta, fechar
+  aba com o botão do meio, painel Git que se atualiza, retomar conversa escolhida, terminal preto
+  que religa sozinho).
+- [x] Verificado antes da tag, igual ao CI: typecheck, 274 testes front, `cargo test` de engine/core/
+  protocolo, `cargo check -p omni-agents`.
+- [ ] Tag `v0.4.5` → workflow `release.yml` gera o rascunho com os instaladores → publicar.

@@ -1,21 +1,203 @@
-html, body, #root { min-height: 100%; height: auto; overflow: auto; }
-body { margin: 0; background: rgb(var(--c-bg-primary)); color: rgb(var(--c-text-primary)); }
-body { user-select: text; -webkit-user-select: text; }
-.mobile-shell { max-width: 48rem; margin: auto; padding: 1rem; padding-bottom: max(1rem, env(safe-area-inset-bottom)); box-sizing: border-box; min-height: 100dvh; display: flex; flex-direction: column; }
-.mobile-shell .btn { min-height: 44px; }
-.mobile-card { border: 1px solid rgb(var(--c-border-subtle)); background: rgb(var(--c-bg-surface)); padding: 1rem; margin-block: .75rem; }
-.mobile-message { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; }
-.mobile-composer { display: block; width: 100%; min-height: 7rem; padding: .75rem; background: rgb(var(--c-bg-elevated)); border: 1px solid rgb(var(--c-border)); font-size: 16px; }
+/*
+  App do celular. Mesma linguagem visual do PC — painéis `.glass` (borda grossa, sombra dura
+  deslocada, cantos retos), botões `.btn`, tokens de cor do tema — com as medidas de toque de um
+  celular (alvo mínimo de 44 px, texto de campo em 16 px para o iOS não dar zoom).
 
-/* Chat. Classes em arquivo, não style inline: o servidor do celular manda `style-src 'self'`. */
-/* A conversa ocupa a altura que sobra: com poucas mensagens a barra de digitação fica no pé da tela, não grudada no conteúdo. */
-.chat-tela { flex: 1; display: flex; flex-direction: column; }
-.chat { flex: 1; display: flex; flex-direction: column; gap: .625rem; margin-block: 1rem; }
-.bubble { max-width: 88%; padding: .625rem .875rem; border-radius: 1rem; line-height: 1.45; }
-.bubble-user { align-self: flex-end; background: rgb(var(--c-accent) / .14); border: 1px solid rgb(var(--c-accent) / .35); border-bottom-right-radius: .25rem; }
-.bubble-agent { align-self: flex-start; background: rgb(var(--c-bg-surface)); border: 1px solid rgb(var(--c-border-subtle)); border-bottom-left-radius: .25rem; }
-.bubble-pending { opacity: .65; }
-.bubble-author { font-size: .6875rem; letter-spacing: .02em; color: rgb(var(--c-text-muted)); margin-bottom: .25rem; }
+  Tudo em classes neste arquivo, nada de `style` inline no JSX: o servidor do celular manda
+  `style-src 'self'`.
+*/
+
+/* O PC trava a página na altura da janela; no celular quem rola é o documento, e a barra de
+   cima e a de digitação ficam presas com `sticky`, que lida melhor com o teclado do iOS. */
+html, body, #root { min-height: 100%; height: auto; overflow: visible; }
+body { user-select: text; -webkit-user-select: text; -webkit-tap-highlight-color: transparent; }
+
+.m-shell {
+  max-width: 48rem;
+  margin: 0 auto;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding-inline: max(.75rem, env(safe-area-inset-left)) max(.75rem, env(safe-area-inset-right));
+}
+.m-shell .btn { min-height: 44px; }
+
+/* ── Barra de cima ───────────────────────────────────────────────────────── */
+.m-topo {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: .625rem;
+  margin-inline: calc(-1 * max(.75rem, env(safe-area-inset-left)));
+  padding: max(.5rem, env(safe-area-inset-top)) .75rem .5rem;
+  border-top-width: 0;
+  border-inline-width: 0;
+  box-shadow: 0 var(--pixel-shadow) 0 rgb(var(--c-outline));
+  /* Opaca: o `.glass-strong` do PC é translúcido de propósito (deixa o fundo animado aparecer), e
+     aqui a conversa rola por baixo — o texto vazava através da barra. */
+  background-color: rgb(var(--c-bg-primary));
+}
+.m-topo-logo { width: 2.25rem; height: 2.25rem; flex-shrink: 0; }
+.m-topo-icone { width: 44px; min-width: 44px; padding: 0; flex-shrink: 0; }
+.m-topo-texto { flex: 1; min-width: 0; }
+.m-topo-titulo { font-size: .9375rem; font-weight: 700; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-topo-sub { display: flex; align-items: center; gap: .375rem; margin-top: .125rem; font-size: .6875rem; color: rgb(var(--c-text-secondary)); min-width: 0; }
+
+.m-conteudo {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: .875rem;
+  padding-top: 1rem;
+}
+
+/* ── Blocos de conteúdo ──────────────────────────────────────────────────── */
+.m-secao { display: flex; flex-direction: column; gap: .625rem; }
+.m-secao-cabecalho { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.m-secao-titulo {
+  font-size: .6875rem;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: rgb(var(--c-text-secondary));
+}
+.m-painel { display: flex; flex-direction: column; gap: .5rem; padding: .875rem; }
+.m-rotulo { font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: rgb(var(--c-text-secondary)); margin-top: .25rem; }
+.m-acoes { display: flex; flex-wrap: wrap; gap: .625rem; margin-top: .5rem; }
+.m-acoes-centro { justify-content: center; }
+.m-vazio { text-align: center; padding: 2rem 1rem; font-size: .8125rem; color: rgb(var(--c-text-muted)); }
+.m-dica { font-size: .75rem; color: rgb(var(--c-text-muted)); }
+.m-aviso { font-size: .75rem; color: rgb(var(--c-warning)); border-left: 3px solid rgb(var(--c-warning)); padding-left: .625rem; }
+.m-alerta { font-size: .8125rem; color: rgb(var(--c-danger)); border-left: 3px solid rgb(var(--c-danger)); padding-left: .625rem; overflow-wrap: anywhere; }
+.m-paginar { align-self: center; }
+
+/* ── Listas de projeto e conversa ────────────────────────────────────────── */
+.m-lista { display: flex; flex-direction: column; gap: .75rem; list-style: none; margin: 0; padding: 0 var(--pixel-shadow) var(--pixel-shadow) 0; }
+.m-card {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .75rem .875rem;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: transform 90ms steps(2), box-shadow 90ms steps(2), background-color 140ms ease;
+}
+/* Mesmo "afundar" dos botões do PC ao tocar. */
+.m-card:active { transform: translate(var(--pixel-shadow), var(--pixel-shadow)); box-shadow: none; }
+.m-card:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: 2px; }
+.m-card-icone {
+  display: grid;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  flex-shrink: 0;
+  color: rgb(var(--c-accent));
+  background: rgb(var(--c-accent) / .12);
+  border: 2px solid rgb(var(--c-accent) / .35);
+}
+.m-card-corpo { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .1875rem; }
+.m-card-titulo { font-size: .875rem; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-card-sub { display: flex; align-items: center; gap: .375rem; font-size: .6875rem; color: rgb(var(--c-text-secondary)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-card-lado { display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; flex-shrink: 0; }
+
+.m-badge {
+  display: inline-flex;
+  align-items: center;
+  min-width: 1.5rem;
+  justify-content: center;
+  padding: .0625rem .375rem;
+  font-size: .625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: rgb(var(--c-text-secondary));
+  background: rgb(var(--c-overlay) / .08);
+  border: 2px solid rgb(var(--c-outline));
+}
+.m-badge-alerta { color: rgb(var(--c-warning)); background: rgb(var(--c-warning) / .14); }
+.m-badge-ativo { color: rgb(var(--c-accent)); background: rgb(var(--c-accent) / .14); }
+
+.m-dot { width: .5rem; height: .5rem; flex-shrink: 0; background: rgb(var(--c-text-muted)); }
+.m-dot-ok { background: rgb(var(--c-success)); }
+.m-dot-alerta { background: rgb(var(--c-warning)); }
+.m-dot-erro { background: rgb(var(--c-danger)); }
+.m-dot-ativo { background: rgb(var(--c-accent)); animation: m-pulsar 1.2s steps(2) infinite; }
+@keyframes m-pulsar { 50% { opacity: .35; } }
+
+/* ── Chat ────────────────────────────────────────────────────────────────── */
+/* A conversa ocupa a altura que sobra: com poucas mensagens a barra de digitação fica no pé da tela. */
+.chat-tela { flex: 1; display: flex; flex-direction: column; gap: .75rem; }
+.chat { flex: 1; display: flex; flex-direction: column; gap: .75rem; }
+
+.bubble {
+  max-width: min(92%, 40rem);
+  padding: .625rem .75rem;
+  line-height: 1.5;
+  border: 2px solid rgb(var(--c-outline));
+  box-shadow: 3px 3px 0 rgb(var(--c-outline));
+}
+.bubble-user { align-self: flex-end; background: rgb(var(--c-accent) / .16); border-color: rgb(var(--c-accent) / .7); }
+.bubble-agent { align-self: flex-start; background: rgb(var(--c-bg-surface)); }
+.bubble-pending { opacity: .7; }
+.bubble-working { box-shadow: none; }
+.bubble-aprovacao { max-width: 100%; align-self: stretch; border-color: rgb(var(--c-warning)); }
+.bubble-author {
+  display: flex;
+  align-items: center;
+  gap: .375rem;
+  margin-bottom: .25rem;
+  font-size: .6875rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: rgb(var(--c-text-secondary));
+}
+.bubble-time { margin-left: auto; padding-left: .75rem; font-weight: 400; color: rgb(var(--c-text-muted)); }
+.mobile-message { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .875rem; }
+
+/* Markdown da resposta com as cores do tema (o plugin de tipografia nasce pensado para fundo claro). */
+.bubble-markdown {
+  font-size: .875rem;
+  overflow-wrap: anywhere;
+  --tw-prose-body: rgb(var(--c-text-primary));
+  --tw-prose-headings: rgb(var(--c-text-primary));
+  --tw-prose-bold: rgb(var(--c-text-primary));
+  --tw-prose-links: rgb(var(--c-accent));
+  --tw-prose-code: rgb(var(--c-accent));
+  --tw-prose-quotes: rgb(var(--c-text-secondary));
+  --tw-prose-quote-borders: rgb(var(--c-accent) / .6);
+  --tw-prose-bullets: rgb(var(--c-accent));
+  --tw-prose-counters: rgb(var(--c-text-secondary));
+  --tw-prose-hr: rgb(var(--c-border));
+  --tw-prose-th-borders: rgb(var(--c-border));
+  --tw-prose-td-borders: rgb(var(--c-border-subtle));
+  --tw-prose-pre-bg: rgb(var(--c-bg-primary));
+  --tw-prose-pre-code: rgb(var(--c-text-primary));
+}
+.bubble-markdown > :first-child { margin-top: 0; }
+.bubble-markdown > :last-child { margin-bottom: 0; }
+.bubble-markdown pre { border: 2px solid rgb(var(--c-outline)); border-radius: 0; overflow-x: auto; font-size: .75rem; }
+.bubble-markdown table { display: block; overflow-x: auto; }
+.bubble-markdown :not(pre) > code { background: rgb(var(--c-overlay) / .08); padding: .0625rem .25rem; }
+.bubble-markdown :not(pre) > code::before,
+.bubble-markdown :not(pre) > code::after { content: none; }
+
+.bubble-anexos { display: flex; flex-direction: column; gap: .375rem; margin: .5rem 0 0; padding: 0; list-style: none; }
+.bubble-anexo {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  min-width: 0;
+  padding: .3125rem .5rem;
+  font-size: .75rem;
+  background: rgb(var(--c-bg-primary) / .6);
+  border: 2px solid rgb(var(--c-outline) / .6);
+}
+.bubble-anexo-previa { width: 2.5rem; height: 2.5rem; object-fit: cover; flex-shrink: 0; border: 1px solid rgb(var(--c-outline)); }
 
 /* "Trabalhando…" no estilo do Claude Code: quadro que respira, frase com brilho correndo, contador. */
 .working { display: inline-flex; align-items: baseline; gap: .5rem; font-size: .875rem; }
@@ -29,23 +211,114 @@ body { user-select: text; -webkit-user-select: text; }
 }
 .working-time { font-size: .75rem; color: rgb(var(--c-text-muted)); }
 @keyframes working-brilho { from { background-position: 100% 0; } to { background-position: -150% 0; } }
+
+/* ── Barra de digitação ──────────────────────────────────────────────────── */
+/* Presa no pé da tela, como num app de mensagens. A faixa é opaca e vai até a borda: sem ela, as
+   mensagens apareciam nas margens em volta do painel ao rolar. */
+.composer-faixa {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  margin-inline: calc(-1 * max(.75rem, env(safe-area-inset-left)));
+  padding: .5rem max(.75rem, env(safe-area-inset-left)) max(.75rem, env(safe-area-inset-bottom));
+  background: rgb(var(--c-bg-primary));
+  border-top: 2px solid rgb(var(--c-outline));
+}
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  padding: .5rem;
+}
+.composer-linha { display: flex; align-items: flex-end; gap: .5rem; }
+.composer-icone { width: 44px; min-width: 44px; height: 44px; padding: 0; flex-shrink: 0; }
+.composer-icone.is-disabled { opacity: .5; pointer-events: none; }
+.composer-campo {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 10rem;
+  resize: none;
+  padding: .625rem .75rem;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.35;
+  color: rgb(var(--c-text-primary));
+  background: rgb(var(--c-bg-primary));
+  border: 2px solid rgb(var(--c-outline));
+  border-radius: 0;
+  overflow-y: hidden;
+}
+.composer-campo::placeholder { color: rgb(var(--c-text-muted)); }
+.composer-campo:focus { outline: none; border-color: rgb(var(--c-accent)); }
+
+.anexos { display: flex; gap: .5rem; overflow-x: auto; margin: 0; padding: 0 0 .25rem; list-style: none; scrollbar-width: thin; }
+.anexo-chip {
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  flex-shrink: 0;
+  max-width: 15rem;
+  padding: .25rem .25rem .25rem .25rem;
+  background: rgb(var(--c-bg-elevated));
+  border: 2px solid rgb(var(--c-outline));
+}
+.anexo-chip[data-estado="erro"] { border-color: rgb(var(--c-danger)); }
+.anexo-chip[data-estado="enviado"] { border-color: rgb(var(--c-success) / .8); }
+.anexo-previa { width: 2.75rem; height: 2.75rem; object-fit: cover; flex-shrink: 0; }
+.anexo-tipo {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex-shrink: 0;
+  color: rgb(var(--c-accent));
+  background: rgb(var(--c-accent) / .12);
+}
+.anexo-info { display: flex; flex-direction: column; min-width: 0; gap: .125rem; }
+.anexo-nome { font-size: .75rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.anexo-meta { display: flex; align-items: center; gap: .25rem; font-size: .625rem; color: rgb(var(--c-text-muted)); }
+.anexo-chip[data-estado="erro"] .anexo-meta { color: rgb(var(--c-danger)); }
+.anexo-remover {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  flex-shrink: 0;
+  color: rgb(var(--c-text-secondary));
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.anexo-remover:disabled { opacity: .4; cursor: default; }
+.anexo-girando { animation: anexo-girar .9s steps(8) infinite; }
+@keyframes anexo-girar { to { transform: rotate(360deg); } }
+
+/* ── Pareamento pelo Authy ───────────────────────────────────────────────── */
+.pairing {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  text-align: center;
+  padding-block: max(2rem, env(safe-area-inset-top)) max(2rem, env(safe-area-inset-bottom));
+}
+.pairing-logo { width: 5.5rem; height: 5.5rem; }
+.pairing-card { width: 100%; max-width: 20rem; display: flex; flex-direction: column; gap: .75rem; padding: 1.25rem; }
+.pairing-form { display: flex; flex-direction: column; gap: .75rem; }
+.pairing-input {
+  text-align: center;
+  font-size: 2rem;
+  letter-spacing: .5rem;
+  padding: .625rem;
+  font-variant-numeric: tabular-nums;
+}
+.pairing-button { min-height: 48px; }
+
 @media (prefers-reduced-motion: reduce) {
   .working-verb { animation: none; background: none; color: rgb(var(--c-accent)); }
+  .m-dot-ativo, .anexo-girando { animation: none; }
+  .m-card { transition: none; }
 }
-
-/* Barra de digitação presa embaixo, como num app de mensagens. */
-.chat-composer { position: sticky; bottom: 0; display: flex; gap: .5rem; align-items: flex-end; padding-block: .75rem max(.75rem, env(safe-area-inset-bottom)); background: rgb(var(--c-bg-primary)); border-top: 1px solid rgb(var(--c-border-subtle)); }
-.chat-composer textarea { flex: 1; min-height: 44px; max-height: 10rem; resize: none; padding: .625rem .875rem; border-radius: 1.25rem; background: rgb(var(--c-bg-elevated)); border: 1px solid rgb(var(--c-border)); color: inherit; font-size: 16px; }
-.chat-send { min-width: 44px; min-height: 44px; border-radius: 9999px; }
-.chat-state { display: inline-flex; align-items: center; gap: .375rem; font-size: .75rem; color: rgb(var(--c-text-secondary)); }
-.chat-state-dot { width: .5rem; height: .5rem; border-radius: 9999px; background: rgb(var(--c-text-muted)); }
-.chat-state-dot.ativo { background: rgb(var(--c-accent)); }
-/* Com o shell em coluna flex, botão solto esticaria na largura toda (voltar, nova sessão). */
-.mobile-shell > .btn { align-self: flex-start; }
-
-/* Tela de pareamento pelo Authy: centralizada, campo grande de 6 dígitos. */
-.pairing { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .875rem; text-align: center; padding-block: 2rem; }
-.pairing-icon { border-radius: 1rem; }
-.pairing-form { display: flex; flex-direction: column; gap: .75rem; width: 100%; max-width: 18rem; }
-.pairing-input { text-align: center; font-size: 2rem; letter-spacing: .5rem; padding: .625rem; border-radius: .75rem; background: rgb(var(--c-bg-elevated)); border: 1px solid rgb(var(--c-border)); color: inherit; font-variant-numeric: tabular-nums; }
-.pairing-button { min-height: 48px; }

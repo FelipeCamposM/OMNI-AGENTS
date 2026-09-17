@@ -211,7 +211,7 @@ fn handle_request(request: EngineRequest, state: &Arc<EngineState>) -> EngineRes
     let result = match request {
         EngineRequest::AccountUsage { profile_id, refresh, .. } => interaction::account_usage(state, &profile_id, refresh),
         EngineRequest::MobileSettings { config, rotate, .. } => mobile::settings(state, config, rotate),
-        EngineRequest::PublishWorkspace { projects, agents, .. } => mobile::publish(state, projects, agents),
+        EngineRequest::PublishWorkspace { projects, agents, theme, .. } => mobile::publish(state, projects, agents, theme),
         EngineRequest::MobileCheck { .. } => mobile::check(state),
         EngineRequest::MobileTotp { action, .. } => mobile::totp(state, action),
         EngineRequest::Ping { .. } => {

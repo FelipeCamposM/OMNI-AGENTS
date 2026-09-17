@@ -1,7 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button, Input, SegmentedControl, Select } from "../../components/ui";
 import { AgentIcon } from "../../components/ui/AgentIcon";
 import { baseName } from "../files/filesService";
@@ -32,18 +32,23 @@ function errorText(reason: unknown) {
 
 interface HistoryViewProps {
   /** Reabre a conversa no CLI dentro de um terminal do projeto dela. */
-  onResume: (entry: HistoryEntry) => Promise<void>;
+  onResume: (entry: HistoryEntry) => Promise<void> | void;
+  /** Trava o provider e a pasta — usado pelo "Retomar conversa" do Novo agente, que só pode
+   *  reabrir conversas daquela CLI naquele projeto. */
+  lock?: { provider: HistoryProvider; cwd: string };
+  /** Botão extra no cabeçalho (ex.: voltar ao seletor de CLI). */
+  actions?: ReactNode;
 }
 
 /** Conversas gravadas pelo Claude Code e pelo Codex em todas as contas cadastradas, com o OMNI
  *  aberto ou não. Lê direto dos transcripts do CLI — nada é copiado. */
-export function HistoryView({ onResume }: HistoryViewProps) {
-  const [provider, setProvider] = useState<HistoryProvider>("claude");
+export function HistoryView({ onResume, lock, actions }: HistoryViewProps) {
+  const [provider, setProvider] = useState<HistoryProvider>(lock?.provider ?? "claude");
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [reload, setReload] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [cwd, setCwd] = useState("");
+  const [cwd, setCwd] = useState(lock?.cwd ?? "");
   const [profileId, setProfileId] = useState("");
   const [limit, setLimit] = useState(PAGE);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -97,10 +102,11 @@ export function HistoryView({ onResume }: HistoryViewProps) {
     <div className="flex h-full min-h-0 flex-col gap-3 px-4 py-4 md:px-6">
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="mr-2 text-sm font-medium text-text-primary">Histórico de conversas</h1>
-        <SegmentedControl options={PROVIDERS} value={provider} onChange={changeProvider} grow={false} />
+        {!lock && <SegmentedControl options={PROVIDERS} value={provider} onChange={changeProvider} grow={false} />}
         <Button variant="ghost" size="sm" onClick={() => setReload((value) => value + 1)} disabled={entries === null}>
           Atualizar
         </Button>
+        {actions}
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -116,7 +122,7 @@ export function HistoryView({ onResume }: HistoryViewProps) {
           aria-label="Pesquisar conversas"
           className="min-w-0 flex-[2_1_14rem]"
         />
-        <Select
+        {!lock && <Select
           size="sm"
           value={cwd}
           options={projectOptions}
@@ -127,7 +133,7 @@ export function HistoryView({ onResume }: HistoryViewProps) {
           searchable={projectOptions.length > 15}
           searchPlaceholder="Pesquisar projeto…"
           className="min-w-0 flex-[1_1_10rem]"
-        />
+        />}
         {profileOptions.length > 2 && (
           <Select size="sm" value={profileId} options={profileOptions} onChange={setProfileId} className="min-w-0 flex-[1_1_8rem]" />
         )}

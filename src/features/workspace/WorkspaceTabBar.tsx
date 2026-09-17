@@ -29,6 +29,14 @@ export function WorkspaceTabBar({ pane, dispatch, onCloseTab, dirtyTabIds }: Wor
             if ((event.target as HTMLElement).closest("button[aria-label]")) return;
             startTabDrag(event, { paneId: pane.id, tabId: item.id, title: item.title }, dispatch);
           }}
+          // Botão do meio fecha a aba, como em navegador e editor. O `mousedown` barrado evita a
+          // rolagem automática do Windows, que abriria o ícone de rolagem por cima da barra.
+          onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
+          onAuxClick={(event) => {
+            if (event.button !== 1) return;
+            event.preventDefault();
+            onCloseTab(item);
+          }}
           className={[
             "group flex shrink-0 items-stretch border-r-2 border-border-subtle max-w-64 select-none touch-none cursor-grab active:cursor-grabbing",
             item.id === pane.activeTabId ? "bg-bg-surface" : "hover:bg-overlay/[0.04]",

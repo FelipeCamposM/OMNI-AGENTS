@@ -111,3 +111,20 @@ describe("TerminalPane — etiqueta de modelo", () => {
     expect(screen.queryByLabelText(/modelo em uso/i)).not.toBeInTheDocument();
   });
 });
+
+describe("TerminalPane — sessão morta", () => {
+  it("religa sozinha a sessão que o engine só conhece como histórica", async () => {
+    engine.terminalSnapshot.mockResolvedValue({ ...snapshot(0, { state: "stopped" }), next_seq: 0 });
+    renderPane();
+    await waitFor(() => expect(engine.restartTerminal).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(engine.terminalSnapshot.mock.calls.length).toBeGreaterThan(2));
+    expect(engine.restartTerminal).toHaveBeenCalledTimes(1);
+  });
+
+  it("não religa sessão parada que ainda tem saída no engine", async () => {
+    engine.terminalSnapshot.mockResolvedValue(snapshot(5, { state: "stopped" }));
+    renderPane();
+    await waitFor(() => expect(engine.terminalSnapshot.mock.calls.length).toBeGreaterThan(2));
+    expect(engine.restartTerminal).not.toHaveBeenCalled();
+  });
+});

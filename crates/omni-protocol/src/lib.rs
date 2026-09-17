@@ -121,7 +121,14 @@ pub fn read_json_or_default<T: DeserializeOwned + Default>(path: &Path) -> T {
 pub enum EngineRequest {
     AccountUsage { token: String, profile_id: String, refresh: bool },
     MobileSettings { token: String, config: Option<MobileConfig>, #[serde(default)] rotate: bool },
-    PublishWorkspace { token: String, projects: Vec<PublishedProject>, agents: Vec<PublishedAgent> },
+    PublishWorkspace {
+        token: String,
+        projects: Vec<PublishedProject>,
+        agents: Vec<PublishedAgent>,
+        /// Aparência do desktop, para o celular sair igual. `default`: desktop antigo não manda.
+        #[serde(default)]
+        theme: Option<PublishedTheme>,
+    },
     /// Testa se o próprio servidor do celular atende. `listening` só prova que o bind deu certo.
     MobileCheck { token: String },
     /// Cadastro do Authy (TOTP) que libera o pareamento de aparelhos sem o QR.
@@ -240,10 +247,23 @@ pub struct PublishedProject { pub id: String, pub name: String, pub path: String
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct PublishedAgent { pub id: String, pub label: String, pub command: String, pub resume: Option<String> }
 
+/// Aparência escolhida no desktop. Só identificadores (paleta, tema, fundo, relevo) — nunca
+/// caminho de imagem: o fundo "Imagem" do PC vive no disco dele e não tem como chegar ao celular.
+/// Strings livres de propósito: quem valida é o front, que já tem as tabelas e cai no padrão
+/// quando não reconhece o valor.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PublishedTheme {
+    #[serde(default)] pub accent: String,
+    #[serde(default)] pub theme: String,
+    #[serde(default)] pub background: String,
+    #[serde(default)] pub glass: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PublishedWorkspace {
     #[serde(default)] pub projects: Vec<PublishedProject>,
     #[serde(default)] pub agents: Vec<PublishedAgent>,
+    #[serde(default)] pub theme: Option<PublishedTheme>,
     /// Quando o desktop publicou pela última vez. O celular mostra a idade e quem decide se a
     /// lista ainda vale é quem está lendo — sem expiração automática no Rust.
     #[serde(default)] pub published_at_ms: u64,

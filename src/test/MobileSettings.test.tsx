@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MobileSettings } from "../features/mobile/MobileSettings";
 
 const invoke = vi.mocked((await import("@tauri-apps/api/core")).invoke);
+const openUrl = vi.mocked((await import("@tauri-apps/plugin-opener")).openUrl);
 
 function status(extra: Record<string, unknown> = {}) {
   return {
@@ -52,5 +53,33 @@ describe("aba Celular: cadastro do Authy", () => {
     await act(async () => { await userEvent.click(refazer); });
     expect(invoke).not.toHaveBeenCalledWith("mobile_totp", expect.anything());
     expect(screen.getByText(/para de funcionar/)).toBeInTheDocument();
+  });
+});
+
+describe("aba Celular: endereço do QR", () => {
+  beforeEach(() => { invoke.mockReset(); openUrl.mockReset(); });
+
+  it("abre o endereço pelo navegador do sistema, com barra no fim para casar a permissão", async () => {
+    // `<a target="_blank">` não abre nada dentro do Tauri — era o clique que "não fazia nada".
+    openUrl.mockResolvedValue(undefined);
+    invoke.mockResolvedValue(status({ config: { enabled: true, bind: "127.0.0.1:47322", token: "abc123", serve: true },
+      public_url: "https://pc.tail.ts.net", qr: "https://pc.tail.ts.net/#t=abc123" }));
+    render(<MobileSettings />);
+
+    const link = await screen.findByRole("button", { name: "https://pc.tail.ts.net" });
+    await act(async () => { await userEvent.click(link); });
+    expect(openUrl).toHaveBeenCalledWith("https://pc.tail.ts.net/");
+    // O token nunca vai para o navegador do PC: ele é a credencial do celular.
+    expect(openUrl).not.toHaveBeenCalledWith(expect.stringContaining("abc123"));
+  });
+
+  it("se o navegador não abrir, mostra o endereço para copiar", async () => {
+    openUrl.mockRejectedValue(new Error("forbidden"));
+    invoke.mockResolvedValue(status());
+    render(<MobileSettings />);
+
+    const link = await screen.findByRole("button", { name: "http://100.64.0.10:47322" });
+    await act(async () => { await userEvent.click(link); });
+    expect(await screen.findByText(/Não consegui abrir o navegador/)).toBeInTheDocument();
   });
 });

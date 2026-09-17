@@ -24,6 +24,7 @@ import gsap from "gsap";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useStagger } from "../lib/motion";
 import { AgentIcon } from "./ui/AgentIcon";
+import { OmniLogo } from "./ui/OmniLogo";
 import { NotificationBell } from "./NotificationBell";
 import type { SettingsSection } from "../hooks/useNotifications";
 import type { KanbanState } from "../types/kanban";
@@ -39,7 +40,6 @@ import { SkillsList } from "./SkillsList";
 /* O mesmo arquivo que o Tauri usa como ícone do app (tauri.conf.json →
    bundle.icon). Importado em vez de copiado para src/assets: uma cópia
    dessincronizaria do ícone real na próxima troca de marca. */
-import appIcon from "../../src-tauri/icons/128x128.png";
 
 /** Seções do spec 7.3. Vazias por enquanto — Workspace/Project/Pane/Session
  * (Fase 1) é quem vai preencher cada uma com dados de verdade. */
@@ -141,12 +141,7 @@ export function Sidebar({
           onClick={onHome}
           className="flex items-center gap-2.5 text-left min-w-0 flex-1 rounded-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
         >
-          <img
-            src={appIcon}
-            alt=""
-            aria-hidden="true"
-            className="neon-glow w-7 h-7 rounded-none shrink-0 object-contain"
-          />
+          <OmniLogo className="neon-glow w-7 h-7 shrink-0" />
           <div className="min-w-0">
             <p className="pixel-text text-text-primary text-xs leading-tight truncate">OMNI AGENTS</p>
           </div>

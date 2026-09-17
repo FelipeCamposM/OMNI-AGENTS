@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render } from "@testing-library/react";
+import { fireEvent, render } from "@testing-library/react";
 import { WorkspaceTabBar } from "../features/workspace/WorkspaceTabBar";
 import { SessionProvidersContext } from "../features/terminal/sessionProviders";
 import { ClaudeIcon, CursorIcon, GptIcon } from "../components/ui/AgentIcon";
@@ -43,5 +43,30 @@ describe("ícone da aba de agente", () => {
     const semProvider = tabIconPath({ id: "t", kind: "agent", title: "Novo agente" });
     expect(semProvider).not.toBe("");
     expect(semProvider).not.toBe(pathOf(ClaudeIcon));
+  });
+});
+
+describe("fechar aba com o botão do meio", () => {
+  const pane: PaneNode = {
+    type: "pane", id: "p", activeTabId: "a",
+    tabs: [{ id: "a", kind: "file", title: "a.ts" }, { id: "b", kind: "file", title: "b.ts" }],
+  };
+
+  it("clique do meio fecha a aba clicada, e só ela", () => {
+    const onCloseTab = vi.fn();
+    const { getAllByRole } = render(<WorkspaceTabBar pane={pane} dispatch={vi.fn()} onCloseTab={onCloseTab} />);
+    fireEvent(getAllByRole("tab")[1], new MouseEvent("auxclick", { bubbles: true, button: 1 }));
+    expect(onCloseTab).toHaveBeenCalledTimes(1);
+    expect(onCloseTab).toHaveBeenCalledWith(pane.tabs[1]);
+  });
+
+  it("botão direito não fecha nada, e o meio não liga a rolagem automática", () => {
+    const onCloseTab = vi.fn();
+    const { getAllByRole } = render(<WorkspaceTabBar pane={pane} dispatch={vi.fn()} onCloseTab={onCloseTab} />);
+    fireEvent(getAllByRole("tab")[0], new MouseEvent("auxclick", { bubbles: true, button: 2 }));
+    expect(onCloseTab).not.toHaveBeenCalled();
+    const meio = new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 1 });
+    getAllByRole("tab")[0].dispatchEvent(meio);
+    expect(meio.defaultPrevented).toBe(true);
   });
 });

@@ -27,20 +27,35 @@ export function GitPanel({ projectPath, onOpenDiff, onOpenGraph }: GitPanelProps
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const refresh = useCallback(() => {
+  /** `silent`: atualização de fundo — sem "Carregando…" piscando e sem trocar o erro da tela. */
+  const refresh = useCallback((silent = false) => {
     if (!projectPath) return;
-    setStatus(undefined);
-    // Limpa o erro aqui, síncrono, e não no `.then`: quem chama `refresh()` e logo depois reporta
-    // uma falha própria (o push que quebrou depois de um commit que deu certo) teria a mensagem
-    // apagada quando o status voltasse.
-    setError(null);
+    if (!silent) {
+      setStatus(undefined);
+      // Limpa o erro aqui, síncrono, e não no `.then`: quem chama `refresh()` e logo depois reporta
+      // uma falha própria (o push que quebrou depois de um commit que deu certo) teria a mensagem
+      // apagada quando o status voltasse.
+      setError(null);
+    }
     gitStatus(projectPath)
       .then(setStatus)
-      .catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+      .catch((reason) => {
+        if (!silent) setError(reason instanceof Error ? reason.message : String(reason));
+      });
   }, [projectPath]);
 
+  // Quem mexe nos arquivos é quase sempre o agente, não este painel: sem reler sozinho, as mudanças
+  // dele nunca apareciam e o painel ficava em "árvore limpa", sem Commit.
+  // ponytail: poll de 3s; trocar por watcher do .git se o custo do `git status` pesar em repo grande.
   useEffect(() => {
     refresh();
+    const timer = window.setInterval(() => refresh(true), 3_000);
+    const onFocus = () => refresh(true);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+    };
   }, [refresh]);
 
   if (!projectPath) return null;
@@ -62,9 +77,11 @@ export function GitPanel({ projectPath, onOpenDiff, onOpenGraph }: GitPanelProps
   /** `push` roda depois do commit e no mesmo try: se o push falhar (sem rede, sem remoto,
    *  rejeitado), o commit já está feito e o erro aparece — nada é desfeito. */
   async function commit(push: boolean) {
-    if (!projectPath || !message.trim()) return;
+    if (!projectPath || !status || !message.trim()) return;
     setBusy(true);
     try {
+      // Nada em stage = commita tudo que mudou (como o VS Code). Com stage, respeita a escolha.
+      if (!status.entries.some(isStaged)) await gitStage(projectPath, status.entries.map((entry) => entry.path));
       await gitCommit(projectPath, message.trim());
       setMessage("");
       if (push) await gitPush(projectPath);
@@ -83,7 +100,7 @@ export function GitPanel({ projectPath, onOpenDiff, onOpenGraph }: GitPanelProps
     return (
       <div className="px-6 py-1.5 space-y-1">
         <p className="text-danger text-xs">{error}</p>
-        <button type="button" onClick={refresh} className="text-[10px] text-text-muted hover:text-text-primary underline">
+        <button type="button" onClick={() => refresh()} className="text-[10px] text-text-muted hover:text-text-primary underline">
           tentar de novo
         </button>
       </div>
@@ -129,12 +146,13 @@ export function GitPanel({ projectPath, onOpenDiff, onOpenGraph }: GitPanelProps
         />
       )}
 
-      {staged.length > 0 && (
+      {staged.length + unstaged.length > 0 && (
         <div className="space-y-1 px-3">
           <textarea
             value={message}
             onChange={(event) => setMessage(event.target.value)}
             placeholder="Mensagem do commit"
+            title={staged.length > 0 ? undefined : "Sem nada em stage: o commit leva todas as mudanças"}
             rows={2}
             className="w-full resize-none border border-border-subtle bg-bg-elevated px-2 py-1 text-xs text-text-primary outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           />
