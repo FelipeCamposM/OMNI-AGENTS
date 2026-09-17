@@ -1984,4 +1984,9 @@ de arquivo arrastavam, por pointer events, e o destino eram 5 botões de texto s
   que religa sozinho).
 - [x] Verificado antes da tag, igual ao CI: typecheck, 274 testes front, `cargo test` de engine/core/
   protocolo, `cargo check -p omni-agents`.
-- [ ] Tag `v0.4.5` → workflow `release.yml` gera o rascunho com os instaladores → publicar.
+- [x] Commit `50f15b1` + tag `v0.4.5`. Workflow `release.yml` (run 35180602064) verde nos três sistemas;
+  CI verde. Rascunho conferido (`latest.json` 0.4.5 assinado para Windows/macOS/Linux) e publicado
+  como **Latest**, não pre-release. `releases/latest/download/latest.json` responde 0.4.5 e o
+  `OMNI.AGENTS_0.4.5_x64-setup.exe` baixa (200).
+- [ ] Não conferido: atualização 0.4.4 → 0.4.5 no app instalado e o celular recebendo a tela nova
+  depois do update (o engine instalado é que serve a página).
