@@ -2,6 +2,7 @@ import type { Project, WorkspacesAction } from "../../types/workspace";
 import type { KanbanAction, KanbanState } from "../../types/kanban";
 import type { AttentionItem } from "../terminal/useAttention";
 import { AgentUsageStatus } from "../terminal/AgentUsageStatus";
+import { GitBranchStatus } from "../git/GitBranchStatus";
 import { findPane } from "./workspaceReducer";
 import { LayoutPresetPicker } from "./LayoutPresetPicker";
 import { PaneTree } from "./PaneTree";
@@ -74,7 +75,10 @@ export function WorkspaceView({
       </div>
 
       <footer className="h-7 shrink-0 px-3 flex items-center justify-between gap-3 overflow-hidden whitespace-nowrap border-t-2 border-border-subtle bg-bg-elevated text-[10px] text-text-muted">
-        <span className="hidden md:inline">● UI CONNECTED</span>
+        <span className="flex min-w-0 items-center gap-3">
+          <span className="hidden shrink-0 lg:inline">● UI CONNECTED</span>
+          <GitBranchStatus projectPath={project.path} />
+        </span>
         <span className="flex min-w-0 flex-1 md:flex-none items-center justify-between md:justify-end gap-3 lg:gap-4">
           <AgentUsageStatus engineOnline={engineOnline} activeSessionId={abaAtiva?.resourceId ?? null} />
           <span className="shrink-0">ENGINE: {engineOnline ? "ONLINE" : "CONNECTING"}</span>

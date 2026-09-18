@@ -1,0 +1,12 @@
+[package]
+name = "omni-shim"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "omni-shim"
+path = "src/main.rs"
+
+[dependencies]
+omni-core = { path = "../omni-core" }
+omni-protocol = { path = "../omni-protocol" }

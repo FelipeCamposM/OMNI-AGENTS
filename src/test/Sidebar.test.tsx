@@ -36,6 +36,8 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> 
     attention: [item],
     attentionByWorkspace: { "ws-a": 1 },
     onFocusSession: vi.fn(),
+    onDismissAttention: vi.fn(),
+    onRunInTerminal: vi.fn(),
     projects: [],
     activeProjectId: null,
     activeProjectPath: null,
@@ -81,6 +83,13 @@ describe("Sidebar", () => {
 
     await userEvent.click(aviso);
     expect(props.onFocusSession).toHaveBeenCalledWith(item);
+  });
+
+  it("dispensa o aviso pelo X sem abrir o agente", async () => {
+    const props = renderSidebar();
+    await userEvent.click(screen.getByRole("button", { name: /dispensar aviso de/i }));
+    expect(props.onDismissAttention).toHaveBeenCalledWith(item);
+    expect(props.onFocusSession).not.toHaveBeenCalled();
   });
 
   it("marca o workspace inativo com a contagem de pendências", () => {

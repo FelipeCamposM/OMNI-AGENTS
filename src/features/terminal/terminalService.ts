@@ -76,8 +76,10 @@ export async function listTerminalSessions() {
   return expect(await invoke<EngineResponse>("terminal_sessions"), "sessions").sessions;
 }
 
-export async function listAgentClis() {
-  const statuses = await invoke<AgentCliStatus[]>("agent_cli_statuses");
+/** `projectPath` num caminho do WSL faz a detecção rodar dentro da distro: `claude` instalado no
+ *  Windows não existe lá dentro, e vice-versa. */
+export async function listAgentClis(projectPath?: string | null) {
+  const statuses = await invoke<AgentCliStatus[]>("agent_cli_statuses", { projectPath: projectPath ?? null });
   return Array.isArray(statuses) ? statuses : [];
 }
 
@@ -318,4 +320,10 @@ export async function planSwitch(input: {
     targetProfileId: input.targetProfileId ?? null,
     targetCommand: input.targetCommand,
   });
+}
+
+/** Distros do WSL instaladas na máquina; lista vazia fora do Windows ou sem WSL. */
+export async function wslDistros(): Promise<string[]> {
+  const distros = await invoke<string[]>("wsl_distros");
+  return Array.isArray(distros) ? distros : [];
 }

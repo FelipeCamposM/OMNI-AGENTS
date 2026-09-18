@@ -14,6 +14,20 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.5.0",
+    date: "2026-09-18",
+    changes: [
+      "Nova seção Docker na barra lateral: veja seus containers agrupados por projeto e inicie, pare, reinicie ou remova com um clique. Os logs e o shell do container abrem num terminal do app.",
+      "Abra projetos que estão no WSL ou num servidor por SSH. O agente continua sendo o do seu PC, mas os comandos e o Git rodam onde o código está.",
+      "A tela de abrir projeto mostra os projetos recentes.",
+      "A branch atual aparece no rodapé: troque de branch, crie uma nova (Ctrl+Shift+B) ou puxe as mudanças com um clique.",
+      "Nova seção Atalhos nas configurações: troque qualquer atalho do teclado, inclusive o Ctrl+P.",
+      "As configurações ganharam um botão Fechar (ou Esc) que volta exatamente para onde você estava.",
+      "Os avisos da seção Atenção podem ser dispensados pelo X, sem precisar abrir o agente.",
+      "Mensagens com anexo mandadas pelo celular agora são enviadas de verdade, em vez de ficarem só digitadas no PC.",
+    ],
+  },
+  {
     version: "0.4.5",
     date: "2026-09-17",
     changes: [

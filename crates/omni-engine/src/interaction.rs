@@ -44,12 +44,45 @@ pub fn ready(screen: &vt100::Screen, provider: &str) -> bool {
 /// (`❯ Try "edit <filepath> to..."`). Na tela capturada ele já vinha apagado por um `ESC[K`
 /// logo depois, então não era o que travava; a regra antiga (linha inteira igual a `❯`) quebraria
 /// no dia em que o redesenho vier sem esse `ESC[K`.
-fn composer_vazio(screen: &vt100::Screen) -> bool {
+pub(crate) fn composer_vazio(screen: &vt100::Screen) -> bool {
     let (row, col) = screen.cursor_position();
     let (_, cols) = screen.size();
     let antes = screen.contents_between(row,0,row,col);
     matches!(antes.trim(), "❯" | "›" | ">")
         && (col..cols).all(|c| screen.cell(row,c).is_none_or(|cell| !cell.has_contents() || cell.dim()))
+}
+
+/// Quanto esperar a colagem aparecer no campo antes de mandar o Enter assim mesmo.
+const ESPERA_DA_COLAGEM: Duration = Duration::from_millis(1_200);
+/// Folga depois que o texto aparece: a CLI ainda está montando o "[Pasted text #1 +N lines]" no
+/// instante em que a primeira parte dele chega à tela.
+const FOLGA_ANTES_DO_ENTER: Duration = Duration::from_millis(80);
+
+/// Manda o Enter que submete um prompt **já colado** no campo.
+///
+/// Enter no mesmo `write` da colagem não submete: a CLI recebe tudo como uma rajada só e trata o
+/// `\r` como parte do texto colado. Com uma linha isso passava despercebido; com várias (é o caso
+/// de um prompt com anexos) o texto ficava digitado no terminal e nunca era enviado — e o celular
+/// ficava em "trabalhando" para sempre.
+///
+/// Espera o texto **aparecer no campo** em vez de dormir um tempo fixo: é o sinal de que a CLI
+/// terminou de processar a colagem. Fora dos locks de propósito — quem atualiza a tela é o leitor
+/// da PTY, que precisa do mesmo `interaction` no intervalo.
+pub fn submeter_colagem(session: &Arc<LiveSession>) -> Result<()> {
+    let limite = Instant::now() + ESPERA_DA_COLAGEM;
+    loop {
+        let vazio = session.interaction.lock().map_err(|_| anyhow!("screen poisoned"))
+            .map(|context| composer_vazio(context.parser.screen()))?;
+        // Campo preenchido: a colagem chegou. Sem eco até o limite, manda assim mesmo — é o único
+        // jeito de submeter, e uma CLI que não desenha o campo não pode travar o envio para sempre.
+        if !vazio || Instant::now() >= limite { break; }
+        std::thread::sleep(Duration::from_millis(30));
+    }
+    std::thread::sleep(FOLGA_ANTES_DO_ENTER);
+    let mut writer = session.writer.lock().map_err(|_| anyhow!("writer poisoned"))?;
+    writer.write_all(b"\r")?;
+    writer.flush()?;
+    Ok(())
 }
 
 /// Only single-use choices with exact labels. Persistent permission choices are never sent.

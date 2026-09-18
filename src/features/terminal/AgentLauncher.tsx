@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, Select } from "../../components/ui";
 import { AgentIcon } from "../../components/ui/AgentIcon";
 import { HistoryView } from "../history/HistoryView";
+import { targetLabel } from "../../lib/paths";
 import { resumeCommand, type HistoryEntry, type HistoryProvider } from "../history/historyService";
 import {
   AGENT_RESUME_FLAG,
@@ -36,7 +37,7 @@ export function AgentLauncher({ projectName, projectPath, onLaunch }: AgentLaunc
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([listAgentClis(), listProfiles()])
+    void Promise.all([listAgentClis(projectPath), listProfiles()])
       .then(([statuses, accounts]) => {
         if (cancelled) return;
         setProfiles(accounts);
@@ -54,10 +55,13 @@ export function AgentLauncher({ projectName, projectPath, onLaunch }: AgentLaunc
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [projectPath]);
 
   const agent = agents.find((item) => item.id === selected) ?? agents[0];
 
+  // O agente é sempre o desta máquina (conta, histórico e /usage daqui). O que muda em projeto
+  // remoto é onde os comandos dele rodam — quem desvia é o omni-shim, no engine.
+  const alvo = targetLabel(projectPath);
   const accounts = useMemo(
     () => profiles.filter((profile) => profile.provider === selected),
     [profiles, selected]
@@ -130,6 +134,11 @@ export function AgentLauncher({ projectName, projectPath, onLaunch }: AgentLaunc
       <section className="w-full max-w-md border-2 border-border-subtle bg-bg-elevated p-5 shadow-2xl">
         <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent">Novo agente</p>
         <h2 className="mt-2 text-lg font-semibold text-text-primary">Escolha a CLI para {projectName}</h2>
+        {alvo && (
+          <p className="mt-1 text-[11px] text-accent">
+            O agente roda neste PC, com a sua conta; os comandos dele executam em {alvo}.
+          </p>
+        )}
         <p className="mt-1 text-xs leading-5 text-text-muted">
           O agente será iniciado no diretório do projeto e continuará ativo mesmo se esta janela fechar.
         </p>

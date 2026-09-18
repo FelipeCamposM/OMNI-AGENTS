@@ -1,6 +1,6 @@
 {
   "productName": "OMNI AGENTS",
-  "version": "0.4.5",
+  "version": "0.5.0",
   "identifier": "com.omni.agents",
   "build": {
     "frontendDist": "../dist",
@@ -44,7 +44,8 @@
     ],
     "createUpdaterArtifacts": true,
     "externalBin": [
-      "binaries/omni-engine"
+      "binaries/omni-engine",
+      "binaries/omni-shim"
     ],
     "windows": {
       "nsis": {

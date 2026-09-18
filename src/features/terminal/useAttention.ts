@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useReducer, useRef } from "react";
 import type { LayoutNode, Project, WorkspaceState } from "../../types/workspace";
 import type { TerminalSession, TerminalState } from "./terminalService";
 
@@ -86,13 +86,28 @@ export function useAttention(
   workspaces: WorkspaceState[],
   activeWorkspaceId: string | null,
   paneVisible = true
-): { items: AttentionItem[]; all: AttentionItem[]; countByWorkspace: Record<string, number> } {
+): {
+  items: AttentionItem[];
+  all: AttentionItem[];
+  countByWorkspace: Record<string, number>;
+  dismiss: (sessionId: string) => void;
+} {
   // ponytail: mapa em memória — recarregar o app rebadgeia tudo que continua pendente, que é o
   // comportamento certo (o usuário não triou nada). Persistir exigiria podar ids mortos e lidar
   // com o `output_seq`, que reinicia em 0 a cada restart do engine.
   const seen = useRef<Record<string, number>>({});
 
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
+
+  /** O X do Attention Center: marca como visto sem abrir. Volta sozinho se a sessão soltar saída nova. */
+  function dismiss(sessionId: string) {
+    const session = sessionById.get(sessionId);
+    if (!session) return;
+    seen.current[sessionId] = session.output_seq;
+    rerender();
+  }
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
   const activeProject =
     activeWorkspace?.projects.find((project) => project.id === activeWorkspace.activeProjectId) ?? null;
@@ -153,5 +168,5 @@ export function useAttention(
     countByWorkspace[item.workspaceId] = (countByWorkspace[item.workspaceId] ?? 0) + 1;
   }
 
-  return { items, all, countByWorkspace };
+  return { items, all, countByWorkspace, dismiss };
 }

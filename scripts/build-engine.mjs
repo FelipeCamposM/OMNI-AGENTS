@@ -95,8 +95,8 @@ const requested = targetIndex >= 0 ? process.argv[targetIndex + 1] : process.env
 const host = execFileSync("rustc", ["-vV"], { encoding: "utf8" }).match(/^host: (\S+)/m)[1]; // sem `$`: no Windows a linha termina em \r
 const triple = requested ?? host;
 
-function buildEngine(target) {
-  const cargoArgs = ["build", "-p", "omni-engine", "-j", "1"];
+function buildCrate(crate, target) {
+  const cargoArgs = ["build", "-p", crate, "-j", "1"];
   if (release) cargoArgs.push("--release");
   if (target) cargoArgs.push("--target", target);
   execFileSync("cargo", cargoArgs, {
@@ -104,8 +104,13 @@ function buildEngine(target) {
     stdio: "inherit",
     env: { ...process.env, CARGO_INCREMENTAL: "0", CARGO_TARGET_DIR: engineTarget },
   });
-  return resolve(engineTarget, ...(target ? [target] : []), profile, `omni-engine${extension}`);
+  return resolve(engineTarget, ...(target ? [target] : []), profile, `${crate}${extension}`);
 }
+
+const buildEngine = (target) => buildCrate("omni-engine", target);
+// O shim é o que desvia os comandos do agente para o WSL/servidor. Vai ao lado do engine porque é
+// assim que o engine o encontra em tempo de execução (`caminho_do_shim`).
+const buildShim = (target) => buildCrate("omni-shim", target);
 
 const binaries = resolve("src-tauri", "binaries");
 mkdirSync(binaries, { recursive: true });
@@ -123,4 +128,16 @@ if (triple === "universal-apple-darwin") {
 } else {
   await copyEngine(buildEngine(requested && requested !== host ? requested : undefined), destination);
 }
+const shimDestination = resolve(binaries, `omni-shim-${triple}${extension}`);
+if (triple === "universal-apple-darwin") {
+  const targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+  const parts = targets.map(buildShim);
+  for (let index = 0; index < targets.length; index += 1) {
+    await copyEngine(parts[index], resolve(binaries, `omni-shim-${targets[index]}${extension}`));
+  }
+  execFileSync("lipo", ["-create", "-output", shimDestination, ...parts], { stdio: "inherit" });
+} else {
+  await copyEngine(buildShim(requested && requested !== host ? requested : undefined), shimDestination);
+}
 console.log(`OMNI Engine copiado para src-tauri/binaries/omni-engine-${triple}${extension} (${profile}).`);
+console.log(`OMNI Shim copiado para src-tauri/binaries/omni-shim-${triple}${extension} (${profile}).`);

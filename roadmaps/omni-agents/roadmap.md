@@ -1990,3 +1990,165 @@ de arquivo arrastavam, por pointer events, e o destino eram 5 botões de texto s
   `OMNI.AGENTS_0.4.5_x64-setup.exe` baixa (200).
 - [ ] Não conferido: atualização 0.4.4 → 0.4.5 no app instalado e o celular recebendo a tela nova
   depois do update (o engine instalado é que serve a página).
+
+### Branch e pull no rodapé — 2026-09-17
+
+- [x] `git_pull` novo em `src-tauri/src/git_client.rs` (`git pull --ff-only`, devolve a saída),
+  registrado em `lib.rs`, com wrapper `gitPull` em `gitService.ts`.
+- [x] `src/features/git/GitBranchStatus.tsx`: canto esquerdo do rodapé do workspace mostra
+  `⎇ <branch>` do projeto em foco e um botão `pull` ao lado; recado do git (ou erro) fica ao lado,
+  some ao clicar. Relê o status a cada 3s — quem troca de branch costuma ser o agente no terminal.
+  Projeto sem git não renderiza nada. Encaixado em `WorkspaceView.tsx` junto do "UI CONNECTED".
+- [x] 3 testes em `src/test/GitBranchStatus.test.tsx`. Suíte: 277. `cargo check` ok.
+  Não conferido no app rodando.
+
+### Fechar Configurações e atalhos configuráveis — 2026-09-17
+
+- [x] Botão "Fechar" no topo das Configurações (`SettingsView.tsx`) + Esc: `App.tsx` guarda a tela
+  anterior (`viewBeforeSettings`) e volta pra ela; workspace segue intacto no reducer.
+- [x] `src/lib/shortcuts.ts`: lista `SHORTCUTS` (Ctrl+P, divisões, fechar/maximizar painel,
+  Ctrl+Tab, Ctrl+Shift+Space, Esc), overrides em `settings.shortcuts` injetados por `useSettings`
+  (mesmo padrão do `motion.ts`). `QuickOpen` e `useWorkspaceKeymap` passam a usar `matchesShortcut`.
+- [x] Seção "Atalhos" nas Configurações: clica, aperta a combinação, Esc cancela; bloqueia conflito;
+  "Padrão" por item e "Restaurar todos". Atalhos globais ficam mudos durante a gravação.
+- [x] Divisão vertical agora é `Ctrl+Shift+|` (o antigo `key === "\\"` com Shift nunca casava).
+- [x] `src/test/shortcuts.test.ts`. Suíte: 279. Não conferido no app rodando.
+
+### Trocar e criar branch pelo rodapé — 2026-09-17
+
+- [x] `git_checkout_branch` ganhou `create: bool` (`checkout -b`), a branch nova nascendo do HEAD
+  atual. `gitCheckoutBranch(projectPath, branch, create = false)` no `gitService.ts`.
+- [x] `GitBranchStatus`: clicar na branch abre um popover com campo que filtra a lista **e** serve de
+  nome para a branch nova. Clicar numa branch troca; nome que não existe mostra
+  "+ Criar “x” a partir de <atual>"; Enter faz o que couber (trocar se existe, criar se não). Erro do
+  git (ex.: mudanças não commitadas) aparece no mesmo recado do pull.
+- [x] Atalho novo `newBranch` (`Ctrl+Shift+B`, configurável em Configurações → Atalhos) abre o
+  popover já no campo; escuta em captura, então funciona com o foco no terminal.
+- [x] 3 testes novos em `src/test/GitBranchStatus.test.tsx` (troca, criação, atalho). `cargo check` ok.
+  Não conferido no app rodando.
+- [x] **Correção**: o dropdown não aparecia. O rodapé é `h-7` com `overflow-hidden`, então o popover
+  `absolute` nascia dentro dele e era recortado até sumir. Agora é `fixed`, ancorado no
+  `getBoundingClientRect()` do botão na abertura. Teste novo trava `fixed` (jsdom não mede recorte).
+
+### Prompt com anexo ficava digitado no PC e nunca era enviado — 2026-09-17
+
+- **Sintoma:** no celular, com anexo, o envio deixava a mensagem escrita no terminal do PC sem
+  submeter, e o celular ficava em "trabalhando" para sempre. Sem anexo funcionava.
+- **Causa:** `execute_checked` mandava colagem e Enter no **mesmo write**
+  (`\x1b[200~{texto}\x1b[201~\r`). A CLI recebe a rajada inteira como colagem e engole o `\r`. Com
+  anexo o prompt vira multi-linha e a CLI monta o "[Pasted text #N +L lines]" de forma assíncrona,
+  então o Enter chega antes do texto entrar no campo. O mesmo problema já tinha sido resolvido no
+  `/usage` (`interaction.rs`), com Enter separado — o caminho do celular ficou sem esse cuidado.
+- [x] `interaction::submeter_colagem`: manda o Enter **depois** que a colagem aparece no campo
+  (`composer_vazio` deixa de valer), esperando no máximo 1,2 s e mandando assim mesmo no limite —
+  CLI sem eco não pode travar o envio. Fora dos locks: quem atualiza a tela é o leitor da PTY.
+- [x] `execute_checked` passa a escrever em duas partes só no prompt; aprovação continua num write
+  (é tecla de menu).
+- [x] Celular: o balão otimista agora tem relógio próprio (2 min) e desiste avisando "Não consegui
+  confirmar o envio". Antes, só saía da tela quando a mensagem aparecia no transcript ou a fila
+  recusava — sem rede, girava para sempre.
+- [x] Testes: 2 no engine (Enter só depois do eco da colagem; Enter no limite quando não há eco) e
+  1 no celular. Front 284, engine 53, core 19, `cargo check`.
+- [ ] Não conferido no app rodando: falta instalar uma versão com esta correção.
+
+### Dispensar aviso de Atenção pelo X — 2026-09-17
+
+- [x] `useAttention` expõe `dismiss(sessionId)`: grava o `output_seq` atual no mapa de "já visto"
+  (mesmo mecanismo de quando a aba está na tela). Item volta sozinho se a sessão soltar saída nova.
+- [x] `AttentionPanel.tsx`: X no canto de cada item (aparece no hover/foco), ligado via
+  `Sidebar` → `App` (`onDismissAttention`). Toast do notificador não muda (usa `all`).
+- [x] Testes em `useAttention.test.tsx` e `Sidebar.test.tsx`. Suíte: 290. Não conferido no app rodando.
+
+### Projetos no WSL + lista de recentes ao abrir projeto — 2026-09-17
+
+Etapa 1 de 3 do pedido "SSH + WSL + recentes". SSH fica para a etapa 3.
+
+- [x] **Terminal dentro da distro** (`crates/omni-engine/src/main.rs`): `wsl_target()` reconhece
+  `\wsl.localhost\<distro>\...` e `\wsl$\...`; nesse caso a PTY sobe `wsl.exe -d <distro> --cd
+  <caminho linux>` em vez do shell do Windows. O ConPTY não aceita cwd em UNC, então o processo
+  nasce no `%USERPROFILE%` e quem entra na pasta é o `--cd`. Teste `wsl_target_...`.
+- [x] **Detecção de CLI por projeto** (`src-tauri/src/engine_client.rs`): `agent_cli_statuses` agora
+  recebe `project_path`; em caminho do WSL a busca roda dentro da distro (`command -v` + arquivos de
+  credencial), numa chamada `wsl.exe` só. `claude` do Windows não conta lá dentro e vice-versa.
+  Comando novo `wsl_distros` (`wsl -l -q`).
+- [x] `AgentLauncher` passa o caminho do projeto e, em projeto WSL, esconde o seletor de contas
+  (os profiles são pastas de configuração do Windows e não atravessam a distro) e avisa isso.
+- [x] **Abrir projeto** agora abre `ProjectPicker` (`src/features/projects/ProjectPicker.tsx`) antes
+  do explorador: últimos 15 projetos (`src/services/recentProjectsService.ts`, localStorage), com
+  etiqueta `WSL · <distro>`, botão de esquecer, "Procurar no computador…" e um
+  "Procurar no WSL · <distro>" por distro, que abre o explorador já em `\wsl.localhost\<distro>\home`.
+- [x] 4 testes em `src/test/ProjectPicker.test.tsx`; `App.test.tsx` passa pelo diálogo novo. Suíte:
+  290. `cargo check` e testes do engine ok. Não conferido no app rodando.
+- [ ] Sessão de agente em projeto WSL grava o transcript no `~/.claude` **da distro**; o índice de
+  conversas do app aponta para o caminho do Windows, então etiqueta de modelo, `/usage` e histórico
+  não enxergam essas sessões ainda.
+
+### Claude local rodando sobre projeto remoto (WSL e SSH) — 2026-09-18
+
+Objetivo: o agente continua sendo o `claude.exe` **deste PC** (conta, histórico, `/usage`, celular),
+mas cada comando dele executa onde o código está. Fecha a limitação da entrega de 2026-09-17.
+
+- [x] **Alvo de execução** em `crates/omni-core/src/targets.rs`: `Local | Wsl | Ssh`, resolvido pelo
+  caminho do projeto, mais tradução de pasta e montagem de comando. Absorveu as duas cópias da regra
+  do WSL (engine e Tauri). 9 testes.
+- [x] **`crates/omni-shim`**: executável que o Claude recebe em `CLAUDE_CODE_SHELL_PREFIX`. Roda o
+  comando no alvo (`wsl.exe --cd` / `ssh`), repassa stdin/stdout e código de saída.
+- [x] **Engine** (`open_pty_and_spawn`): sessão de agente sobe shell local com o desvio no ambiente;
+  aba de terminal comum continua entrando na distro/servidor. Restart e duplicate herdam.
+- [x] **Git dentro do alvo** (`git_client::git_invocation`): `wsl git` / `ssh git`, para o Git do
+  Windows não sujar repo Linux com CRLF e `filemode`. `git_status` parou de transformar toda falha em
+  "não é repositório" — montagem caída e `dubious ownership` agora aparecem.
+- [x] **SSH**: registro em `ssh.json` (`src-tauri/src/ssh.rs`, sem senha nem passphrase), formulário
+  no diálogo de projetos com "Testar conexão", montagem SSHFS-Win por projeto e `ProjectPicker` que
+  monta antes de abrir.
+- [x] **Latência**: índice do Ctrl+P feito no alvo (`target_project_files`, `rg --files`), poll da
+  árvore em 15s e do Git em 10s quando o projeto é remoto (`targetState`).
+- [x] **Caminho normalizado num lugar só** (`src/lib/paths.ts`): reducer, recentes e histórico usavam
+  três regras diferentes; `\wsl$\` e `\wsl.localhost\` viravam dois projetos.
+- [x] **Visual**: diálogo de abrir projeto sai por `createPortal` — a `<aside>` é `sticky`, o que cria
+  contexto de empilhamento e prendia o `z-50` atrás dos terminais.
+
+**Verificado no app/CLI de verdade** (não só em teste): `claude -p` com o prefixo ligado, num projeto
+em `\wsl.localhost\Ubuntu\...`, respondeu `Linux`, `/home/felipecampos/barber-app` e a branch do
+repo — ou seja, ferramentas de arquivo pelo caminho montado e comandos dentro da distro. Hooks do
+usuário continuam rodando no Windows. `git` pelo formato do app testado dentro da distro e por SSH.
+
+**Três armadilhas que só apareceram testando** (e viraram teste):
+1. `CLAUDE_CODE_SHELL_PREFIX` recebe o comando como argumento único e corta a string no último `" -"`
+   — o prefixo tem de ser só o caminho do executável. Teste: `prefixo_do_claude_e_so_o_caminho_do_shim`.
+2. O Git Bash converte variável que pareça caminho POSIX e **colapsa `\` em `\`**: `/home/ana/p`
+   chegava como `C:/Program Files/Git/home/ana/p`. Por isso o shim deriva o alvo do caminho do
+   Windows, e `wsl_parts` aceita UNC com uma barra só.
+3. O Claude embrulha cada comando (`source snapshot … && eval '<cmd>' && pwd -P >| '/c/…/claude-XXXX-cwd'`).
+   O arquivo de diretório é do Windows e não existe no alvo — o shim tira essa parte e grava ele
+   mesmo. Hook chega **sem** embrulho: é assim que o shim sabe que ele roda local (`wrapper.rs`).
+   `bash.exe` do PATH é o lançador do WSL, então o modo local usa o bash do Git.
+
+Suíte: 303 testes de front, 56 do engine, 28 do core, 16 do Tauri, 3 do shim.
+
+- [ ] **SSH não testado de ponta a ponta**: o `sshd` foi instalado no Ubuntu do WSL e a conexão por
+  chave, o `git` remoto e o shim por SSH funcionaram; a **montagem SSHFS-Win não foi testada** porque
+  WinFsp/SSHFS-Win não estão instalados nesta máquina.
+- [ ] `cd` dentro de um comando do agente não persiste para o comando seguinte (cada chamada é uma
+  invocação nova no alvo). Contornável com `cd x && cmd` na mesma chamada.
+- [ ] `ssh` sem `ControlMaster` no Windows: cada comando paga handshake. Medir e, se pesar, manter um
+  processo mestre no shim.
+
+### Painel Docker (estilo extensão Containers) — 2026-09-18
+
+- [x] `src-tauri/src/docker_client.rs`: `docker_containers` (`docker ps -a --format '{{json .}}'`, com
+  projeto do Compose tirado do label) e `docker_container_action` (start/stop/restart/`rm -f`), fora
+  da thread da janela. Teste de parse no Rust; conferido contra a saída real do `docker ps` da máquina.
+- [x] `src/components/DockerPanel.tsx` na seção DOCKER da sidebar (antes vazia): agrupa por Compose,
+  bolinha de estado, iniciar/parar, reiniciar, logs (`docker logs -f`) e shell (`docker exec -it … sh`)
+  num terminal novo do projeto (`runInTerminal` em `App.tsx`), remover com confirmação inline.
+  Poll de 5s só com a seção aberta. Ícones `StopIcon`/`TrashIcon` no gerador.
+- [x] 3 testes em `src/test/DockerPanel.test.tsx`. Não conferido no app rodando.
+
+## Release v0.5.0 (2026-09-18)
+
+- [x] `VERSION` 0.5.0 + `version:sync`; entrada em `src/lib/changelog.ts` (Docker, WSL/SSH, recentes,
+  branch no rodapé, Atalhos, fechar Configurações, X na Atenção, anexo do celular). README atualizado.
+- [x] Verificado antes da tag, igual ao CI: `build-engine` (engine + shim), `cargo test` de
+  engine/core/protocolo/shim, `cargo check -p omni-agents`, `cargo check` do shim/engine para Linux,
+  typecheck, 306 testes front.

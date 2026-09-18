@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { useAttention } from "../features/terminal/useAttention";
 import type { TerminalSession } from "../features/terminal/terminalService";
 import type { PaneNode, Project, WorkspaceState } from "../types/workspace";
@@ -44,6 +44,24 @@ function workspace(id: string, name: string, projects: Project[], activeProjectI
 }
 
 describe("useAttention", () => {
+  it("dispensar pelo X esconde o item até a sessão soltar saída nova", () => {
+    const workspaces = [
+      workspace("ws-a", "Cliente X", [project("api", null)], "api"),
+      workspace("ws-b", "Estudos", [project("web", null)], "web"),
+    ];
+    const { result, rerender } = renderHook(
+      ({ seq }) => useAttention([session({ id: "s1", project_id: "api", output_seq: seq })], workspaces, "ws-b"),
+      { initialProps: { seq: 1 } }
+    );
+
+    act(() => result.current.dismiss("s1"));
+    expect(result.current.items).toHaveLength(0);
+    expect(result.current.all).toHaveLength(1);
+
+    rerender({ seq: 2 });
+    expect(result.current.items).toHaveLength(1);
+  });
+
   it("lista agente de workspace inativo com o nome do workspace e do projeto", () => {
     const workspaces = [
       workspace("ws-a", "Cliente X", [project("api", null)], "api"),

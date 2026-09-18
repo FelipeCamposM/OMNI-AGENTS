@@ -127,8 +127,34 @@ pub struct AgentCliStatus {
     authenticated: bool,
 }
 
+
+/// Distros instaladas (`wsl -l -q`). A saída vem em UTF-16 com NUL entre os bytes — daí o filtro.
 #[tauri::command]
-pub fn agent_cli_statuses() -> Vec<AgentCliStatus> {
+pub fn wsl_distros() -> Vec<String> {
+    #[cfg(not(windows))]
+    return Vec::new();
+    #[cfg(windows)]
+    {
+        let Ok(output) = crate::git_client::hidden(&mut Command::new("wsl.exe")).args(["-l", "-q"]).output() else {
+            return Vec::new();
+        };
+        String::from_utf8_lossy(&output.stdout)
+            .replace('\0', "")
+            .lines()
+            .map(str::trim)
+            .filter(|linha| !linha.is_empty())
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+/// A CLI que importa é sempre a **desta máquina**: o agente roda aqui, com a conta e o histórico
+/// do Windows, e só os comandos dele são desviados para o alvo (ver `omni-shim`). `project_path`
+/// segue no parâmetro porque a UI já o envia e ele volta a ser útil se um dia houver detecção por
+/// projeto.
+#[tauri::command]
+pub fn agent_cli_statuses(project_path: Option<String>) -> Vec<AgentCliStatus> {
+    let _ = &project_path;
     AGENT_CLIS
         .into_iter()
         .map(|(id, label, candidates, _)| {

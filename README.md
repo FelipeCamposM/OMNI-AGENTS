@@ -1,361 +1,186 @@
-# CAMPS-UTILS
+# OMNI AGENTS
 
-Suíte desktop para Windows com ferramentas locais para documentos, imagens, áudio, vídeo e utilitários do dia a dia.
+Um lugar só para trabalhar com vários agentes de programação ao mesmo tempo — Claude Code, Codex e
+Cursor — em vários projetos, sem ficar caçando janelas de terminal.
 
-O projeto começou como **PDF to Markdown** e evoluiu para uma aplicação multiferramenta. A maior parte do processamento acontece no computador do usuário, sem enviar arquivos para serviços de conversão externos.
+Os agentes continuam rodando mesmo com a janela fechada, avisam quando terminam ou precisam de
+aprovação, e você pode responder a eles **do celular**, de qualquer lugar.
 
-**Versão atual:** 1.0.1
+**Versão atual:** 0.5.0 · **Windows, macOS e Linux** · Tauri 2 · React · TypeScript · Rust
 
-**Plataforma:** Windows 10/11
+![Tela principal do OMNI AGENTS](docs/screenshots/01-workspace.png)
 
-**Stack:** Tauri 2 · React 18 · TypeScript · Vite · Tailwind CSS · Rust · Python · PyInstaller
+---
 
-## Funcionalidades
+## O que ele faz
 
-### Documentos
+**Vários agentes lado a lado.** Divida a tela em quantos painéis quiser, com um agente ou um
+terminal em cada um. Arraste abas entre os painéis. Cada aba mostra a marca do agente que está
+rodando nela.
 
-- PDF → Markdown com Docling e OCR
-- Markdown → PDF
-- Word (`.docx`) → PDF sem exigir Microsoft Word
-- Visualizar, juntar, dividir, extrair páginas e comprimir PDFs
+**Nada se perde quando você fecha a janela.** Um serviço próprio segura as sessões: fechar o app,
+atualizar o OMNI ou reiniciar a janela não derruba o que o agente está fazendo.
 
-### Imagens
+**Avisa quando precisa de você.** O agente terminou o turno ou abriu um pedido de aprovação? O
+projeto acende na barra lateral e você recebe uma notificação do sistema. `Ctrl+Tab` pula direto
+para quem está esperando, e o **X** do aviso dispensa sem precisar abrir.
 
-- Converter imagens entre WebP, PNG, JPG e ICO
-- Redimensionar e renomear imagens em lote
-- Comprimir imagens por qualidade ou tamanho-alvo
-- Gerar mapas de profundidade com Depth Anything V2
+**Várias contas por agente.** Pessoal e trabalho no mesmo app, cada uma isolada na própria pasta de
+configuração. O OMNI nunca lê nem guarda suas credenciais — o login acontece no próprio provider.
 
-### Mídia
+**Mostra quanto você já usou.** A barra de baixo traz o consumo da conta em foco (5 horas e semana),
+com barra colorida, mais o modelo e o nível de esforço que está atendendo aquela conversa.
 
-- Gerar legendas SRT/VTT localmente com Whisper
-- Gravar legendas em vídeos ou criar faixa desligável
-- Baixar áudio, vídeo ou playlists do YouTube
-- Comprimir vídeos em H.264
-- Converter áudio para MP3, WAV ou FLAC
-- Converter trechos de vídeo em GIF
+**Histórico de verdade.** Encontre e retome conversas antigas do Claude e do Codex, mesmo as que não
+começaram aqui — o OMNI lê os registros das próprias CLIs.
 
-### Utilitários
+**Git integrado.** Status, stage, commit e push na barra lateral, diferenças lado a lado e um grafo
+de commits com ramos, etiquetas e autor. A branch atual fica no rodapé: um clique troca de branch,
+cria uma nova ou puxa as mudanças do remoto.
 
-- Codificar e decodificar Base64
-- Gerar QR codes
-- Calcular hashes MD5, SHA-1 e SHA-256
+**Projetos no WSL e em servidores.** Abra uma pasta dentro do WSL ou de um servidor por SSH. O
+agente continua sendo o do seu PC (mesma conta, histórico e celular), mas os comandos dele e o Git
+rodam lá, onde o código está. A tela de abrir projeto lista os recentes.
 
-## Privacidade e uso da internet
+**Containers Docker.** A seção DOCKER da barra lateral lista os containers do seu computador,
+agrupados por projeto do Compose, como a extensão Containers do VS Code: iniciar, parar, reiniciar,
+remover, ver os logs e abrir um shell dentro do container, cada um num terminal do app.
 
-Os arquivos processados não são enviados para APIs de conversão. O aplicativo trabalha localmente por meio do backend Rust, do sidecar Python e de ferramentas como ffmpeg.
+**Skills, arquivos e tarefas.** Instale, ative e desative skills por conta ou por projeto, navegue e
+edite arquivos do projeto e organize tarefas num quadro Kanban.
 
-A internet é usada apenas quando necessário para:
+**Do celular.** Leia o QR, e o telefone vira um chat com os mesmos agentes: mandar prompt, aprovar
+uma ação, anexar arquivos e colar prints. A conexão é direta com o seu PC, pelo Tailscale.
 
-- baixar vídeos ou áudios solicitados pelo usuário;
-- procurar e instalar atualizações do aplicativo;
-- baixar módulos opcionais na primeira utilização;
-- baixar pesos de modelos de IA local.
+---
 
-## Arquitetura
+## Como é
 
-```mermaid
-flowchart LR
-    A[React + TypeScript] -->|Tauri invoke| B[Rust]
-    B --> C[Operações nativas]
-    B --> D[Sidecar Python]
-    B --> E[ffmpeg e módulos opcionais]
-    C --> F[Arquivo de saída]
-    D --> F
-    E --> F
-```
+### Escolher o agente e a conta
+![Seletor de CLI e conta](docs/screenshots/02-novo-agente.png)
 
-- **React/TypeScript:** interface, formulários, prévias, histórico e configurações.
-- **Tauri/Rust:** janela desktop, diálogos, filesystem, processos, downloads e operações nativas.
-- **Python:** Docling, OCR, documentos, PDFs, transcrição e depth map.
-- **ffmpeg:** vídeo, áudio, GIF, download e processamento de legendas.
-- **localStorage:** configurações e histórico local.
+### Uso da conta, modelo e esforço
+![Barra de status com o consumo da conta](docs/screenshots/03-rodape-uso.png)
 
-As ferramentas são registradas em `src/tools/registry.tsx`, fonte única para a Home e a Sidebar.
+### Git Graph
+![Grafo de commits](docs/screenshots/04-git-graph.png)
 
-## Pré-requisitos para desenvolvimento
+### Histórico de conversas
+![Tela de histórico](docs/screenshots/05-historico.png)
 
-| Ferramenta | Requisito |
+### Skills
+![Gerenciador de skills](docs/screenshots/06-skills.png)
+
+### Aparência
+![Configurações de aparência](docs/screenshots/07-aparencia.png)
+
+### No celular
+<p>
+  <img src="docs/screenshots/10-celular-projetos.png" alt="Lista de projetos no celular" width="290">
+  <img src="docs/screenshots/09-celular-chat.png" alt="Conversa com um anexo, no celular" width="290">
+</p>
+
+---
+
+## Instalação
+
+Baixe na [página de releases](https://github.com/FelipeCamposM/OMNI-AGENTS/releases/latest):
+
+| Sistema | Arquivo | Observação |
+|---|---|---|
+| Windows 10/11 | `OMNI.AGENTS_x64-setup.exe` | O SmartScreen pode avisar na primeira vez: **Mais informações → Executar assim mesmo**. |
+| macOS (Intel e Apple Silicon) | `OMNI.AGENTS_universal.dmg` | Na primeira abertura, clique com o botão direito no app → **Abrir**. |
+| Linux | `.AppImage`, `.deb` ou `.rpm` | O AppImage se atualiza sozinho; `.deb` e `.rpm` precisam reinstalar. |
+
+O app se **atualiza sozinho**: quando sai uma versão nova, aparece um aviso dentro dele.
+
+### O que você precisa ter instalado
+
+O OMNI não traz os agentes dentro dele — ele usa as CLIs que já estão no seu computador:
+
+- [Claude Code](https://claude.com/claude-code) (`claude`)
+- [Codex CLI](https://developers.openai.com/codex/cli) (`codex`)
+- [Cursor CLI](https://cursor.com/cli) (`agent`)
+
+Basta ter pelo menos uma. Em **Configurações → Agentes** o app mostra quais encontrou e se já têm
+login. Para o acesso pelo celular, também é preciso o [Tailscale](https://tailscale.com) no PC e no
+telefone, com a mesma conta.
+
+---
+
+## Primeiros passos
+
+1. **Adicione um projeto** pela barra lateral — é uma pasta do seu computador.
+2. Clique em **Novo agente**, escolha a CLI e a conta. O agente abre já dentro da pasta do projeto.
+3. Divida a tela com `Ctrl+\` e abra outro agente ou um terminal no painel novo.
+4. Trabalhe normalmente. Pode fechar a janela: o agente continua.
+5. Para usar do celular, vá em **Configurações → Celular** e siga os quatro passos da tela.
+
+---
+
+## Atalhos
+
+Todos podem ser trocados em **Configurações → Atalhos**.
+
+| Atalho | O que faz |
 |---|---|
-| Node.js | 18 ou superior |
-| Rust/Cargo | 1.77 ou superior, toolchain MSVC |
-| Python | 3.11 ou superior |
-| Visual Studio Build Tools | 2022, com desenvolvimento para desktop em C++ |
-| WebView2 | normalmente já incluído no Windows 10/11 |
+| `Ctrl+P` | Buscar arquivo no projeto |
+| `Ctrl+\` | Dividir o painel lado a lado |
+| `Ctrl+Shift+\|` | Dividir em cima e embaixo |
+| `Ctrl+W` | Fechar o painel |
+| `Ctrl+M` | Maximizar o painel |
+| `Ctrl+Tab` | Ir para o agente que está pedindo atenção |
+| `Ctrl+Shift+B` | Criar uma branch a partir da atual |
+| `Ctrl+Shift+Espaço` | Sair do terminal e devolver o teclado ao app |
+| `Esc` | Fechar as Configurações e voltar para onde você estava |
+| Botão do meio do mouse | Fechar a aba |
 
-Instalação do Rust e das Build Tools pelo `winget`:
+---
 
-```powershell
-winget install Rustlang.Rustup
-winget install Microsoft.VisualStudio.2022.BuildTools
-```
+## Privacidade
 
-Depois de instalar o Rust, feche e abra novamente o terminal.
+- Seus projetos, conversas e configurações **ficam no seu computador**. O OMNI não tem servidor, não
+  tem conta e não manda nada para lugar nenhum.
+- As credenciais dos agentes continuam sendo do provider: o login abre a própria CLI, e o OMNI
+  guarda apenas o nome da conta e a pasta de configuração dela.
+- O acesso pelo celular é **direto com o seu PC**, pela rede privada do Tailscale, protegido por um
+  código de acesso que fica no telefone e pode ser trocado a qualquer momento.
+- A internet é usada para: falar com os provedores dos agentes (isso é a própria CLI), procurar
+  atualizações do OMNI e, se você ligar, o acesso pelo celular.
 
-## Configuração do ambiente
-
-### Setup automático
-
-```powershell
-# Prepara o ambiente e gera o instalador
-npm run setup
-
-# Prepara o ambiente e inicia em modo de desenvolvimento
-npm run setup:dev
-```
-
-O processo é controlado por `scripts/setup.ps1`.
-
-### Setup manual
-
-```powershell
-npm install
-
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-
-pip install -r python\requirements.txt
-```
-
-As dependências Python e os modelos de IA são pesados. Reserve alguns gigabytes e espere uma instalação inicial mais demorada.
+---
 
 ## Desenvolvimento
 
-```powershell
-# Aplicativo completo: Vite + Tauri/Rust
-npm run dev
+Precisa de Node 18+, Rust e as ferramentas de build do sistema.
 
-# Apenas a interface web
-npm run dev:vite
-```
-
-O servidor Vite usa obrigatoriamente a porta **1420**, configurada no Tauri.
-
-`npm run dev:vite` é útil para trabalhar apenas na interface. Diálogos, filesystem, processos e chamadas `invoke()` dependentes do Tauri não funcionarão nesse modo.
-
-## Testes e verificações
-
-```powershell
-# TypeScript
+```bash
+npm install
+npm run dev          # app completo (compila o engine e abre a janela)
+npm run dev:vite     # só a interface, sem Rust
 npm run typecheck
-
-# Frontend
-npm test
-npm run test:watch
-
-# Um teste específico
-npx vitest run src/test/App.test.tsx
-
-# Python
-.venv\Scripts\python -m pytest python -v
-
-# Rust
-cargo check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml
-
-# Build isolado do frontend
-npm run build:vite
+npm test             # testes da interface
+cargo test -p omni-engine -p omni-core -p omni-protocol
+npm run build        # instalador local
 ```
 
-## Build
+### Arquitetura
 
-```powershell
-# Compila o sidecar e os módulos Python
-npm run build:python
-
-# Gera o aplicativo Tauri e coleta os instaladores
-npm run build
-
-# Executa os dois passos anteriores
-npm run build:all
-
-# Recopia bundles existentes para installers/
-npm run installers
+```mermaid
+flowchart LR
+    UI[React + TypeScript] -->|invoke| Tauri[Tauri / Rust]
+    Tauri -->|socket local| Engine[OMNI Engine]
+    Engine --> PTY[Terminais e CLIs dos agentes]
+    Engine --> HTTP[Servidor do celular]
+    Celular[Navegador do celular] -->|Tailscale| HTTP
 ```
 
-Os artefatos finais são copiados para `installers/`. O usuário do aplicativo instalado não precisa ter Node.js, Rust ou Python.
+- **Interface (React):** painéis, abas, editor, git, histórico e configurações.
+- **Tauri/Rust:** janela, diálogos, arquivos, perfis de conta e atualizações.
+- **OMNI Engine:** processo próprio que segura as sessões e sobrevive ao fechamento da janela; é
+  ele que serve a página do celular.
 
-### Módulos Python específicos
-
-```powershell
-python python/build.py docling
-python python/build.py ffmpeg
-python python/build.py whisper
-python python/build.py depth
-```
-
-O PyInstaller segue imports indiretos, inclusive imports dentro de funções. Depois de gerar um módulo, confira o tamanho do ZIP e execute o binário empacotado fora da `.venv` para detectar dependências ausentes ou incorporadas por engano.
-
-## Módulos baixados sob demanda
-
-Recursos grandes ficam fora do instalador principal. No primeiro uso, o aplicativo baixa o módulo, verifica seu SHA256 e o extrai no diretório local da aplicação.
-
-| Módulo | Recurso | Release |
-|---|---|---|
-| Docling | PDF → Markdown e OCR | `docling-v1` |
-| ffmpeg/ffprobe | ferramentas de mídia | `ffmpeg-v1` |
-| Whisper | transcrição e legendas | `whisper-v1` |
-| Depth Anything V2 | mapas de profundidade | `depth-v1` |
-
-As URLs, hashes e arquivos marcadores são definidos como `RemoteModule` em `src-tauri/src/commands.rs`.
-
-Docling e Whisper também podem baixar pesos para `~/.cache/huggingface/hub`. O Depth usa `~/.cache/camps-utils/models/`.
-
-## Como adicionar uma ferramenta
-
-### Frontend
-
-1. Crie `src/tools/<id>/<NomeTool>.tsx`.
-2. Reutilize os componentes de `src/components/ui/` e os hooks existentes.
-3. Registre a ferramenta em `src/tools/registry.tsx`.
-4. Adicione o wrapper de backend em `src/services/conversionService.ts`, se necessário.
-5. Adicione testes em `src/test/`.
-
-Não é necessário cadastrar a ferramenta separadamente na Home e na Sidebar: ambas usam o registro central.
-
-### Comando Rust
-
-1. Implemente o comando em `src-tauri/src/commands.rs`.
-2. Registre-o no `generate_handler!` de `src-tauri/src/lib.rs`.
-3. Crie um wrapper `invoke()` tipado no frontend.
-4. Revise as permissões em `src-tauri/capabilities/`.
-
-### Operação Python
-
-1. Implemente a função em `python/converter.py` ou em um módulo especializado.
-2. Registre a operação em `dispatch(tool, data)`.
-3. Preserve o contrato JSON de sucesso e erro.
-4. Atualize `python/build.py` e os testes.
-
-> **Contrato crítico:** o sidecar Python deve imprimir somente o JSON final em `stdout`. Todos os logs devem usar `log()`, que escreve em `stderr`. Um `print()` extra pode quebrar o `JSON.parse` no frontend.
-
-## Estrutura do repositório
-
-```text
-├── src/
-│   ├── components/              # componentes compartilhados e UI
-│   ├── hooks/                   # hooks de conversão, histórico e progresso
-│   ├── services/                # integração com comandos Tauri
-│   ├── tools/                   # componentes de cada ferramenta
-│   ├── types/                   # contratos e estado TypeScript
-│   └── test/                    # testes do frontend
-├── src-tauri/
-│   ├── src/commands.rs          # backend nativo e módulos remotos
-│   ├── src/lib.rs               # plugins e registro de comandos
-│   ├── capabilities/            # permissões Tauri
-│   └── tauri.conf.json          # janela, CSP, bundle e updater
-├── python/
-│   ├── converter.py             # dispatcher e conversões
-│   ├── subtitles.py             # processamento de legendas
-│   ├── depth.py                 # geração de depth map
-│   └── build.py                 # empacotamento PyInstaller
-├── scripts/                     # setup, versão, instaladores e release
-├── roadmaps/                    # estado e próximas entregas
-├── spec/                        # especificações do produto
-├── installers/                  # artefatos de distribuição
-├── RESUME.md                    # documentação detalhada para Obsidian
-└── VERSION                      # versão canônica
-```
-
-## Versionamento e release
-
-`VERSION` é a versão canônica. Estes arquivos devem permanecer sincronizados:
-
-- `VERSION`
-- `package.json`
-- `src-tauri/Cargo.toml`
-- `src-tauri/tauri.conf.json`
-
-```powershell
-npm run version:check
-npm run version:sync
-```
-
-Para um build assinado, defina no terminal:
-
-```powershell
-$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content "$env:USERPROFILE\.tauri\camps-utils.key" -Raw
-$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "<senha>"
-```
-
-Depois:
-
-```powershell
-npm run build
-npm run release
-```
-
-`npm run release` gera `installers/latest.json`, usado pelo updater automático.
-
-Anexe ao GitHub Release da versão:
-
-- o instalador `*-setup.exe`;
-- a assinatura `.sig` correspondente;
-- `latest.json`.
-
-Nunca adicione a chave privada ou sua senha ao repositório. Perder a chave impede novas atualizações para quem já instalou o aplicativo.
-
-### Regra dos GitHub Releases
-
-- Versões do aplicativo, como `v1.0.1`, devem ser releases normais.
-- Depósitos de módulos, como `ffmpeg-v1`, devem ser marcados como **pre-release**.
-
-O endpoint do updater usa `releases/latest/download/latest.json`. Um depósito publicado como release normal pode virar o `latest` e interromper as atualizações.
-
-## Pontos importantes
-
-- O estado do frontend usa `useReducer`; não há Redux.
-- Configurações e histórico ficam em `localStorage`.
-- O progresso do Docling é simulado; algumas ferramentas de mídia têm progresso real.
-- O evento `tool-progress` pertence à janela e deve ser consumido pelo hook compartilhado.
-- A prévia HTML de legendas aproxima o resultado do libass, mas não é pixel a pixel.
-- A CSP de produção não é reproduzida integralmente em `tauri dev`; execute o teste `src/test/csp.test.ts` e valide builds empacotados.
-- `installers/` preserva versões antigas; confira o arquivo antes de publicar.
-- Partes do código ainda usam nomes legados de `pdf-to-markdown` por compatibilidade.
-
-## Roadmaps
-
-- `roadmaps/new-functions/roadmap.md`: evolução da suíte, módulos e updater.
-- `roadmaps/removebg-vtracer-realesrgan/roadmap.md`: prioridade atual — VTracer, Real-ESRGAN e remoção de fundo.
-- `roadmaps/ia-local/roadmap.md`: fase de IA local em espera.
-- `spec/novas-funcoes/camps-utils-spec.md`: especificação formal da suíte.
-
-Antes de iniciar uma implementação, leia `CLAUDE.md`, este README e o roadmap da fase correspondente. Registre no roadmap o que foi concluído e os próximos passos.
-
-## Solução de problemas
-
-### Porta 1420 ocupada
-
-O Vite usa `strictPort`. Encerre o processo que está usando a porta 1420 e execute novamente `npm run dev`.
-
-### `link.exe` não encontrado
-
-Instale o Visual Studio Build Tools 2022 com o workload de desenvolvimento para desktop em C++.
-
-### Sidecar ou módulo não encontrado
-
-Ative a `.venv` e recompile o alvo:
-
-```powershell
-.venv\Scripts\Activate.ps1
-npm run build:python
-```
-
-### Conversão funciona na `.venv`, mas falha no instalador
-
-Provavelmente há uma dependência ausente no bundle PyInstaller. Execute diretamente o `.exe` gerado e revise inclusões, `hiddenimports` e exclusões em `python/build.py`.
-
-### Primeira execução lenta
-
-É esperado durante o download e a inicialização dos módulos ou pesos de modelos. As execuções seguintes reutilizam o cache.
-
-### WebView2 ausente
-
-Instale o [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
-
-## Documentação adicional
-
-- [`RESUME.md`](RESUME.md): visão técnica detalhada em formato Obsidian.
-- [`CLAUDE.md`](CLAUDE.md): contexto de manutenção, contratos e armadilhas.
-- [`roadmaps/`](roadmaps/): planejamento vivo do produto.
-- [`spec/`](spec/): especificações formais.
+Documentos: [`spec.md`](spec.md) (produto e arquitetura),
+[`docs/multiplataforma.md`](docs/multiplataforma.md) (build e release nos três sistemas),
+[`docs/mobile-and-account-usage.md`](docs/mobile-and-account-usage.md) (celular e uso de conta),
+[`roadmaps/omni-agents/roadmap.md`](roadmaps/omni-agents/roadmap.md) (histórico de decisões).

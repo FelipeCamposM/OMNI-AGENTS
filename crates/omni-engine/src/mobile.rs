@@ -921,15 +921,23 @@ fn execute_checked(state:&Arc<EngineState>, action:&Action, is_running: impl Fn(
     let meta = session.meta.lock().map_err(|_|anyhow!("metadata poisoned"))?.clone();
     let provider = meta.provider.as_deref().unwrap_or("");
     if !is_running(meta.pid,provider) { return Err(anyhow!("CLI não está mais ativo")); }
-    let data = match &action.kind {
-        ActionKind::Prompt(text) if interaction::ready(context.parser.screen(),provider) => format!("\x1b[200~{text}\x1b[201~\r"),
-        ActionKind::Approval(allow) => { let dialog = interaction::approval(&context.parser.screen().contents(),provider).ok_or_else(||anyhow!("Aprovação não reconhecida"))?; if *allow { dialog.0 } else { dialog.1 } },
+    // Prompt vai em duas partes: a colagem agora, o Enter depois que ela aparece no campo (ver
+    // `interaction::submeter_colagem`). Aprovação é tecla de menu e continua num write só.
+    let (data, submeter) = match &action.kind {
+        ActionKind::Prompt(text) if interaction::ready(context.parser.screen(),provider) => (format!("\x1b[200~{text}\x1b[201~"), true),
+        ActionKind::Approval(allow) => { let dialog = interaction::approval(&context.parser.screen().contents(),provider).ok_or_else(||anyhow!("Aprovação não reconhecida"))?; (if *allow { dialog.0 } else { dialog.1 }, false) },
         _ => return Err(anyhow!("Entrada não está disponível")),
     };
     context.input_revision += 1;
-    let mut writer = session.writer.lock().map_err(|_|anyhow!("writer poisoned"))?;
-    writer.write_all(data.as_bytes())?; writer.flush()?;
-    Ok(())
+    {
+        let mut writer = session.writer.lock().map_err(|_|anyhow!("writer poisoned"))?;
+        writer.write_all(data.as_bytes())?; writer.flush()?;
+    }
+    if !submeter { return Ok(()); }
+    // Solta os locks antes de esperar: o leitor da PTY precisa deles para a tela andar.
+    drop(context);
+    drop(sessions);
+    interaction::submeter_colagem(&session)
 }
 
 /// Caminhos servidos sem código de acesso. Lista **fechada**, não prefixo: todo o resto é API e nasce
@@ -1507,11 +1515,42 @@ mod tests {
             let action = Action{id:"a".into(),conversation_id:"c".into(),session_id:"s".into(),state:"queued".into(),created_at_ms:now_ms(),error:None,key:"key".into(),revision,kind:ActionKind::Prompt("Olá\nmundo".into())};
             (session,bytes,action)
         }
-        #[test] fn sends_one_atomic_bracketed_prompt_and_invalidates_revision() {
-            let (_dir,state) = fixture(); let (_session,bytes,action) = fake_session(&state,"Claude Code\r\n❯ ");
+        /// O Enter só sai depois que a colagem aparece no campo. Junto com ela, no mesmo write, a CLI
+        /// trata o `\r` como parte do texto colado: com anexos (prompt de várias linhas) a mensagem
+        /// ficava digitada no terminal e nunca era enviada.
+        #[test] fn prompt_cola_primeiro_e_so_depois_manda_o_enter() {
+            let (_dir,state) = fixture(); let (session,bytes,action) = fake_session(&state,"Claude Code\r\n❯ ");
+            let colagem = "\x1b[200~Olá\nmundo\x1b[201~".as_bytes();
+
+            // A CLI desenha o texto colado no campo pouco depois; é esse eco que libera o Enter.
+            let eco = session.clone();
+            let escrito = bytes.clone();
+            let desenhou = std::thread::spawn(move || {
+                let mut tentativas = 0;
+                loop {
+                    if escrito.lock().unwrap().as_slice() == colagem { break; }
+                    tentativas += 1;
+                    assert!(tentativas < 200, "a colagem não foi escrita antes do Enter");
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                // Enter não pode ter saído junto com a colagem.
+                assert_eq!(&*escrito.lock().unwrap(), colagem, "Enter saiu na mesma rajada da colagem");
+                eco.interaction.lock().unwrap().parser.process(b"[Pasted text #1 +2 lines]");
+            });
+
             execute_checked(&state,&action,|_,_|true).unwrap();
+            desenhou.join().unwrap();
             assert_eq!(&*bytes.lock().unwrap(),"\x1b[200~Olá\nmundo\x1b[201~\r".as_bytes());
             assert!(execute_checked(&state,&action,|_,_|true).is_err());
+        }
+
+        /// CLI que não devolve eco nenhum não pode travar o envio para sempre.
+        #[test] fn sem_eco_da_colagem_o_enter_sai_no_limite() {
+            let (_dir,state) = fixture(); let (_session,bytes,action) = fake_session(&state,"Claude Code\r\n❯ ");
+            let comeco = std::time::Instant::now();
+            execute_checked(&state,&action,|_,_|true).unwrap();
+            assert!(comeco.elapsed() >= std::time::Duration::from_secs(1), "não esperou o eco");
+            assert!(bytes.lock().unwrap().ends_with(b"\r"));
         }
         #[test] fn rejects_desktop_input_closed_cli_and_stale_dialog_without_writing() {
             let (_dir,state) = fixture(); let (session,bytes,mut action) = fake_session(&state,"Claude Code\r\nDo you want to proceed?\r\n❯ 1. Yes\r\n2. Yes, always\r\n3. No");

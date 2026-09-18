@@ -1,13 +1,10 @@
 import { useEffect, useRef } from "react";
 import type { Project, WorkspacesAction } from "../../types/workspace";
 import type { AttentionItem } from "../terminal/useAttention";
+import { matchesShortcut } from "../../lib/shortcuts";
 
 function isTerminalFocused(): boolean {
   return document.activeElement?.closest('[data-omni-context="terminal"]') != null;
-}
-
-function isReturnToAppShortcut(event: KeyboardEvent): boolean {
-  return event.ctrlKey && event.shiftKey && event.code === "Space";
 }
 
 /** Modelo de teclado de dois contextos (spec §22): dentro do terminal (foco no xterm),
@@ -25,7 +22,7 @@ export function useWorkspaceKeymap(
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (isReturnToAppShortcut(event)) {
+      if (matchesShortcut(event, "returnToApp")) {
         event.preventDefault();
         if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
         return;
@@ -36,20 +33,20 @@ export function useWorkspaceKeymap(
       const activeProject = projectRef.current;
       if (!activeProject) return;
 
-      if (event.ctrlKey && event.key === "\\") {
+      if (matchesShortcut(event, "splitHorizontal") || matchesShortcut(event, "splitVertical")) {
         event.preventDefault();
         dispatch({
           type: "SPLIT_PANE",
           paneId: activeProject.activePaneId,
-          direction: event.shiftKey ? "vertical" : "horizontal",
+          direction: matchesShortcut(event, "splitVertical") ? "vertical" : "horizontal",
         });
-      } else if (event.ctrlKey && event.key.toLowerCase() === "w") {
+      } else if (matchesShortcut(event, "closePane")) {
         event.preventDefault();
         dispatch({ type: "CLOSE_PANE", paneId: activeProject.activePaneId });
-      } else if (event.ctrlKey && event.key.toLowerCase() === "m") {
+      } else if (matchesShortcut(event, "maximizePane")) {
         event.preventDefault();
         dispatch({ type: "TOGGLE_MAXIMIZE", paneId: activeProject.activePaneId });
-      } else if (event.ctrlKey && event.key === "Tab") {
+      } else if (matchesShortcut(event, "nextAttention")) {
         event.preventDefault();
         goToNextAttention(attentionRef.current, dispatch);
       }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePoll } from "../../mobile/usePoll";
+import { isRemoteProject } from "../projects/targetState";
 import { listDir, resolveIgnoreList, type FileEntry } from "./filesService";
 
 function sameEntries(a: FileEntry[] | undefined, b: FileEntry[]): boolean {
@@ -82,7 +83,10 @@ export function useFileTree(projectPath: string | null) {
       await Promise.all([projectPath, ...expanded].map((dir) => refreshDir(dir).catch(() => undefined)));
     },
     () => undefined,
-    [projectPath, ignoreList, expanded, refreshDir]
+    [projectPath, ignoreList, expanded, refreshDir],
+    // Cada tick relê a raiz e toda pasta aberta. Pela rede (WSL/SSHFS) isso é caro, então o ritmo
+    // cai — o agente que mexe nos arquivos avisa pela própria saída, não por este poll.
+    isRemoteProject(projectPath) ? 15_000 : undefined
   );
 
   return { root, children, expanded, toggle, refreshDir };

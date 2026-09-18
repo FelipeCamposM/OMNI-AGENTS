@@ -44,11 +44,11 @@ export function resumeCommand(cliCommand: string, entry: HistoryEntry): string {
     : `${cliCommand} resume ${entry.session_id}`;
 }
 
-/** Caminhos do Windows chegam com caixa e barra diferentes conforme quem gravou. */
-export function samePath(a: string | null | undefined, b: string | null | undefined): boolean {
-  const normalize = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
-  return a != null && b != null && normalize(a) === normalize(b);
-}
+// Caminhos do Windows chegam com caixa, barra e host do WSL diferentes conforme quem gravou. A
+// regra mora em `src/lib/paths.ts` — aqui era a terceira cópia, e a única que ignorava `wsl$`.
+import { samePath } from "../../lib/paths";
+
+export { samePath };
 
 export interface HistoryFilter {
   query: string;

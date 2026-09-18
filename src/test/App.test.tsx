@@ -4,6 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { App } from "../App";
 
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: vi.fn().mockResolvedValue(null) }));
+vi.mock("../features/docker/dockerService", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../features/docker/dockerService")>()),
+  dockerContainers: vi.fn().mockResolvedValue([]),
+}));
 
 const mockOpen = vi.mocked((await import("@tauri-apps/plugin-dialog")).open);
 
@@ -11,6 +15,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
 });
+
+/** "Adicionar projeto" abre a lista de recentes; o explorador do Windows é o segundo passo. */
+async function adicionarProjeto() {
+  await userEvent.click(screen.getByRole("button", { name: /adicionar projeto/i }));
+  await userEvent.click(await screen.findByRole("button", { name: /procurar no computador/i }));
+}
 
 describe("App shell", () => {
   it("mostra o workspace vazio no carregamento", () => {
@@ -23,7 +33,7 @@ describe("App shell", () => {
     mockOpen.mockResolvedValueOnce("C:\\dev\\meu-projeto");
     render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /adicionar projeto/i }));
+    await adicionarProjeto();
 
     expect(screen.getAllByText("meu-projeto").length).toBeGreaterThan(0);
     expect(screen.queryByText(/nenhum projeto ainda/i)).not.toBeInTheDocument();
@@ -33,7 +43,7 @@ describe("App shell", () => {
   it("divide e restaura o layout persistido", async () => {
     mockOpen.mockResolvedValueOnce("C:\\dev\\persistente");
     const first = render(<App />);
-    await userEvent.click(screen.getByRole("button", { name: /adicionar projeto/i }));
+    await adicionarProjeto();
     await userEvent.click(screen.getByRole("button", { name: /dividir lado a lado/i }));
 
     expect(screen.getByText("2 painéis")).toBeInTheDocument();
@@ -47,7 +57,7 @@ describe("App shell", () => {
   it("cria e fecha tabs pela barra do painel", async () => {
     mockOpen.mockResolvedValueOnce("C:\\dev\\tabs");
     render(<App />);
-    await userEvent.click(screen.getByRole("button", { name: /adicionar projeto/i }));
+    await adicionarProjeto();
 
     await userEvent.click(screen.getByRole("button", { name: /nova tab/i }));
     await userEvent.click(screen.getByRole("menuitem", { name: /novo terminal/i }));
@@ -62,14 +72,14 @@ describe("App shell", () => {
     mockOpen.mockResolvedValueOnce("C:\\dev\\workspace-um");
     const first = render(<App />);
 
-    await userEvent.click(screen.getByRole("button", { name: /adicionar projeto/i }));
+    await adicionarProjeto();
     expect(screen.getAllByText("workspace-um").length).toBeGreaterThan(0);
 
     await userEvent.click(screen.getByRole("button", { name: /criar workspace/i }));
 
     expect(screen.getByText(/nenhum projeto ainda/i)).toBeInTheDocument();
     mockOpen.mockResolvedValueOnce("C:\\dev\\workspace-dois");
-    await userEvent.click(screen.getByRole("button", { name: /adicionar projeto/i }));
+    await adicionarProjeto();
     expect(screen.getAllByText("workspace-dois").length).toBeGreaterThan(0);
 
     first.unmount();

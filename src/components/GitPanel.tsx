@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { iconForPath } from "../features/files/fileIcons";
+import { isRemoteProject } from "../features/projects/targetState";
 import {
   gitCommit,
   gitPush,
@@ -49,7 +50,8 @@ export function GitPanel({ projectPath, onOpenDiff, onOpenGraph }: GitPanelProps
   // ponytail: poll de 3s; trocar por watcher do .git se o custo do `git status` pesar em repo grande.
   useEffect(() => {
     refresh();
-    const timer = window.setInterval(() => refresh(true), 3_000);
+    // Projeto remoto: cada leitura é um `wsl`/`ssh`, então o ritmo cai.
+    const timer = window.setInterval(() => refresh(true), isRemoteProject(projectPath) ? 10_000 : 3_000);
     const onFocus = () => refresh(true);
     window.addEventListener("focus", onFocus);
     return () => {

@@ -1,4 +1,4 @@
-import { AlertIcon, CircleIcon, WarningIcon, ZapOffIcon } from "./ui/PixelIcon";
+import { AlertIcon, CircleIcon, CloseIcon, WarningIcon, ZapOffIcon } from "./ui/PixelIcon";
 import { ATTENTION_LABEL, type AttentionItem, type AttentionReason } from "../features/terminal/useAttention";
 
 const REASON_ICON: Record<
@@ -23,9 +23,11 @@ const REASON_ICON: Record<
 export function AttentionPanel({
   items,
   onFocusSession,
+  onDismiss,
 }: {
   items: AttentionItem[];
   onFocusSession: (item: AttentionItem) => void;
+  onDismiss: (item: AttentionItem) => void;
 }) {
   if (items.length === 0) return null;
 
@@ -43,13 +45,13 @@ export function AttentionPanel({
       {items.map((item) => {
         const { icon: Icon, className } = REASON_ICON[item.reason];
         return (
+          <div key={item.sessionId} className="group relative">
           <button
-            key={item.sessionId}
             type="button"
             data-nav-item
             onClick={() => onFocusSession(item)}
             title={`${item.workspaceName} · ${item.projectName} · ${item.sessionName} — ${ATTENTION_LABEL[item.reason]}`}
-            className="glass-hover w-full px-3 py-1.5 text-left rounded-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+            className="glass-hover w-full py-1.5 pl-3 pr-7 text-left rounded-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
           >
             <span className="flex min-w-0 items-center gap-2">
               <Icon className={`h-3 w-3 shrink-0 ${className}`} aria-hidden />
@@ -59,6 +61,16 @@ export function AttentionPanel({
               {item.workspaceName} · {item.projectName} · {ATTENTION_LABEL[item.reason]}
             </span>
           </button>
+          <button
+            type="button"
+            onClick={() => onDismiss(item)}
+            aria-label={`Dispensar aviso de ${item.sessionName}`}
+            title="Dispensar aviso"
+            className="absolute right-1.5 top-1/2 -translate-y-1/2 grid h-5 w-5 place-items-center text-text-muted opacity-0 transition-opacity hover:text-text-primary focus-visible:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent group-hover:opacity-100"
+          >
+            <CloseIcon className="h-3 w-3" aria-hidden="true" />
+          </button>
+          </div>
         );
       })}
     </div>

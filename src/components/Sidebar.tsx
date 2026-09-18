@@ -21,7 +21,7 @@ import {
 } from "./ui/PixelIcon";
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
-import { open } from "@tauri-apps/plugin-dialog";
+import { ProjectPicker } from "../features/projects/ProjectPicker";
 import { useStagger } from "../lib/motion";
 import { AgentIcon } from "./ui/AgentIcon";
 import { OmniLogo } from "./ui/OmniLogo";
@@ -35,6 +35,7 @@ import { WorkspaceList } from "./WorkspaceList";
 import { AttentionPanel } from "./AttentionPanel";
 import { FileTree } from "./FileTree";
 import { GitPanel } from "./GitPanel";
+import { DockerPanel } from "./DockerPanel";
 import { KanbanPanel } from "./KanbanPanel";
 import { SkillsList } from "./SkillsList";
 /* O mesmo arquivo que o Tauri usa como ícone do app (tauri.conf.json →
@@ -66,6 +67,9 @@ interface SidebarProps {
   attention: AttentionItem[];
   attentionByWorkspace: Record<string, number>;
   onFocusSession: (item: AttentionItem) => void;
+  onDismissAttention: (item: AttentionItem) => void;
+  /** Terminal novo no projeto ativo rodando `command` (logs/shell de container). */
+  onRunInTerminal: (title: string, command: string) => void;
   projects: Project[];
   activeProjectId: string | null;
   activeProjectPath: string | null;
@@ -101,6 +105,8 @@ export function Sidebar({
   attention,
   attentionByWorkspace,
   onFocusSession,
+  onDismissAttention,
+  onRunInTerminal,
   projects,
   activeProjectId,
   activeProjectPath,
@@ -127,10 +133,7 @@ export function Sidebar({
 }: SidebarProps) {
   const navRef = useStagger<HTMLElement>("[data-nav-item]");
 
-  async function pickProject() {
-    const result = await open({ directory: true, multiple: false });
-    if (typeof result === "string") onAddProject(result);
-  }
+  const [pickerAberto, setPickerAberto] = useState(false);
 
   return (
     <aside className="glass glass-strong w-64 shrink-0 flex flex-col h-screen sticky top-0 rounded-none border-y-0 border-l-0">
@@ -152,7 +155,7 @@ export function Sidebar({
 
       {/* Nav */}
       <nav ref={navRef} className="px-2 py-3 flex-1 min-h-0 overflow-y-auto space-y-3">
-        <AttentionPanel items={attention} onFocusSession={onFocusSession} />
+        <AttentionPanel items={attention} onFocusSession={onFocusSession} onDismiss={onDismissAttention} />
 
         <WorkspaceList
           workspaces={workspaces}
@@ -169,7 +172,7 @@ export function Sidebar({
             <p className="text-text-muted text-[10px] font-medium uppercase tracking-wider">Projects</p>
             <button
               data-nav-item
-              onClick={pickProject}
+              onClick={() => setPickerAberto(true)}
               aria-label="Adicionar projeto"
               className="text-text-muted hover:text-text-primary rounded-none p-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
@@ -266,6 +269,8 @@ export function Sidebar({
                     onPathDeleted={onPathDeleted}
                   />
                 )
+              : section === "DOCKER"
+              ? <DockerPanel onRunInTerminal={onRunInTerminal} />
               : section === "SKILLS"
               ? <SkillsList projectPath={activeProjectPath} onOpenFile={onOpenFile} />
               : section === "GIT"
@@ -292,6 +297,16 @@ export function Sidebar({
           label="Configurações"
         />
       </div>
+
+      {pickerAberto && (
+        <ProjectPicker
+          onClose={() => setPickerAberto(false)}
+          onPick={(path) => {
+            setPickerAberto(false);
+            onAddProject(path);
+          }}
+        />
+      )}
     </aside>
   );
 }

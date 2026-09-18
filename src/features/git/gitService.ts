@@ -65,13 +65,19 @@ export async function gitPush(projectPath: string): Promise<void> {
   await invoke("git_push", { projectPath });
 }
 
+/** `git pull --ff-only`. Devolve a saída do git ("Already up to date.", resumo do fast-forward). */
+export async function gitPull(projectPath: string): Promise<string> {
+  return invoke<string>("git_pull", { projectPath });
+}
+
 export async function gitBranches(projectPath: string): Promise<GitBranch[]> {
   const result = await invoke<GitBranch[]>("git_branches", { projectPath });
   return Array.isArray(result) ? result : [];
 }
 
-export async function gitCheckoutBranch(projectPath: string, branch: string): Promise<void> {
-  await invoke("git_checkout_branch", { projectPath, branch });
+/** `create`: cria a branch a partir da atual (`checkout -b`) em vez de trocar para uma existente. */
+export async function gitCheckoutBranch(projectPath: string, branch: string, create = false): Promise<void> {
+  await invoke("git_checkout_branch", { projectPath, branch, create });
 }
 
 export async function gitLogGraph(projectPath: string): Promise<GitCommit[]> {

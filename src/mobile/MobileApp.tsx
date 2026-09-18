@@ -217,6 +217,10 @@ interface Enviado {
 /** Ritmo do polling com o agente ativo. 5 s faz a conversa parecer travada; 1,5 s parece ao vivo. */
 const POLL_ATIVO_MS = 1_500;
 
+/** Quanto esperar a mensagem enviada aparecer no transcript antes de desistir do balão otimista.
+ *  Sem isto, uma mensagem que a CLI não aceitou deixava o "trabalhando" girando para sempre. */
+const LIMITE_DE_CONFIRMACAO_MS = 120_000;
+
 /** O servidor numera as mensagens (`<conversa>:<n>`) na ordem do transcript. */
 function indiceDaMensagem(id: string): number {
   const n = Number(id.slice(id.lastIndexOf(":") + 1));
@@ -271,17 +275,36 @@ function ConversationDetail({ conversation, refresh }: { conversation: Conversat
   const mensagens = data?.timeline.messages ?? [];
   const ultimaId = mensagens[mensagens.length - 1]?.id ?? "";
 
+  /** Tira o balão otimista da tela, devolvendo as prévias locais que ele segurava. */
+  const descartarEnviado = useCallback((motivo: string | null) => {
+    setEnviado(atual => {
+      atual?.anexos.forEach(a => a.previa && URL.revokeObjectURL(a.previa));
+      return null;
+    });
+    if (motivo) setFalhaEnvio(motivo);
+  }, []);
+
   // O prompt otimista sai quando chega de verdade no transcript, ou quando a fila o recusa.
   useEffect(() => {
     if (!enviado) return;
     const chegou = mensagens.some(m => m.role === "user"
       && (m.text.trim() === enviado.texto.trim() || indiceDaMensagem(m.id) > enviado.base));
     const acao = data?.actions.find(a => a.id === enviado.acao);
-    if (!chegou && acao?.state !== "rejected") return;
-    enviado.anexos.forEach(a => a.previa && URL.revokeObjectURL(a.previa));
-    setEnviado(null);
-    if (!chegou) setFalhaEnvio(`Não foi enviado: ${acao?.error ?? "o agente recusou a entrada"}`);
-  }, [data, enviado, mensagens]);
+    if (chegou) { descartarEnviado(null); return; }
+    if (acao?.state === "rejected") descartarEnviado(`Não foi enviado: ${acao.error ?? "o agente recusou a entrada"}`);
+  }, [data, enviado, mensagens, descartarEnviado]);
+
+  // Rede de segurança com relógio próprio: sem rede não há polling, e era justamente aí que o
+  // "trabalhando" ficava girando para sempre.
+  useEffect(() => {
+    if (!enviado) return;
+    const restante = Math.max(0, enviado.em + LIMITE_DE_CONFIRMACAO_MS - Date.now());
+    const timer = window.setTimeout(
+      () => descartarEnviado("Não consegui confirmar o envio desta mensagem. Veja no PC se ela chegou ao agente."),
+      restante,
+    );
+    return () => window.clearTimeout(timer);
+  }, [enviado, descartarEnviado]);
 
   // Chat rola para a mensagem mais nova; lendo página antiga, começa do topo dela.
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppBackground } from "./components/backgrounds/AppBackground";
 import { SettingsView } from "./components/SettingsView";
 import { Sidebar } from "./components/Sidebar";
@@ -24,14 +24,19 @@ import {
 } from "./features/terminal/terminalService";
 import { HistoryView } from "./features/history/HistoryView";
 import { resumeCommand, samePath, type HistoryEntry } from "./features/history/historyService";
+import { rememberProject } from "./services/recentProjectsService";
+import { primeSshDrives } from "./features/projects/targetState";
 import type { SettingsSection } from "./hooks/useNotifications";
 import { useSettings } from "./hooks/useSettings";
+import { matchesShortcut } from "./lib/shortcuts";
 
 type View = "workspace" | "settings" | "history";
 
 export function App() {
   const [view, setView] = useState<View>("workspace");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>();
+  // Para onde o "fechar" das Configurações volta: a tela de antes, com o workspace intacto no reducer.
+  const [viewBeforeSettings, setViewBeforeSettings] = useState<Exclude<View, "settings">>("workspace");
   const { settings, updateSettings, resetSettings } = useSettings();
   // Memo: o objeto novo a cada render faria o `useWorkspace` recalcular a projeção à toa.
   const temaPublicado = useMemo(
@@ -43,7 +48,7 @@ export function App() {
   const { kanban, dispatch: kanbanDispatch } = useKanban();
   useKanbanDispatcher(kanban, kanbanDispatch, workspace.projects, sessions);
   // Com as Configurações abertas nenhuma pane está na tela, então nada pode ser marcado como visto.
-  const { items: attention, all: allAttention, countByWorkspace } = useAttention(
+  const { items: attention, all: allAttention, countByWorkspace, dismiss: dismissAttention } = useAttention(
     sessions,
     workspaces,
     activeWorkspaceId,
@@ -59,6 +64,29 @@ export function App() {
     [sessions]
   );
 
+  function closeSettings() {
+    setView(viewBeforeSettings);
+  }
+
+  // Qual unidade é qual máquina remota: lido uma vez, para os polls saberem que um projeto em
+  // `X:\...` é SSH e não disco local (ver `targetState`).
+  useEffect(() => {
+    void primeSshDrives();
+  }, []);
+
+  useEffect(() => {
+    if (view !== "settings") return;
+    function onKeyDown(event: KeyboardEvent) {
+      // Esc dentro de campo/menu é do campo; só fecha a tela se ninguém mais tratou a tecla.
+      if (event.defaultPrevented || (event.target as HTMLElement | null)?.closest?.("input, textarea, [role=listbox]")) return;
+      if (!matchesShortcut(event, "closeSettings")) return;
+      event.preventDefault();
+      setView(viewBeforeSettings);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [view, viewBeforeSettings]);
+
   function focusSession(item: AttentionItem) {
     dispatch({
       type: "FOCUS_SESSION",
@@ -67,6 +95,21 @@ export function App() {
       sessionId: item.sessionId,
       title: item.sessionName,
     });
+    setView("workspace");
+  }
+
+  async function runInTerminal(title: string, command: string) {
+    if (!activeProject) return;
+    await ensureEngine();
+    const session = await spawnTerminal({
+      projectId: activeProject.id,
+      name: title,
+      cwd: activeProject.path,
+      rows: 30,
+      cols: 120,
+      initialCommand: command,
+    });
+    dispatch({ type: "ATTACH_TERMINAL", sessionId: session.id, title: session.name });
     setView("workspace");
   }
 
@@ -91,7 +134,10 @@ export function App() {
     if (!workspaceId) throw new Error("Crie um workspace antes de retomar a conversa.");
     // Id escolhido aqui pra já nascer a sessão no projeto certo, antes do reducer rodar.
     const projectId = found?.project.id ?? `project-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    if (!found) dispatch({ type: "ADD_PROJECT", path: cwd, id: projectId });
+    if (!found) {
+      rememberProject(cwd);
+      dispatch({ type: "ADD_PROJECT", path: cwd, id: projectId });
+    }
 
     await ensureEngine();
     await ensureAgentTrust(cli.id, cwd, entry.profile_id);
@@ -131,6 +177,8 @@ export function App() {
         attention={attention}
         attentionByWorkspace={countByWorkspace}
         onFocusSession={focusSession}
+        onDismissAttention={(item) => dismissAttention(item.sessionId)}
+        onRunInTerminal={(title, command) => void runInTerminal(title, command).catch(() => undefined)}
         projects={workspace.projects}
         activeProjectId={workspace.activeProjectId}
         activeProjectPath={activeProject?.path ?? null}
@@ -149,6 +197,7 @@ export function App() {
         onOpenHistory={() => setView("history")}
         onHome={() => setView("workspace")}
         onAddProject={(path) => {
+          rememberProject(path);
           dispatch({ type: "ADD_PROJECT", path });
           setView("workspace");
         }}
@@ -203,6 +252,7 @@ export function App() {
         }}
         onOpenSettings={(section) => {
           setSettingsSection(section);
+          if (view !== "settings") setViewBeforeSettings(view);
           setView("settings");
         }}
       />
@@ -220,6 +270,7 @@ export function App() {
                   onReset={resetSettings}
                   initialSection={settingsSection}
                   projectPath={activeProject?.path ?? null}
+                  onClose={closeSettings}
                 />
               </div>
             </div>

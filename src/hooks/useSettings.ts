@@ -4,6 +4,7 @@ import type { AppSettings } from "../types/settings";
 import { DEFAULT_SETTINGS } from "../types/settings";
 import { loadSettings, saveSettings } from "../services/settingsService";
 import { setMotionLevel } from "../lib/motion";
+import { setShortcutOverrides } from "../lib/shortcuts";
 import { aplicarPaleta } from "../lib/aplicarTema";
 import { aplicarIconeDaJanela } from "../features/appIcon";
 import { isBackgroundEffect } from "../components/backgrounds/registry";
@@ -14,6 +15,7 @@ export function useSettings() {
   // Fora de effect de propósito: os hooks de GSAP dos filhos rodam logo após
   // este render e precisam do nível já atualizado.
   setMotionLevel(settings.animations);
+  setShortcutOverrides(settings.shortcuts);
 
   const updateSettings = useCallback((updates: Partial<AppSettings>) => {
     setSettings((prev) => {

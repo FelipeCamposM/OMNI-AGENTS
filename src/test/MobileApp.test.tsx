@@ -381,6 +381,32 @@ describe("anexos", () => {
     expect(screen.queryByText(/Tire o anexo acima de 25 MB/)).not.toBeInTheDocument();
   });
 
+  it("mensagem que nunca chega ao transcript para de girar e avisa", async () => {
+    // `shouldAdvanceTime` mantém o userEvent funcionando com o relógio falso.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+    // Rede de segurança: a CLI pode recusar a entrada sem responder nada, e o celular ficava em
+    // "trabalhando" para sempre.
+    const prompts: unknown[] = [];
+    servidorComUpload([], prompts);
+    history.replaceState(null, "", "/#/c/c");
+    render(<MobileApp />);
+    const campo = await screen.findByLabelText("Sua resposta");
+    await act(async () => {
+      await userEvent.type(campo, "some no limbo");
+      await userEvent.click(screen.getByRole("button", { name: "Enviar resposta" }));
+    });
+    expect(await screen.findByText("some no limbo")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("O agente está trabalhando");
+
+    // O relógio do balão vence sem a mensagem aparecer na timeline.
+    await act(async () => { vi.advanceTimersByTime(121_000); });
+
+    expect(await screen.findByText(/Não consegui confirmar o envio/)).toBeInTheDocument();
+    expect(screen.queryByText("some no limbo")).not.toBeInTheDocument();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("formato do prompt com anexos ida e volta", () => {
     const caminhos = ["C:\\p\\.omni-agents\\anexos\\1726000000000-ab12-a.png", "/home/u/p/.omni-agents/anexos/1726000000001-00ff-b.pdf"];
     const texto = montarPrompt("  Veja  ", caminhos);

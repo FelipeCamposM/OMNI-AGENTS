@@ -4,6 +4,9 @@ mod agent_runtime;
 mod mobile;
 mod engine_client;
 mod git_client;
+mod docker_client;
+mod ssh;
+mod target_files;
 mod history;
 mod profiles;
 
@@ -51,11 +54,23 @@ pub fn run() {
             profiles::rename_profile,
             profiles::delete_profile,
             git_client::git_status,
+            docker_client::docker_containers,
+            docker_client::docker_container_action,
             git_client::git_diff,
             git_client::git_stage,
             git_client::git_unstage,
             git_client::git_commit,
             git_client::git_push,
+            git_client::git_pull,
+            engine_client::wsl_distros,
+            ssh::ssh_connections,
+            ssh::save_ssh_connection,
+            ssh::remove_ssh_connection,
+            ssh::test_ssh_connection,
+            ssh::ssh_mount_status,
+            ssh::ssh_mount,
+            ssh::ssh_unmount,
+            target_files::target_project_files,
             git_client::git_branches,
             git_client::git_checkout_branch,
             git_client::git_log_graph,

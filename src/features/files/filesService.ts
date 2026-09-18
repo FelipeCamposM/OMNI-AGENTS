@@ -10,6 +10,7 @@ import {
   writeFile as pluginWriteFile,
   writeTextFile as pluginWriteTextFile,
 } from "@tauri-apps/plugin-fs";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface FileEntry {
   name: string;
@@ -102,8 +103,24 @@ export function fileKind(name: string): "file" | "markdown" {
 }
 
 /** Todos os arquivos do projeto (mesmo ignore da árvore, dotfiles incluídos) — índice do Ctrl+P.
- * Symlink de pasta não vira `isDirectory` no `readDir`, então não tem loop. */
+ * Symlink de pasta não vira `isDirectory` no `readDir`, então não tem loop.
+ *
+ * Projeto no WSL ou num servidor indexa **do lado de lá** (`rg --files` por dentro do alvo): pela
+ * rede, a mesma varredura custa ordens de grandeza a mais — 3,7s contra 0,16s em 3000 arquivos.
+ * Falhando (sem rg, sem find, montagem caída), cai no caminho normal em vez de ficar sem índice. */
 export async function listAllFiles(projectRoot: string, ignoreList: string[], limit = 20_000): Promise<FileEntry[]> {
+  try {
+    const remotos = await invoke<string[] | null>("target_project_files", { projectPath: projectRoot, limit });
+    if (remotos) {
+      return remotos.map((path) => ({ name: baseName(path), path, isDirectory: false }));
+    }
+  } catch {
+    /* alvo mudo: segue pela varredura local */
+  }
+  return walkAllFiles(projectRoot, ignoreList, limit);
+}
+
+async function walkAllFiles(projectRoot: string, ignoreList: string[], limit: number): Promise<FileEntry[]> {
   const files: FileEntry[] = [];
   let pending = [""];
   while (pending.length > 0 && files.length < limit) {

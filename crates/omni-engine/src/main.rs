@@ -1,6 +1,7 @@
 mod interaction;
 mod mobile;
 use anyhow::{anyhow, Context, Result};
+use omni_core::targets;
 use omni_protocol::{
     atomic_write_json, EngineRequest, EngineResponse, SessionState, TerminalSession,
     DEFAULT_ENGINE_PORT, PROTOCOL_VERSION,
@@ -309,11 +310,29 @@ fn open_pty_and_spawn(
     rows: u16,
     cols: u16,
     env: &[(String, String)],
+    agent: bool,
 ) -> Result<PtySpawn> {
     let cwd_path = Path::new(cwd);
     if !cwd_path.is_dir() {
         return Err(anyhow!("terminal cwd does not exist: {cwd}"));
     }
+
+    // Sessão de agente **nunca** entra no alvo: quem roda é o CLI desta máquina, com a conta, o
+    // histórico e o `/usage` daqui. O que vai para lá são os comandos dele, pelo shim
+    // (`CLAUDE_CODE_SHELL_PREFIX`, montado em `ambiente_do_alvo`). Terminal comum é o contrário:
+    // abrir direto dentro da distro/servidor é o que o usuário espera ao pedir um shell.
+    let alvo = targets::resolve(cwd, &conexoes_ssh());
+    let wsl = match (&alvo, agent) {
+        (targets::Target::Wsl { distro, remote_path }, false) => Some((distro.clone(), remote_path.clone())),
+        _ => None,
+    };
+    let ssh = match (&alvo, agent) {
+        (targets::Target::Ssh { connection_id, remote_path }, false) => Some((connection_id.clone(), remote_path.clone())),
+        _ => None,
+    };
+    let env_alvo = ambiente_do_alvo(&alvo, cwd, agent);
+    let env: Vec<(String, String)> = env.iter().cloned().chain(env_alvo).collect();
+    let env = env.as_slice();
 
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
@@ -322,15 +341,46 @@ fn open_pty_and_spawn(
         pixel_width: 0,
         pixel_height: 0,
     }).context("failed to create ConPTY")?;
-    let mut command = CommandBuilder::new(shell);
-    command.cwd(cwd_path);
+    // Projeto dentro do WSL: um shell do Windows abriria a pasta pela rede (UNC) e rodaria tudo do
+    // lado de fora — o `claude` instalado no Linux nem estaria no PATH. `wsl.exe --cd` entra na
+    // distro, na mesma pasta, e aí tudo que for digitado roda dentro dela.
+    let mut command = match (&wsl, &ssh) {
+        (Some((distro, dir)), _) => {
+            let mut command = CommandBuilder::new("wsl.exe");
+            command.args(["-d", distro, "--cd", dir]);
+            command
+        }
+        // `-t` força PTY do outro lado (senão não há prompt), e o `exec $SHELL -l` deixa o shell de
+        // login do usuário remoto no lugar do `ssh`.
+        (_, Some((connection_id, dir))) => {
+            let conexoes = conexoes_ssh();
+            let conexao = conexoes
+                .iter()
+                .find(|item| &item.id == connection_id)
+                .ok_or_else(|| anyhow!("conexão SSH {connection_id} não está mais cadastrada"))?;
+            let mut command = CommandBuilder::new("ssh");
+            command.arg("-t");
+            for argumento in conexao.ssh_args() {
+                command.arg(argumento);
+            }
+            command.arg(format!("cd {} && exec $SHELL -l", targets::quote_posix(dir)));
+            command
+        }
+        _ => CommandBuilder::new(shell),
+    };
+    // O ConPTY não abre processo com cwd em UNC (é o `--cd` que entra na pasta), então nesse caso
+    // o processo nasce numa pasta local qualquer.
+    match (&wsl, &ssh) {
+        (None, None) => command.cwd(cwd_path),
+        _ => command.cwd(env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))),
+    };
     ambiente_do_terminal(&mut command, env);
     // Shell de login: é o `.zprofile`/`.bash_profile` que põe Homebrew e `~/.local/bin` no PATH,
     // onde `claude` e `codex` costumam morar no macOS e no Linux.
     #[cfg(not(windows))]
     command.arg("-l");
     #[cfg(windows)]
-    if shell.to_ascii_lowercase().contains("powershell")
+    if wsl.is_none() && shell.to_ascii_lowercase().contains("powershell")
         || shell.to_ascii_lowercase().contains("pwsh")
     {
         command.arg("-NoLogo");
@@ -342,6 +392,75 @@ fn open_pty_and_spawn(
     let writer = pair.master.take_writer().context("failed to open PTY writer")?;
     let reader = pair.master.try_clone_reader().context("failed to open PTY reader")?;
     Ok((pid, writer, pair.master, child, reader))
+}
+
+/// Conexões SSH cadastradas. Mora no mesmo `ssh.json` que o lado Tauri escreve — o engine também
+/// precisa delas para abrir sessão pedida pelo celular, com a janela do desktop fechada.
+fn conexoes_ssh() -> Vec<targets::SshConnection> {
+    engine_dir().map(|dir| targets::ssh_connections(&dir)).unwrap_or_default()
+}
+
+/// Onde mora o `omni-shim`: ao lado do próprio engine. Em dev o engine roda de
+/// `src-tauri/binaries/omni-engine-<triple>.exe`, e o shim é copiado para lá com o mesmo sufixo.
+fn caminho_do_shim() -> Option<PathBuf> {
+    let atual = env::current_exe().ok()?;
+    let nome = atual.file_name()?.to_string_lossy().into_owned();
+    let candidato = atual.with_file_name(nome.replacen("omni-engine", "omni-shim", 1));
+    candidato.is_file().then_some(candidato)
+}
+
+/// Variáveis que transformam uma sessão de agente numa sessão "local com comandos lá".
+///
+/// `CLAUDE_CODE_SHELL_PREFIX` recebe **só o caminho do executável**: o Claude Code monta o comando
+/// final como `"<programa>" "<comando>"` e corta a string no último `" -"`, então qualquer flag
+/// aqui viraria parte do nome do programa. O resto da configuração vai por variável.
+fn ambiente_do_alvo(alvo: &targets::Target, cwd: &str, agent: bool) -> Vec<(String, String)> {
+    if !agent || alvo.is_local() {
+        return Vec::new();
+    }
+    let Some(shim) = caminho_do_shim() else {
+        // Sem shim os comandos rodariam no Windows contra um projeto Linux — silêncio aqui seria
+        // pior que a falta do desvio, então fica registrado no log do engine.
+        eprintln!("omni-shim não encontrado ao lado do engine; comandos do agente rodarão localmente");
+        return Vec::new();
+    };
+    let dados = engine_dir().map(|dir| dir.to_string_lossy().into_owned()).unwrap_or_default();
+    variaveis_do_alvo(alvo, cwd, &shim.to_string_lossy(), &dados)
+}
+
+/// Parte pura de `ambiente_do_alvo`, separada para poder ser testada sem um shim no disco.
+fn variaveis_do_alvo(
+    alvo: &targets::Target,
+    cwd: &str,
+    shim: &str,
+    data_dir: &str,
+) -> Vec<(String, String)> {
+    let mut variaveis = vec![
+        ("CLAUDE_CODE_SHELL_PREFIX".to_string(), shim.to_string()),
+        // O Claude Code roda os comandos pelo Git Bash, e o MSYS converte variável que pareça
+        // caminho POSIX ao chamar um programa nativo: `/home/ana/proj` chegava no shim como
+        // `C:/Program Files/Git/home/ana/proj`. O shim já se defende derivando o alvo do caminho
+        // do Windows, e esta lista evita a conversão na origem.
+        (
+            "MSYS2_ENV_CONV_EXCL".to_string(),
+            "OMNI_TARGET_REMOTE_ROOT;OMNI_TARGET_LOCAL_ROOT;OMNI_TARGET_DATA_DIR".to_string(),
+        ),
+        ("OMNI_TARGET_LOCAL_ROOT".to_string(), cwd.to_string()),
+        ("OMNI_TARGET_REMOTE_ROOT".to_string(), alvo.remote_path().unwrap_or("/").to_string()),
+        ("OMNI_TARGET_DATA_DIR".to_string(), data_dir.to_string()),
+    ];
+    match alvo {
+        targets::Target::Wsl { distro, .. } => {
+            variaveis.push(("OMNI_TARGET_KIND".into(), "wsl".into()));
+            variaveis.push(("OMNI_TARGET_DISTRO".into(), distro.clone()));
+        }
+        targets::Target::Ssh { connection_id, .. } => {
+            variaveis.push(("OMNI_TARGET_KIND".into(), "ssh".into()));
+            variaveis.push(("OMNI_TARGET_SSH_ID".into(), connection_id.clone()));
+        }
+        targets::Target::Local => {}
+    }
+    variaveis
 }
 
 fn spawn_initial_command_thread(session: Arc<LiveSession>, initial_command: Option<String>) {
@@ -436,7 +555,8 @@ pub(crate) fn spawn_terminal_inner(
 ) -> Result<TerminalSession> {
     let shell = shell.unwrap_or_else(default_shell);
     let headless = origin.headless;
-    let (pid, writer, master, child, reader) = open_pty_and_spawn(&cwd, &shell, rows, cols, &origin.env)?;
+    let (pid, writer, master, child, reader) =
+        open_pty_and_spawn(&cwd, &shell, rows, cols, &origin.env, origin.provider.is_some())?;
     let metadata = TerminalSession {
         id: id.clone(),
         project_id,
@@ -591,7 +711,7 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
             context.input_revision += 1;
             context.turn_active = false;
             let (pid, writer, master, child, reader) =
-                open_pty_and_spawn(&meta.cwd, &meta.shell, meta.rows, meta.cols, &meta.env)?;
+                open_pty_and_spawn(&meta.cwd, &meta.shell, meta.rows, meta.cols, &meta.env, meta.provider.is_some())?;
             *session.writer.lock().map_err(|_| anyhow!("terminal writer poisoned"))? = writer;
             *session.master.lock().map_err(|_| anyhow!("terminal master poisoned"))? = master;
             *session.child.lock().map_err(|_| anyhow!("terminal child poisoned"))? = child;
@@ -1106,6 +1226,50 @@ mod tests {
         let mut shell = sessao_claude(dir.path(), "x");
         shell.initial_command = None;
         assert_eq!(comando_ao_reiniciar(&shell), None);
+    }
+
+    /// Contrato **não documentado** do Claude Code, lido do binário instalado: o comando final vira
+    /// `"<programa>" <flags> "<comando>"`, e o parser corta o prefixo no último `" -"`. Ou seja: o
+    /// prefixo tem de ser só o caminho do executável. Se alguém acrescentar uma flag aqui, o CLI
+    /// passa a tratar metade do caminho como nome de programa e todo comando do agente falha em
+    /// silêncio — este teste é o alarme.
+    #[test]
+    fn prefixo_do_claude_e_so_o_caminho_do_shim() {
+        let alvo = targets::Target::Wsl { distro: "Ubuntu".into(), remote_path: "/home/ana/p".into() };
+        let variaveis = variaveis_do_alvo(&alvo, r"\\wsl.localhost\Ubuntu\home\ana\p", r"C:\omni\omni-shim.exe", r"C:\dados");
+        let prefixo = variaveis
+            .iter()
+            .find(|(chave, _)| chave == "CLAUDE_CODE_SHELL_PREFIX")
+            .expect("prefixo")
+            .1
+            .clone();
+        assert_eq!(prefixo, r"C:\omni\omni-shim.exe");
+        assert!(!prefixo.contains(" -"), "flag no prefixo quebra o parser do Claude Code");
+    }
+
+    #[test]
+    fn sessao_de_agente_em_projeto_remoto_recebe_o_alvo_no_ambiente() {
+        let wsl = targets::Target::Wsl { distro: "Ubuntu".into(), remote_path: "/home/ana/p".into() };
+        let variaveis = variaveis_do_alvo(&wsl, "raiz", "shim.exe", "dados");
+        let ler = |chave: &str| variaveis.iter().find(|(k, _)| k == chave).map(|(_, v)| v.clone());
+        assert_eq!(ler("OMNI_TARGET_KIND").as_deref(), Some("wsl"));
+        assert_eq!(ler("OMNI_TARGET_DISTRO").as_deref(), Some("Ubuntu"));
+        assert_eq!(ler("OMNI_TARGET_REMOTE_ROOT").as_deref(), Some("/home/ana/p"));
+        assert_eq!(ler("OMNI_TARGET_LOCAL_ROOT").as_deref(), Some("raiz"));
+
+        let ssh = targets::Target::Ssh { connection_id: "srv1".into(), remote_path: "/srv/app".into() };
+        let variaveis = variaveis_do_alvo(&ssh, "X:", "shim.exe", "dados");
+        assert!(variaveis.contains(&("OMNI_TARGET_KIND".into(), "ssh".into())));
+        assert!(variaveis.contains(&("OMNI_TARGET_SSH_ID".into(), "srv1".into())));
+    }
+
+    /// Projeto local não ganha desvio nenhum, e terminal comum também não: lá o shell já abre
+    /// dentro do alvo, e um prefixo por cima desviaria o comando duas vezes.
+    #[test]
+    fn projeto_local_e_terminal_comum_nao_recebem_desvio() {
+        assert!(ambiente_do_alvo(&targets::Target::Local, r"D:\p", true).is_empty());
+        let wsl = targets::Target::Wsl { distro: "Ubuntu".into(), remote_path: "/home/ana/p".into() };
+        assert!(ambiente_do_alvo(&wsl, "raiz", false).is_empty());
     }
 
     #[test]

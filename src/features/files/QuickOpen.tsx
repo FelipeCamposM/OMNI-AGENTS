@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { matchesShortcut } from "../../lib/shortcuts";
 import { iconForEntry } from "./fileIcons";
 import { baseName, dirName, listAllFiles, resolveIgnoreList, type FileEntry } from "./filesService";
 
@@ -44,7 +45,7 @@ export function QuickOpen({ projectPath, onOpenFile }: QuickOpenProps) {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (!event.ctrlKey || event.shiftKey || event.altKey || event.metaKey || event.key.toLowerCase() !== "p") return;
+      if (!matchesShortcut(event, "quickOpen")) return;
       if (!projectPath) return;
       event.preventDefault();
       event.stopPropagation();

@@ -1,3 +1,4 @@
+import { samePath } from "../../lib/paths";
 import type {
   LayoutNode,
   LayoutPreset,
@@ -196,9 +197,9 @@ function updateActiveProject(
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   switch (action.type) {
     case "ADD_PROJECT": {
-      const existing = state.projects.find(
-        (project) => project.path.toLocaleLowerCase() === action.path.toLocaleLowerCase()
-      );
+      // `samePath` e não `toLocaleLowerCase`: sem normalizar separador e host do WSL, a mesma pasta
+      // aberta como `//wsl$/Ubuntu/p` e como `\\wsl.localhost\Ubuntu\p` virava dois projetos.
+      const existing = state.projects.find((project) => samePath(project.path, action.path));
       if (existing) return { ...state, activeProjectId: existing.id };
       const project = createProject(action.path, action.id);
       return {

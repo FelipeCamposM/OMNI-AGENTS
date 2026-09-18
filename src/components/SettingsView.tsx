@@ -10,14 +10,17 @@ import { AgentConnections } from "../features/terminal/AgentConnections";
 import { SkillsManager } from "../features/skills/SkillsManager";
 import { MobileSettings } from "../features/mobile/MobileSettings";
 import { testarAviso } from "../features/terminal/useAttentionNotifier";
+import { CloseIcon } from "./ui/PixelIcon";
+import { SHORTCUTS, comboFromEvent, setRecordingShortcut, shortcutFor, type ShortcutId } from "../lib/shortcuts";
 
-type SectionId = "aparencia" | "agentes" | "skills" | "mobile" | "sobre";
+type SectionId = "aparencia" | "agentes" | "skills" | "mobile" | "atalhos" | "sobre";
 
 const SECTIONS: { id: SectionId; label: string }[] = [
   { id: "agentes", label: "Agentes" },
   { id: "skills", label: "Skills" },
   { id: "mobile", label: "Celular" },
   { id: "aparencia", label: "Aparência" },
+  { id: "atalhos", label: "Atalhos" },
   { id: "sobre", label: "Sobre" },
 ];
 
@@ -58,9 +61,11 @@ interface SettingsViewProps {
   initialSection?: SectionId;
   /** Projeto aberto — a aba de Skills lista o `.claude/skills` dele além dos escopos globais. */
   projectPath: string | null;
+  /** Volta pra tela de antes de abrir as Configurações. */
+  onClose: () => void;
 }
 
-export function SettingsView({ settings, onChange, onReset, initialSection, projectPath }: SettingsViewProps) {
+export function SettingsView({ settings, onChange, onReset, initialSection, projectPath, onClose }: SettingsViewProps) {
   const [section, setSection] = useState<SectionId>(initialSection ?? "aparencia");
 
   // Reabrir pelo sino noutra pendência tem de pular de seção mesmo com a
@@ -71,9 +76,21 @@ export function SettingsView({ settings, onChange, onReset, initialSection, proj
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="pixel-text text-text-primary text-lg">Configurações</h1>
-        <p className="text-text-muted text-xs">Preferências do workspace. Salvam na hora.</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="pixel-text text-text-primary text-lg">Configurações</h1>
+          <p className="text-text-muted text-xs">Preferências do workspace. Salvam na hora.</p>
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={onClose}
+          aria-label="Fechar configurações"
+          title={`Fechar configurações (${shortcutFor("closeSettings")})`}
+        >
+          <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />
+          Fechar
+        </Button>
       </div>
 
       <div className="flex gap-5 items-start">
@@ -100,6 +117,7 @@ export function SettingsView({ settings, onChange, onReset, initialSection, proj
           {section === "agentes" && <AgentConnections />}
           {section === "skills" && <SkillsManager projectPath={projectPath} />}
           {section === "mobile" && <MobileSettings />}
+          {section === "atalhos" && <AtalhosSection settings={settings} onChange={onChange} />}
           {section === "sobre" && <SobreSection onReset={onReset} />}
         </div>
       </div>
@@ -324,6 +342,92 @@ function TesteDeAviso() {
         </p>
       )}
     </div>
+  );
+}
+
+function AtalhosSection({ settings, onChange }: SectionProps) {
+  const [gravando, setGravando] = useState<ShortcutId | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRecordingShortcut(gravando !== null);
+    return () => setRecordingShortcut(false);
+  }, [gravando]);
+
+  function salvar(id: ShortcutId, combo: string | undefined) {
+    const { [id]: _, ...resto } = settings.shortcuts;
+    const padrao = SHORTCUTS.find((s) => s.id === id)!.default;
+    onChange({ shortcuts: combo && combo !== padrao ? { ...resto, [id]: combo } : resto });
+  }
+
+  function gravar(id: ShortcutId, event: React.KeyboardEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "Escape" && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+      setGravando(null);
+      return;
+    }
+    const combo = comboFromEvent(event.nativeEvent);
+    if (!combo) return;
+    const conflito = SHORTCUTS.find((s) => s.id !== id && shortcutFor(s.id) === combo);
+    if (conflito) {
+      setErro(`${combo} já é usado em "${conflito.label}".`);
+      return;
+    }
+    setErro(null);
+    salvar(id, combo);
+    setGravando(null);
+  }
+
+  return (
+    <Card title="Atalhos do teclado">
+      <p className="text-text-muted text-[11px]">
+        Clique num atalho e aperte a nova combinação. Esc cancela. Com o foco num terminal, só o atalho de busca e o de
+        sair do terminal funcionam — o resto vai pro programa rodando nele.
+      </p>
+      <ul className="divide-y divide-border-subtle/60">
+        {SHORTCUTS.map((s) => {
+          const atual = shortcutFor(s.id);
+          const trocado = settings.shortcuts[s.id] !== undefined;
+          return (
+            <li key={s.id} className="flex items-center justify-between gap-3 py-2">
+              <span className="text-text-secondary text-xs">{s.label}</span>
+              <div className="flex items-center gap-2">
+                {trocado && (
+                  <Button size="sm" variant="ghost" onClick={() => salvar(s.id, undefined)} title={`Voltar para ${s.default}`}>
+                    Padrão
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant={gravando === s.id ? "primary" : "glass"}
+                  aria-label={`Atalho de ${s.label}: ${atual}`}
+                  onClick={() => {
+                    setErro(null);
+                    setGravando(s.id);
+                  }}
+                  onBlur={() => gravando === s.id && setGravando(null)}
+                  onKeyDown={(event) => gravando === s.id && gravar(s.id, event)}
+                  className="min-w-32 font-mono"
+                >
+                  {gravando === s.id ? "Aperte as teclas…" : atual}
+                </Button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {erro && (
+        <p role="alert" className="border-l-2 border-danger pl-3 text-xs text-danger">
+          {erro}
+        </p>
+      )}
+      {Object.keys(settings.shortcuts).length > 0 && (
+        <Button size="sm" variant="ghost" onClick={() => onChange({ shortcuts: {} })}>
+          Restaurar todos os atalhos
+        </Button>
+      )}
+    </Card>
   );
 }
 

@@ -1,4 +1,5 @@
 import { PALETA_PADRAO } from "../lib/palettes";
+import type { ShortcutOverrides } from "../lib/shortcuts";
 
 export type Theme = "escuro" | "claro" | "sistema";
 /**
@@ -43,6 +44,9 @@ export interface AppSettings {
 
   /** Toast do Windows + piscar na barra quando um agente pede atenção com o app fora de foco. */
   notifyAttention: boolean;
+
+  /** Só os atalhos que o usuário trocou; o resto cai no padrão de `SHORTCUTS`. */
+  shortcuts: ShortcutOverrides;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -60,4 +64,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fileSaveMode: "auto",
 
   notifyAttention: true,
+
+  shortcuts: {},
 };
