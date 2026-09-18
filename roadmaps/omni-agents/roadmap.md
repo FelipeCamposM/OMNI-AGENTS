@@ -2152,3 +2152,7 @@ Suíte: 303 testes de front, 56 do engine, 28 do core, 16 do Tauri, 3 do shim.
 - [x] Verificado antes da tag, igual ao CI: `build-engine` (engine + shim), `cargo test` de
   engine/core/protocolo/shim, `cargo check -p omni-agents`, `cargo check` do shim/engine para Linux,
   typecheck, 306 testes front.
+- [x] Commit `5eb5467` + tag `v0.5.0`. Workflow `release.yml` (run 35310425742) e CI (35310423129)
+  verdes. Rascunho conferido (`latest.json` 0.5.0 assinado para Windows/macOS/Linux) e publicado como
+  **Latest**. `releases/latest/download/latest.json` responde 0.5.0 e o `x64-setup.exe` baixa (200).
+- [ ] Não conferido: atualização 0.4.5 → 0.5.0 no app instalado; SSHFS-Win sem teste de ponta a ponta.
