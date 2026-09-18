@@ -1,12 +1,38 @@
+<div align="center">
+
+<img src="src-tauri/icons/128x128@2x.png" alt="Logo do OMNI AGENTS" width="140">
+
 # OMNI AGENTS
 
-Um lugar só para trabalhar com vários agentes de programação ao mesmo tempo — Claude Code, Codex e
-Cursor — em vários projetos, sem ficar caçando janelas de terminal.
+### Todos os seus agentes de IA, em um só lugar.
 
-Os agentes continuam rodando mesmo com a janela fechada, avisam quando terminam ou precisam de
-aprovação, e você pode responder a eles **do celular**, de qualquer lugar.
+Claude Code, Codex e Cursor lado a lado, em vários projetos, rodando mesmo com a janela fechada e
+respondendo **do celular**, de qualquer lugar.
 
-**Versão atual:** 0.5.0 · **Windows, macOS e Linux** · Tauri 2 · React · TypeScript · Rust
+[![Release](https://img.shields.io/github/v/release/FelipeCamposM/OMNI-AGENTS?style=flat-square&color=f97316&label=vers%C3%A3o)](https://github.com/FelipeCamposM/OMNI-AGENTS/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/FelipeCamposM/OMNI-AGENTS/total?style=flat-square&color=f97316&label=downloads)](https://github.com/FelipeCamposM/OMNI-AGENTS/releases)
+[![Licença MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-f97316?style=flat-square)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/FelipeCamposM/OMNI-AGENTS?style=flat-square&color=f97316)](https://github.com/FelipeCamposM/OMNI-AGENTS/stargazers)
+
+<br>
+
+[![Baixar para Windows](https://img.shields.io/badge/Baixar_para-Windows-0078D4?style=for-the-badge&logo=windows11&logoColor=white)](https://github.com/FelipeCamposM/OMNI-AGENTS/releases/latest)
+[![Baixar para macOS](https://img.shields.io/badge/Baixar_para-macOS-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/FelipeCamposM/OMNI-AGENTS/releases/latest)
+[![Baixar para Linux](https://img.shields.io/badge/Baixar_para-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/FelipeCamposM/OMNI-AGENTS/releases/latest)
+
+<br>
+
+<a href="https://skillicons.dev">
+  <img src="https://skillicons.dev/icons?i=tauri,rust,react,ts,vite,tailwind,sqlite,docker&theme=dark" alt="Tauri, Rust, React, TypeScript, Vite, Tailwind, SQLite, Docker">
+</a>
+
+<br><br>
+
+[Instalação](#instalação) · [O que ele faz](#o-que-ele-faz) · [Celular](#no-celular) · [Atalhos](#atalhos) · [Desenvolvimento](#desenvolvimento)
+
+</div>
+
+<br>
 
 ![Tela principal do OMNI AGENTS](docs/screenshots/01-workspace.png)
 
@@ -184,3 +210,14 @@ Documentos: [`spec.md`](spec.md) (produto e arquitetura),
 [`docs/multiplataforma.md`](docs/multiplataforma.md) (build e release nos três sistemas),
 [`docs/mobile-and-account-usage.md`](docs/mobile-and-account-usage.md) (celular e uso de conta),
 [`roadmaps/omni-agents/roadmap.md`](roadmaps/omni-agents/roadmap.md) (histórico de decisões).
+
+---
+
+## Contribuindo
+
+Issues e pull requests são bem-vindos. Achou um bug ou tem uma ideia?
+[Abra uma issue](https://github.com/FelipeCamposM/OMNI-AGENTS/issues).
+
+## Licença
+
+[MIT](LICENSE) © Felipe Campos Macedo
