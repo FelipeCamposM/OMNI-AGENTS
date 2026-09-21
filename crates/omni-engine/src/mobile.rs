@@ -36,7 +36,7 @@ struct Action {
     #[serde(skip)] kind: ActionKind,
 }
 #[derive(Clone, PartialEq)]
-enum ActionKind { Prompt(String), Approval(bool), Spawn(SpawnPlan) }
+enum ActionKind { Prompt(String), Approval(bool), Spawn(SpawnPlan), Modo(String) }
 
 /// Tudo já resolvido **no servidor** antes de entrar na fila. O corpo do request não contribui com
 /// nenhum caminho nem binário: o `cwd` vem do projeto conhecido, o `command` da lista de CLIs que o
@@ -46,6 +46,8 @@ struct SpawnPlan {
     project_id: String,
     cwd: String,
     title: String,
+    /// O título veio do usuário (e não do rótulo padrão do agente).
+    titulo_do_usuario: bool,
     provider: String,
     profile_id: Option<String>,
     command: String,
@@ -493,6 +495,8 @@ fn router(state: Arc<EngineState>) -> Router {
         .route("/conversas/{id}/timeline",get(timeline))
         .route("/conversas/{id}/prompt",post(prompt))
         .route("/conversas/{id}/aprovar",post(approve))
+        .route("/conversas/{id}/nome",post(renomear))
+        .route("/conversas/{id}/modo",post(modo))
         // O limite global (32 KB) é para JSON. Anexo tem o dele, aplicado **só** nesta rota: por
         // dentro da camada global, e o extrator lê o limite mais interno.
         .route("/conversas/{id}/anexos",post(anexar).layer(DefaultBodyLimit::max(ANEXO_MAX_BYTES)))
@@ -592,8 +596,10 @@ fn summaries(state: &EngineState) -> Vec<Value> {
         let status = live.as_ref().map(|s| {
             settle(s).state
         });
-        json!({"id":c.id,"title":c.title,"project_id":c.project_id,"provider":c.segments.last().map(|s|&s.provider),
-            "profile_id":c.segments.last().and_then(|s|s.profile_id.as_ref()),"state":status,"capabilities":capabilities})
+        // `mode` sai da tela viva (o rodapé responde na hora); sessão fechada não tem modo.
+        let mode = live.as_ref().and_then(interaction::modo_da_sessao);
+        json!({"id":c.id,"title":omni_core::conversations::display_title(c),"project_id":c.project_id,"provider":c.segments.last().map(|s|&s.provider),
+            "profile_id":c.segments.last().and_then(|s|s.profile_id.as_ref()),"state":status,"mode":mode,"capabilities":capabilities})
     }).collect()
 }
 
@@ -653,6 +659,18 @@ async fn timeline(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePat
         Ok(Json(json!({"timeline":timeline,"actions":actions})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler timeline"))?
 }
+/// Renomear a conversa. Vale para o celular e para a web de computador; o desktop chega aqui pelo
+/// `EngineRequest::RenameConversation`, para o índice ter **um** escritor só.
+#[derive(Deserialize)] struct NomeBody { nome: String }
+async fn renomear(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, Json(body): Json<NomeBody>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let dir = state.state_file.parent().unwrap();
+        let conversa = omni_core::conversations::rename(dir,&id,&body.nome)
+            .map_err(|erro| error(StatusCode::BAD_REQUEST,&erro))?;
+        Ok(Json(json!({"id":conversa.id,"title":conversa.title})))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao renomear"))?
+}
+
 /// Tamanho máximo de um anexo vindo do celular. Cobre foto de câmera, PDF e print com folga, e
 /// ainda cabe na memória sem susto — o corpo é lido inteiro antes de gravar.
 const ANEXO_MAX_BYTES: usize = 25 * 1024 * 1024;
@@ -735,6 +753,16 @@ async fn prompt(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<
 async fn approve(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, headers: HeaderMap, Json(body): Json<ApprovalBody>) -> Result<(StatusCode,Json<Value>),ApiError> {
     enqueue_async(state,id,headers,ActionKind::Approval(body.permitir)).await
 }
+
+/// Modo de permissão, o que o `shift+tab` faz no terminal. Só `plan` e `auto`: são os dois que o
+/// usuário troca no dia a dia, e um seletor de quatro estados numa tela de celular seria pior.
+#[derive(Deserialize)] #[serde(deny_unknown_fields)] struct ModoBody { modo: String }
+async fn modo(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, headers: HeaderMap, Json(body): Json<ModoBody>) -> Result<(StatusCode,Json<Value>),ApiError> {
+    if body.modo != "plan" && body.modo != "auto" {
+        return Err(error(StatusCode::BAD_REQUEST,"Modo deve ser plan ou auto"));
+    }
+    enqueue_async(state,id,headers,ActionKind::Modo(body.modo)).await
+}
 /// `deny_unknown_fields` é peça de segurança, não capricho: um `cwd` contrabandeado no corpo vira
 /// **400**, em vez de um campo ignorado em silêncio que dá a falsa impressão de ter sido aceito.
 #[derive(Deserialize)] #[serde(deny_unknown_fields)]
@@ -768,6 +796,7 @@ fn resolve_spawn(state: &Arc<EngineState>, body: &SpawnBody) -> Result<SpawnPlan
         None => profiles.iter().find(|p| p.provider == body.provider && p.builtin).cloned(),
     };
 
+    let titulo_do_usuario = body.titulo.is_some();
     let titulo = body.titulo.clone().unwrap_or_else(|| format!("{} · celular",agent.label));
     if titulo.len() > 120 || titulo.chars().any(|c| c.is_control()) {
         return Err(error(StatusCode::BAD_REQUEST,"Título inválido"));
@@ -790,7 +819,7 @@ fn resolve_spawn(state: &Arc<EngineState>, body: &SpawnBody) -> Result<SpawnPlan
     };
 
     Ok(SpawnPlan {
-        project_id: project.id, cwd: project.path, title: titulo, provider: body.provider.clone(),
+        project_id: project.id, cwd: project.path, title: titulo, titulo_do_usuario, provider: body.provider.clone(),
         profile_id: profile.as_ref().map(|p| p.id.clone()),
         env: profile.as_ref().map(omni_core::env_for).unwrap_or_default(),
         command, external_session_id, transcript_path,
@@ -832,7 +861,13 @@ fn enqueue(state:&Arc<EngineState>,id:&str,headers:&HeaderMap,kind:ActionKind) -
     let (_,session) = current(state,id)?;
     let session = session.ok_or_else(||error(StatusCode::CONFLICT,"Nenhuma sessão existente para esta conversa"))?;
     let capability = interaction::capabilities(&session);
-    let supported = match kind { ActionKind::Prompt(_) => capability.prompt, ActionKind::Approval(_) => capability.approve, ActionKind::Spawn(_) => false };
+    let supported = match kind {
+        // Trocar de modo é tecla no composer: vale a mesma porta do prompt (CLI ocioso e tela
+        // reconhecida). Com o agente no meio de um turno, o shift+tab não é para ele.
+        ActionKind::Prompt(_) | ActionKind::Modo(_) => capability.prompt,
+        ActionKind::Approval(_) => capability.approve,
+        ActionKind::Spawn(_) => false,
+    };
     if !supported { return Err(error(StatusCode::CONFLICT,"Sessão ocupada ou tela não reconhecida; atualize o status")); }
     if headers.get("if-match").and_then(|h|h.to_str().ok()) != Some(capability.revision.as_str()) {
         return Err(error(StatusCode::PRECONDITION_FAILED,"O contexto mudou; atualize antes de responder"));
@@ -847,6 +882,13 @@ fn enqueue(state:&Arc<EngineState>,id:&str,headers:&HeaderMap,kind:ActionKind) -
 fn execute(state:&Arc<EngineState>, action:&Action) -> Result<()> {
     match &action.kind {
         ActionKind::Spawn(plan) => spawn_from_mobile(state,action,plan),
+        // O modo tem laço próprio: aperta, relê a tela e repete, então não pode segurar os locks
+        // como o caminho de prompt/aprovação segura.
+        ActionKind::Modo(alvo) => {
+            let (_,session) = current(state,&action.conversation_id).map_err(|_|anyhow!("Conversa removida"))?;
+            let session = session.ok_or_else(||anyhow!("Sessão encerrada"))?;
+            interaction::alternar_modo(state,&session,alvo).map(|_|())
+        }
         _ => execute_checked(state,action,interaction::provider_running),
     }
 }
@@ -864,6 +906,13 @@ fn spawn_from_mobile(state:&Arc<EngineState>, action:&Action, plan:&SpawnPlan) -
         project_id: plan.project_id.clone(),
         cwd: plan.cwd.clone(),
         title: plan.title.clone(),
+        // Nome escolhido pelo usuário no celular conta como manual; sem título, o padrão automático
+        // deixa o primeiro prompt nomear a conversa depois.
+        title_source: if plan.titulo_do_usuario {
+            omni_core::conversations::TitleSource::Manual
+        } else {
+            omni_core::conversations::TitleSource::Auto
+        },
         created_at_ms: now_ms(),
         segments: vec![omni_core::conversations::Segment {
             provider: plan.provider.clone(),
@@ -951,7 +1000,10 @@ const ARQUIVOS_PUBLICOS: [&str; 6] =
     ["/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/favicon.png", "/parear"];
 
 fn caminho_publico(path: &str) -> bool {
-    path == "/" || path.starts_with("/assets/") || ARQUIVOS_PUBLICOS.contains(&path)
+    // A casca das duas páginas é pública (só HTML estático); quem protege os dados é a API.
+    matches!(path, "/" | "/pc" | "/pc/" | "/pc.html")
+        || path.starts_with("/assets/")
+        || ARQUIVOS_PUBLICOS.contains(&path)
 }
 
 /// `nosniff` está ligado em toda resposta, então o tipo tem de estar certo: ícone ou manifest
@@ -969,7 +1021,12 @@ fn tipo_do_arquivo(path: &str) -> &'static str {
 
 async fn asset(request: Request) -> Response {
     let path = request.uri().path().trim_start_matches('/');
-    let path = if path.is_empty() { "index.html" } else { path };
+    // `/` é a página do celular; `/pc` é a de computador — mesmas rotas de API, layout largo.
+    let path = match path {
+        "" => "index.html",
+        "pc" | "pc/" => "pc.html",
+        outro => outro,
+    };
     #[cfg(mobile_assets)]
     if let Some(file) = ASSETS.get_file(path) {
         return ([("content-type",tipo_do_arquivo(path))],file.contents()).into_response();
@@ -1048,6 +1105,52 @@ mod tests {
     fn req(method:&str, uri:&str, origin:&str, body:&str) -> Request {
         Request::builder().method(method).uri(uri).header("host","127.0.0.1:47322").header("origin",origin)
             .header("content-type","application/json").header("idempotency-key","test-key").body(Body::from(body.to_owned())).unwrap()
+    }
+
+    /// Renomear vale para celular e para a web de computador, e é o engine que grava — o índice de
+    /// conversas tem um escritor só.
+    #[tokio::test] async fn renomear_conversa_pela_api_grava_o_nome_e_recusa_lixo() {
+        let (dir,state) = fixture();
+        let app = router(state.clone());
+
+        let resposta = app.clone().oneshot(req("POST","/conversas/c/nome","http://127.0.0.1:47322",r#"{"nome":"Refatorar login"}"#)).await.unwrap();
+        assert_eq!(resposta.status(),StatusCode::OK);
+        let conversas = omni_core::conversations::read_index(dir.path());
+        assert_eq!(conversas[0].title,"Refatorar login");
+        assert_eq!(conversas[0].title_source,omni_core::conversations::TitleSource::Manual);
+        // Nome manual aparece na lista que o celular lê.
+        let lista = summaries(&state);
+        assert_eq!(lista[0]["title"],"Refatorar login");
+
+        for lixo in [r#"{"nome":"   "}"#, r#"{"nome":"com
+quebra"}"#] {
+            assert_eq!(app.clone().oneshot(req("POST","/conversas/c/nome","http://127.0.0.1:47322",lixo)).await.unwrap().status(),StatusCode::BAD_REQUEST);
+        }
+        assert_eq!(app.oneshot(req("POST","/conversas/desconhecida/nome","http://127.0.0.1:47322",r#"{"nome":"x"}"#)).await.unwrap().status(),StatusCode::BAD_REQUEST);
+    }
+
+    /// O modo é `plan` ou `auto` e nada mais; sem sessão viva a fila recusa, como qualquer ação.
+    #[tokio::test] async fn modo_aceita_so_plan_e_auto() {
+        let (_dir,state) = fixture();
+        let app = router(state);
+        assert_eq!(app.clone().oneshot(req("POST","/conversas/c/modo","http://127.0.0.1:47322",r#"{"modo":"bypassPermissions"}"#)).await.unwrap().status(),StatusCode::BAD_REQUEST);
+        assert_eq!(app.clone().oneshot(req("POST","/conversas/c/modo","http://127.0.0.1:47322",r#"{"modo":"plan"}"#)).await.unwrap().status(),StatusCode::CONFLICT);
+        assert_eq!(app.oneshot(req("POST","/conversas/c/modo","http://127.0.0.1:47322",r#"{"modo":"auto"}"#)).await.unwrap().status(),StatusCode::CONFLICT);
+    }
+
+    /// A página de computador é servida em `/pc`, com a mesma casca pública do celular — os dados
+    /// continuam atrás do código de acesso.
+    #[tokio::test] async fn pagina_de_computador_abre_sem_codigo_mas_os_dados_nao() {
+        let (_dir,state) = fixture();
+        state.mobile.config.lock().unwrap().token = "segredo".into();
+        let app = router(state);
+        let pagina = app.clone().oneshot(req("GET","/pc","","")).await.unwrap();
+        assert_eq!(pagina.status(),StatusCode::OK,"/pc precisa servir a página de computador");
+        assert_eq!(pagina.headers()["content-type"],"text/html; charset=utf-8");
+        let corpo = to_bytes(pagina.into_body(),64*1024).await.unwrap();
+        assert!(String::from_utf8_lossy(&corpo).contains("/src/web/main.tsx") || String::from_utf8_lossy(&corpo).contains("assets/pc"),
+            "a página servida em /pc tem de ser a do computador, não a do celular");
+        assert_eq!(app.oneshot(req("GET","/conversas","","")).await.unwrap().status(),StatusCode::UNAUTHORIZED);
     }
 
     /// O celular pode abrir sessão, mas **só** escolhendo dentro de listas que o servidor já

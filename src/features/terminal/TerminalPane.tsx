@@ -118,6 +118,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
           // spawn é o que fixa o `--session-id` do Claude e, com ele, o caminho do transcript.
           let command = agent?.command;
           let externalSessionId: string | undefined;
+          let planoTitulo: string | undefined;
           if (agent && !conversationRef.current) {
             const plan = launch?.conversationId
               ? null
@@ -133,12 +134,15 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
             if (plan) {
               command = plan.initial_command;
               externalSessionId = plan.external_session_id ?? undefined;
+              planoTitulo = plan.title;
             }
           }
 
           const session = await spawnTerminal({
             projectId,
-            name: agent ? `${agent.label} · agent` : tab.title,
+            // Nome da **conversa**, não "Claude · agent": é ele que aparece na aba, na barra lateral
+            // e na notificação, e o engine o atualiza sozinho quando o primeiro prompt der um nome.
+            name: planoTitulo ?? (agent ? `${agent.label} · agent` : tab.title),
             cwd: projectPath,
             rows: terminal.rows,
             cols: terminal.cols,

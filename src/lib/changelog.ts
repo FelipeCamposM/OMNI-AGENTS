@@ -14,6 +14,18 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.5.1",
+    date: "2026-09-21",
+    changes: [
+      "As abas de agente mostram o nome da conversa em vez de “Claude · agent”: assim que você manda a primeira mensagem, a aba passa a exibir do que ela trata.",
+      "Renomeie uma conversa com duplo clique na aba, na lista lateral, no Histórico ou pelo celular. O nome que você escrever vale em todos os lugares e não é trocado depois.",
+      "Pelo celular e pelo navegador, alterne o agente entre modo plano e automático — o mesmo que o Shift+Tab faz no terminal. O modo em uso aparece ao lado do modelo.",
+      "Nova página para computador em /pc: abra pelo navegador do notebook e acompanhe projetos, conversas e pendências lado a lado, com o mesmo código de acesso do celular.",
+      "Instale o Claude, o Codex, o Cursor ou o Tailscale direto do app quando faltar, com o comando oficial de cada um à mão.",
+      "O app encontra as CLIs recém-instaladas sem precisar reiniciar o computador nem editar o PATH.",
+    ],
+  },
+  {
     version: "0.5.0",
     date: "2026-09-18",
     changes: [

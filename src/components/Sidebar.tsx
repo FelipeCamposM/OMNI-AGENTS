@@ -22,6 +22,8 @@ import {
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { ProjectPicker } from "../features/projects/ProjectPicker";
+import { EditableLabel } from "./ui/EditableLabel";
+import { renameConversation } from "../features/terminal/terminalService";
 import { useStagger } from "../lib/motion";
 import { AgentIcon } from "./ui/AgentIcon";
 import { OmniLogo } from "./ui/OmniLogo";
@@ -221,16 +223,7 @@ export function Sidebar({
             {section === "TERMINALS" && terminalSessions.length > 0
               ? terminalSessions.map((session) => (
                   <div key={session.id} className="group flex items-stretch pl-6">
-                    <button
-                      type="button"
-                      onClick={() => onAttachTerminal(session.id, session.name)}
-                      className="min-w-0 flex-1 py-1.5 text-left text-xs text-text-secondary hover:text-text-primary truncate"
-                      title={`${session.name} · ${session.state}`}
-                    >
-                      <SessionStateIcon state={session.state} />
-                      <AgentIcon provider={session.provider} size={12} className="mr-1 inline-block align-[-2px]" />
-                      {session.name}
-                    </button>
+                    <SessionLabel session={session} onAttach={onAttachTerminal} />
                     <button
                       type="button"
                       aria-label={`Duplicar agente ${session.name}`}
@@ -308,6 +301,48 @@ export function Sidebar({
         />
       )}
     </aside>
+  );
+}
+
+/** Nome da sessão na lista, renomeável no duplo clique — é o nome da conversa, o mesmo que a aba e
+ *  o celular mostram. */
+function SessionLabel({
+  session,
+  onAttach,
+}: {
+  session: TerminalSession;
+  onAttach: (sessionId: string, title: string) => void;
+}) {
+  const [editando, setEditando] = useState(false);
+
+  if (editando) {
+    return (
+      <span className="min-w-0 flex-1 py-1">
+        <EditableLabel
+          value={session.name}
+          editing
+          onEditingChange={setEditando}
+          label={`Renomear conversa ${session.name}`}
+          onCommit={(nome) => {
+            if (session.conversation_id) void renameConversation(session.conversation_id, nome).catch(() => undefined);
+          }}
+        />
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => onAttach(session.id, session.name)}
+      onDoubleClick={() => setEditando(true)}
+      className="min-w-0 flex-1 py-1.5 text-left text-xs text-text-secondary hover:text-text-primary truncate"
+      title={`${session.name} · ${session.state} — duplo clique renomeia`}
+    >
+      <SessionStateIcon state={session.state} />
+      <AgentIcon provider={session.provider} size={12} className="mr-1 inline-block align-[-2px]" />
+      {session.name}
+    </button>
   );
 }
 

@@ -42,6 +42,10 @@ pub struct AgentRuntime {
     pub effort: Option<String>,
     /// Versão da CLI, quando disponível — útil no tooltip para explicar formato inesperado.
     pub cli_version: Option<String>,
+    /// Modo de permissão vigente (`plan`, `auto`, `default`, `acceptEdits`…), como a CLI gravou.
+    /// O Claude Code escreve uma linha `{"type":"permission-mode","permissionMode":…}` a cada
+    /// troca — ler a última é mais confiável que interpretar o rodapé da tela.
+    pub permission_mode: Option<String>,
     pub source: RuntimeSource,
 }
 
@@ -76,6 +80,7 @@ fn claude_config_model(config_dir: &Path) -> Option<AgentRuntime> {
         model: texto(&valor, "model"),
         effort: None,
         cli_version: None,
+        permission_mode: None,
         source: RuntimeSource::Config,
     })
     .filter(|runtime| runtime.model.is_some())
@@ -93,6 +98,14 @@ pub fn claude_runtime(config_dir: &Path, cwd: &str, session_id: &str) -> Option<
         return claude_config_model(config_dir);
     };
     let mut resultado = AgentRuntime::default();
+    // O modo é independente do modelo: a última linha de `permission-mode` vale mesmo que o turno
+    // corrente ainda não tenha resposta de assistente.
+    resultado.permission_mode = conteudo.lines().rev().find_map(|linha| {
+        let entrada = serde_json::from_str::<Value>(linha).ok()?;
+        (entrada.get("type").and_then(Value::as_str) == Some("permission-mode"))
+            .then(|| texto(&entrada, "permissionMode"))
+            .flatten()
+    });
 
     for linha in conteudo.lines().rev() {
         let Ok(entrada) = serde_json::from_str::<Value>(linha) else { continue };
@@ -202,6 +215,26 @@ pub fn codex_runtime(config_dir: &Path, cwd: &str) -> Option<AgentRuntime> {
 
 #[cfg(test)]
 mod tests {
+    /// O Claude grava uma linha por troca de modo; a **última** é o modo vigente. Ler isso é o que
+    /// deixa a etiqueta do desktop e o botão do celular mostrarem plano/automático sem ler a tela.
+    #[test]
+    fn modo_de_permissao_sai_da_ultima_linha_do_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let projetos = dir.path().join("projects").join("C--t");
+        std::fs::create_dir_all(&projetos).unwrap();
+        let linhas = [
+            r#"{"type":"permission-mode","permissionMode":"auto","sessionId":"s"}"#,
+            r#"{"type":"assistant","message":{"role":"assistant","model":"claude-opus-5"},"version":"2.1.0"}"#,
+            r#"{"type":"permission-mode","permissionMode":"plan","sessionId":"s"}"#,
+        ];
+        std::fs::write(projetos.join("s.jsonl"), linhas.join("
+")).unwrap();
+
+        let runtime = claude_runtime(dir.path(), "C:/t", "s").expect("runtime");
+        assert_eq!(runtime.permission_mode.as_deref(), Some("plan"));
+        assert_eq!(runtime.model.as_deref(), Some("claude-opus-5"));
+    }
+
     use super::*;
     use std::fs;
 

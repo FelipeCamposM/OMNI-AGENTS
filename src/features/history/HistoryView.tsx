@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button, Input, SegmentedControl, Select } from "../../components/ui";
 import { AgentIcon } from "../../components/ui/AgentIcon";
 import { baseName } from "../files/filesService";
+import { EditableLabel } from "../../components/ui/EditableLabel";
+import { listConversations, renameConversation, type Conversation } from "../terminal/terminalService";
 import {
   filterHistory,
   listHistory,
@@ -30,6 +32,26 @@ function errorText(reason: unknown) {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
+/** Conversas do índice do OMNI, por id de sessão do provider: é o que liga uma entrada do Histórico
+ *  (que vem do transcript da CLI) à conversa renomeável. Conversa aberta fora do OMNI não tem par. */
+function useConversasPorSessao() {
+  const [porSessao, setPorSessao] = useState<Record<string, Conversation>>({});
+  useEffect(() => {
+    void listConversations()
+      .then((lista) => {
+        const mapa: Record<string, Conversation> = {};
+        for (const conversa of lista) {
+          for (const segmento of conversa.segments) {
+            if (segmento.external_session_id) mapa[segmento.external_session_id] = conversa;
+          }
+        }
+        setPorSessao(mapa);
+      })
+      .catch(() => setPorSessao({}));
+  }, []);
+  return porSessao;
+}
+
 interface HistoryViewProps {
   /** Reabre a conversa no CLI dentro de um terminal do projeto dela. */
   onResume: (entry: HistoryEntry) => Promise<void> | void;
@@ -52,6 +74,7 @@ export function HistoryView({ onResume, lock, actions }: HistoryViewProps) {
   const [profileId, setProfileId] = useState("");
   const [limit, setLimit] = useState(PAGE);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const conversasPorSessao = useConversasPorSessao();
 
   useEffect(() => {
     let cancelled = false;
@@ -182,7 +205,12 @@ export function HistoryView({ onResume, lock, actions }: HistoryViewProps) {
 
         <section aria-label="Conversa selecionada" className="glass flex min-h-0 flex-1 flex-col">
           {selected ? (
-            <ConversationDetail key={selected.path} entry={selected} onResume={onResume} />
+            <ConversationDetail
+              key={selected.path}
+              entry={selected}
+              conversa={conversasPorSessao[selected.session_id] ?? null}
+              onResume={onResume}
+            />
           ) : (
             <p className="m-auto px-6 text-center text-xs text-text-muted">Escolha uma conversa para ver as mensagens.</p>
           )}
@@ -192,7 +220,16 @@ export function HistoryView({ onResume, lock, actions }: HistoryViewProps) {
   );
 }
 
-function ConversationDetail({ entry, onResume }: { entry: HistoryEntry; onResume: HistoryViewProps["onResume"] }) {
+function ConversationDetail({
+  entry,
+  conversa,
+  onResume,
+}: {
+  entry: HistoryEntry;
+  conversa: Conversation | null;
+  onResume: HistoryViewProps["onResume"];
+}) {
+  const [nome, setNome] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<HistoryTranscript | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resuming, setResuming] = useState(false);
@@ -227,7 +264,19 @@ function ConversationDetail({ entry, onResume }: { entry: HistoryEntry; onResume
     <>
       <header className="flex flex-wrap items-start gap-3 border-b border-border-subtle/60 px-4 py-3">
         <div className="min-w-0 flex-1 space-y-0.5">
-          <h2 className="text-sm font-medium text-text-primary">{entry.title ?? entry.first_prompt}</h2>
+          {conversa ? (
+            <EditableLabel
+              value={nome ?? conversa.title}
+              className="block text-sm font-medium text-text-primary"
+              label={`Renomear conversa ${nome ?? conversa.title}`}
+              onCommit={(valor) => {
+                setNome(valor);
+                void renameConversation(conversa.id, valor).catch(() => setNome(null));
+              }}
+            />
+          ) : (
+            <h2 className="text-sm font-medium text-text-primary">{entry.title ?? entry.first_prompt}</h2>
+          )}
           <p className="break-all text-[11px] text-text-muted">{entry.cwd ?? "Pasta não registrada"}</p>
           <p className="text-[11px] text-text-muted">
             {entry.profile_name} · início {formatDate(entry.started_at_ms)} · última atividade {formatDate(entry.updated_at_ms)}

@@ -5,6 +5,8 @@ export interface AgentRuntime {
   model: string | null;
   effort: string | null;
   cli_version: string | null;
+  /** Modo de permissão vigente, como a CLI gravou: `plan`, `auto`, `default`, `acceptEdits`. */
+  permission_mode?: string | null;
   /** `sessao` = foi isto que respondeu; `config` = é o que está configurado, a sessão ainda não
    *  respondeu nada. A diferença muda o que a etiqueta pode afirmar. */
   source?: "sessao" | "config";
@@ -46,6 +48,21 @@ export function nomeCurtoDoModelo(id: string): string {
     saida.push(/^gpt$/i.test(parte) ? "GPT" : parte.charAt(0).toUpperCase() + parte.slice(1));
   }
   return saida.join(" ") || id;
+}
+
+/** Modo de permissão em português, ou `null` quando é o modo padrão (nada a dizer) ou desconhecido.
+ *  Mesmos nomes que o CLI usa no rodapé, para quem alterna com shift+tab reconhecer. */
+export function rotuloDoModo(mode: string | null | undefined): string | null {
+  switch (mode) {
+    case "plan":
+      return "plano";
+    case "auto":
+      return "auto";
+    case "acceptEdits":
+      return "aceita edições";
+    default:
+      return null;
+  }
 }
 
 export function rotuloDoEsforco(effort: string): string {
@@ -111,7 +128,8 @@ export function AgentRuntimeBadge({
   // modelo na tela — foi assim que "<SYNTHETIC>" chegou ao canto da pane uma vez.
   if (!runtime) return null;
   const modeloCru = runtime.model?.startsWith("<") ? null : runtime.model;
-  if (!modeloCru && !runtime.effort) return null;
+  const modo = rotuloDoModo(runtime.permission_mode);
+  if (!modeloCru && !runtime.effort && !modo) return null;
 
   const modelo = modeloCru ? nomeCurtoDoModelo(modeloCru) : null;
   const esforco = runtime.effort ? rotuloDoEsforco(runtime.effort) : null;
@@ -145,6 +163,12 @@ export function AgentRuntimeBadge({
       {modelo && <span className="text-text-secondary">{modelo}</span>}
       {modelo && esforco && <span aria-hidden="true"> · </span>}
       {esforco}
+      {modo && (
+        <>
+          {(modelo || esforco) && <span aria-hidden="true"> · </span>}
+          <span className="text-accent">{modo}</span>
+        </>
+      )}
     </div>
   );
 }

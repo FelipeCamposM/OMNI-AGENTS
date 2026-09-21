@@ -162,6 +162,9 @@ pub enum EngineRequest {
     DuplicateSession { token: String, session_id: String },
     RestartSession { token: String, session_id: String },
     Snapshot { token: String, session_id: String, since: u64 },
+    /// Renomear a conversa. Mora aqui (e não num comando do Tauri escrevendo o arquivo) para o
+    /// índice de conversas ter um escritor só — desktop e celular passam pelo mesmo caminho.
+    RenameConversation { token: String, conversation_id: String, title: String },
     Shutdown { token: String },
 }
 
@@ -193,6 +196,7 @@ impl EngineRequest {
             | Self::DuplicateSession { token, .. }
             | Self::RestartSession { token, .. }
             | Self::Snapshot { token, .. }
+            | Self::RenameConversation { token, .. }
             | Self::Shutdown { token } => token,
         }
     }

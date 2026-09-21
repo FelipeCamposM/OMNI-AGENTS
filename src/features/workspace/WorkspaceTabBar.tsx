@@ -3,7 +3,9 @@ import { createPortal } from "react-dom";
 import { Button } from "../../components/ui";
 import { ChatIcon, KanbanIcon, ListIcon, TerminalIcon, GitBranchIcon } from "../../components/ui/PixelIcon";
 import { AGENT_ICON } from "../../components/ui/AgentIcon";
-import { useSessionProvider } from "../terminal/sessionProviders";
+import { useSession, useSessionProvider } from "../terminal/sessionProviders";
+import { EditableLabel } from "../../components/ui/EditableLabel";
+import { renameConversation } from "../terminal/terminalService";
 import { iconForPath } from "../files/fileIcons";
 import type { PaneKind, PaneNode, WorkspaceAction } from "../../types/workspace";
 import { startTabDrag } from "./tabPointerDrag";
@@ -42,30 +44,7 @@ export function WorkspaceTabBar({ pane, dispatch, onCloseTab, dirtyTabIds }: Wor
             item.id === pane.activeTabId ? "bg-bg-surface" : "hover:bg-overlay/[0.04]",
           ].join(" ")}
         >
-          <button
-            type="button"
-            role="tab"
-            title={`${item.title} — arraste para outro painel ou para uma borda`}
-            aria-selected={item.id === pane.activeTabId}
-            onClick={() => dispatch({ type: "SELECT_TAB", paneId: pane.id, tabId: item.id })}
-            className={[
-              "min-w-0 px-3 text-[11px] truncate focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
-              item.id === pane.activeTabId
-                ? "text-text-primary"
-                : "text-text-muted hover:text-text-secondary",
-            ].join(" ")}
-          >
-            {/* Ícone no lugar do rótulo do kind: "MARKDOWN" comia 8 caracteres de uma aba que já
-                é estreita, e o tipo do ARQUIVO diz mais do que o tipo do painel. */}
-            <TabIcon
-              item={item}
-              className="mr-1.5 inline-block h-3 w-3 shrink-0 align-[-2px] text-accent"
-            />
-            {item.title}
-            {dirtyTabIds?.has(item.id) && (
-              <span className="ml-1.5 text-accent" title="Alterações não salvas" aria-label="Alterações não salvas">•</span>
-            )}
-          </button>
+          <TabLabel item={item} pane={pane} dispatch={dispatch} dirtyTabIds={dirtyTabIds} />
           <button
             type="button"
             aria-label={`Fechar tab ${item.title}`}
@@ -92,6 +71,76 @@ export const NEW_TAB_OPTIONS: { kind: PaneKind; title: string; hint: string }[] 
 /** O "+" abre um menu em vez de criar agente direto — terminal puro e agente são as duas coisas
  *  que uma aba nova pode ser. Portal com posição medida pelo mesmo motivo do `WorkspaceSwitcher`:
  *  a tablist é `overflow-x-auto` e recortaria um popover absoluto. */
+/**
+ * Título da aba, com duplo clique para renomear.
+ *
+ * Aba de agente é a **conversa**: o nome novo vai para o índice de conversas (pelo engine), então
+ * aparece também na barra lateral, na notificação e no celular. Aba sem sessão renomeia só aqui.
+ */
+function TabLabel({
+  item,
+  pane,
+  dispatch,
+  dirtyTabIds,
+}: {
+  item: PaneNode["tabs"][number];
+  pane: PaneNode;
+  dispatch: React.Dispatch<WorkspaceAction>;
+  dirtyTabIds?: Set<string>;
+}) {
+  const session = useSession(item.resourceId);
+  const [editando, setEditando] = useState(false);
+
+  function renomear(nome: string) {
+    dispatch({
+      type: "RENAME_TAB_RESOURCE",
+      fromResourceId: item.resourceId ?? "",
+      toResourceId: item.resourceId ?? "",
+      title: nome,
+    });
+    if (session?.conversation_id) {
+      void renameConversation(session.conversation_id, nome).catch(() => undefined);
+    }
+  }
+
+  if (editando) {
+    return (
+      <span className="min-w-0 flex-1 px-1 py-1">
+        <EditableLabel
+          value={item.title}
+          editing
+          onEditingChange={setEditando}
+          onCommit={renomear}
+          label={`Renomear aba ${item.title}`}
+        />
+      </span>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      role="tab"
+      title={`${item.title} — duplo clique renomeia; arraste para outro painel ou para uma borda`}
+      aria-selected={item.id === pane.activeTabId}
+      onClick={() => dispatch({ type: "SELECT_TAB", paneId: pane.id, tabId: item.id })}
+      onDoubleClick={() => setEditando(true)}
+      className={[
+        "min-w-0 px-3 text-[11px] truncate focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
+        item.id === pane.activeTabId ? "text-text-primary" : "text-text-muted hover:text-text-secondary",
+      ].join(" ")}
+    >
+      {/* Ícone no lugar do rótulo do kind: "MARKDOWN" comia 8 caracteres de uma aba que já
+          é estreita, e o tipo do ARQUIVO diz mais do que o tipo do painel. */}
+      <TabIcon item={item} className="mr-1.5 inline-block h-3 w-3 shrink-0 align-[-2px] text-accent" />
+      {item.title}
+      {dirtyTabIds?.has(item.id) && (
+        <span className="ml-1.5 text-accent" title="Alterações não salvas" aria-label="Alterações não salvas">•</span>
+      )}
+    </button>
+  );
+}
+
 function NewTabMenu({ onCreate }: { onCreate: (kind: PaneKind, title: string) => void }) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);

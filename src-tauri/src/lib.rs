@@ -8,11 +8,14 @@ mod docker_client;
 mod ssh;
 mod target_files;
 mod history;
+mod instalacao;
 mod profiles;
 
 pub fn run() {
     #[cfg(unix)]
     engine_client::import_login_shell_path();
+    // Antes de qualquer detecção ou spawn: o engine e os terminais herdam este PATH.
+    omni_core::cli_path::ampliar_path();
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -27,6 +30,8 @@ pub fn run() {
             agent_runtime::agent_runtime,
             mobile::mobile_settings,
             mobile::publish_workspace,
+            instalacao::install_hint,
+            instalacao::install_agent_cli,
             mobile::mobile_check,
             mobile::mobile_totp,
             engine_client::ensure_engine,
@@ -63,6 +68,7 @@ pub fn run() {
             git_client::git_push,
             git_client::git_pull,
             engine_client::wsl_distros,
+            engine_client::rename_conversation,
             ssh::ssh_connections,
             ssh::save_ssh_connection,
             ssh::remove_ssh_connection,

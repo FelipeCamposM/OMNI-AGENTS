@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import QRCode from "qrcode";
 import { Button, Field, Input } from "../../components/ui";
+import { InstalarFerramenta } from "../terminal/InstalarFerramenta";
 
 interface Settings {
   config: { enabled: boolean; bind: string; token: string; serve: boolean };
@@ -156,10 +157,14 @@ export function MobileSettings() {
       <Passo n={1} titulo="Instale o Tailscale no PC e no celular" feito={Boolean(status?.magic_dns)}>
         {status?.magic_dns
           ? <p className="text-xs text-text-muted">Detectado: <code>{status.magic_dns}</code></p>
-          : <p className="text-xs text-text-secondary">
-              É o que liga os dois aparelhos com segurança, sem abrir nada para a internet. Use a
-              <strong> mesma conta</strong> nos dois. Depois de instalar, volte aqui.
-            </p>}
+          : <>
+              <p className="text-xs text-text-secondary">
+                É o que liga os dois aparelhos com segurança, sem abrir nada para a internet. Use a
+                <strong> mesma conta</strong> nos dois. Depois de instalar, volte aqui.
+              </p>
+              <InstalarFerramenta id="tailscale" nome="Tailscale"
+                motivo="O Tailscale ainda não foi detectado neste PC." />
+            </>}
       </Passo>
 
       <Passo n={2} titulo="Escolha como o celular chega até aqui" feito={ligado}>

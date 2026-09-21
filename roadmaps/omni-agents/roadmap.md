@@ -2156,3 +2156,71 @@ Suíte: 303 testes de front, 56 do engine, 28 do core, 16 do Tauri, 3 do shim.
   verdes. Rascunho conferido (`latest.json` 0.5.0 assinado para Windows/macOS/Linux) e publicado como
   **Latest**. `releases/latest/download/latest.json` responde 0.5.0 e o `x64-setup.exe` baixa (200).
 - [ ] Não conferido: atualização 0.4.5 → 0.5.0 no app instalado; SSHFS-Win sem teste de ponta a ponta.
+
+### CLI instalada que o app não achava, e instalar sem sair do OMNI — 2026-09-20
+
+- **Sintoma (notebook do usuário):** Claude Code instalado e funcionando no terminal, mas o OMNI
+  dizia que não existia. Só passou a achar depois de editar o PATH na mão.
+- **Causa:** o app herda o `PATH` de quem o abriu. Instalador que acrescenta pasta ao PATH do
+  usuário não alcança processo já rodando — nem o Explorer que abre o app depois, até a próxima
+  sessão. As três CLIs instalam fora das pastas clássicas: `~\.local\bin` (Claude),
+  `%APPDATA%\npm` (Codex), `%LOCALAPPDATA%\cursor-agent` (Cursor).
+- [x] `omni_core::cli_path::ampliar_path()`: acrescenta ao PATH do próprio processo as pastas
+  conhecidas que existem e ainda não estão nele. Chamado na subida **do app e do engine** — o
+  shell da PTY herda daí, então conserta detecção e execução de uma vez. Idempotente, sem
+  processo novo e sem dependência nova. 2 testes (`faltando` é pura, com caixa do Windows).
+- [x] Configurações → Agentes: CLI não encontrada agora mostra o comando oficial de instalação
+  daquele sistema, com **Instalar** (abre um terminal visível rodando o instalador), **Copiar
+  comando** e **Instruções oficiais**. Bloco novo do **Tailscale** (acesso pelo celular) com o
+  download, repetido no passo 1 da aba Celular.
+- [x] A tabela de comandos mora em `src-tauri/src/instalacao.rs`: o front manda só o id, então
+  nada da interface vira linha de comando. Comandos conferidos nas páginas oficiais (Claude
+  `code.claude.com/docs/en/setup`, Codex `learn.chatgpt.com/docs/codex/cli`, Cursor
+  `cursor.com/docs/cli/installation`); Tailscale só abre o download, que é instalador gráfico.
+  Permissões do opener ganharam esses domínios. 2 testes Rust + 2 no front.
+- [x] Consertado de passagem: 3 construtores de teste em `omni-core/conversations.rs` ficaram sem
+  o campo `title_source` (trabalho em andamento de outra sessão) e o workspace não compilava.
+- [ ] Engine que já estava rodando com o PATH velho só pega as pastas novas ao reiniciar — o texto
+  da tela avisa para fechar e abrir o OMNI se a CLI não aparecer depois de instalar.
+- [ ] Não conferido no app rodando.
+
+### Nome de conversa, modo plano/auto e web para computador — 2026-09-21
+
+**1. Conversa com nome (fonte única).**
+- [x] `omni-core/conversations.rs`: campo `title_source` (`auto`/`manual`), `auto_title()` (primeira
+  linha útil do primeiro prompt, 60 caracteres), `display_title()` e `rename()`. 3 testes.
+- [x] Renomear passa **pelo engine** (`EngineRequest::RenameConversation` + `POST /conversas/{id}/nome`),
+  para o índice ter um escritor só. Comando `rename_conversation` no Tauri chama o engine.
+- [x] `list_sessions` troca `session.name` pelo nome da conversa: barra lateral, painel de atenção e
+  notificação do sistema herdam sem saber o que é conversa. `App.tsx` espelha na aba pelo
+  `RENAME_TAB_RESOURCE`, que passou a devolver **o mesmo estado** quando nada muda (sem isso, o
+  espelho a cada poll re-renderizava a árvore inteira).
+- [x] Renomear com duplo clique na aba (`WorkspaceTabBar`), na lista de sessões (`Sidebar`), no
+  Histórico e no celular/web. Componente `EditableLabel` extraído do padrão do `WorkspaceList`.
+- [x] Testes: `src/test/RenomearConversa.test.tsx` (3) e Rust acima.
+
+**2. Modo plano ⇄ automático pelo celular/web.**
+- [x] **Leitura**: `claude_runtime` passou a devolver `permission_mode`, lido da última linha
+  `{"type":"permission-mode",…}` do transcript — mais confiável que a tela. Aparece na etiqueta do
+  desktop e no `summaries()` do celular (desse, pelo rodapé, que responde na hora).
+- [x] **Escrita**: `ActionKind::Modo` + `POST /conversas/{id}/modo` (só `plan`/`auto`), com o mesmo
+  contrato das outras ações (`Idempotency-Key`, `If-Match`, capacidade `prompt`).
+  `interaction::alternar_modo` segue o padrão do `trust_dialog_keys`: manda `\x1b[Z` (shift+tab),
+  relê o rodapé, repete até 4 voltas; sem reação, tenta `\x1bm` (meta+m) e depois falha com motivo.
+- [x] Botão Plano|Auto no celular e na web, travado enquanto o agente está em turno.
+
+**3. Página web para computador (`/pc`).**
+- [x] Segunda entrada no mesmo build (`mobile/pc.html`), servida pelo engine em `/pc`. O celular não
+  baixa esse código (3,4 kB contra 372 kB do bundle do celular).
+- [x] `src/web/WebApp.tsx` + `web.css`: três colunas (projetos e conversas · conversa · pendências),
+  reusando `ConversationDetail`, `ConversationList` e `NovaSessao` do celular. Carregamento comum
+  extraído para `src/mobile/useDados.ts`. **Nenhuma rota nova de API.**
+- [x] Testes: `src/test/WebApp.test.tsx` (4) e, no engine, `/pc` responde 200 com a página certa.
+
+Suíte: 315 testes de front, 61 do engine, 12 do core, 16 do Tauri.
+
+- [ ] **Não conferido no app rodando**: a troca de modo foi testada contra os rótulos reais do
+  rodapé (extraídos do binário do Claude Code) e pelo laço, mas não numa sessão viva. Vale abrir uma
+  conversa e alternar pelo celular uma vez.
+- [ ] `RENAME_TAB_RESOURCE` só renomeia no projeto ativo; aba de outro projeto atualiza o nome ao
+  voltar para ele.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button, Input } from "../../components/ui";
 import { AgentIcon } from "../../components/ui/AgentIcon";
+import { InstalarFerramenta } from "./InstalarFerramenta";
 import { AccountUsage } from "./AccountUsage";
 import {
   MULTI_ACCOUNT_PROVIDERS,
@@ -144,6 +145,11 @@ export function AgentConnections() {
                 )}
               </div>
 
+              {connection === "missing" && (
+                <InstalarFerramenta id={agent.id} nome={agent.label}
+                  motivo={`O OMNI não encontrou a CLI do ${agent.label} neste computador.`} />
+              )}
+
               {adding === agent.id && (
                 <div className="mt-3 flex gap-2 pl-6">
                   <Input
@@ -211,6 +217,16 @@ export function AgentConnections() {
       <Button size="sm" variant="ghost" disabled={loading} onClick={() => void refresh()}>
         {loading ? "Verificando…" : "Verificar novamente"}
       </Button>
+
+      <div className="border-t border-border-subtle pt-4">
+        <h3 className="text-xs font-medium text-text-primary">Acesso pelo celular</h3>
+        <p className="mt-1 text-[11px] text-text-muted">
+          Para responder aos agentes do telefone, o PC e o celular precisam do Tailscale, na mesma
+          conta. Ele liga os dois direto, sem expor nada na internet.
+        </p>
+        <InstalarFerramenta id="tailscale" nome="Tailscale"
+          motivo="Instale nos dois aparelhos e entre com a mesma conta." />
+      </div>
     </section>
   );
 }

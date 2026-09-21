@@ -303,6 +303,113 @@ fn trust_dialog_keys(text: &str) -> Option<&'static str> {
     })
 }
 
+/// `shift+tab`, que é o que o Claude Code liga a `chat:cycleMode`. **Cicla** entre os quatro modos
+/// (default, aceitar edições, plano, automático), então chegar num modo específico é apertar e
+/// conferir, nunca apertar uma vez.
+const CICLAR_MODO: &[u8] = b"\x1b[Z";
+/// Atalho alternativo do próprio CLI (`meta+m`), usado quando ele decide que o terminal não entrega
+/// shift+tab. Só entra em cena se o rodapé não mudar com a tecla principal.
+const CICLAR_MODO_ALTERNATIVO: &[u8] = b"\x1bm";
+/// Quantas vezes vale apertar: o ciclo tem quatro estados, e uma volta inteira é o suficiente.
+const VOLTAS_DO_CICLO: usize = 4;
+
+/// Modo de permissão que o rodapé do Claude Code está mostrando.
+///
+/// O rodapé é a fonte **imediata**: o transcript também registra a troca, mas com atraso, e este
+/// laço precisa saber se a tecla pegou antes de apertar de novo. Os rótulos vêm do próprio binário
+/// (`default`, `accept edits on`, `plan mode on`, `auto mode on`); `default` não escreve nada no
+/// rodapé, então a ausência das outras marcas é o que o identifica.
+pub fn modo_atual(screen: &vt100::Screen) -> Option<&'static str> {
+    let texto = screen.contents().to_lowercase();
+    if texto.contains("plan mode on") {
+        return Some("plan");
+    }
+    if texto.contains("auto mode on") {
+        return Some("auto");
+    }
+    if texto.contains("accept edits on") {
+        return Some("acceptEdits");
+    }
+    // Sem nenhuma marca não dá para afirmar que é `default`: pode ser uma tela em que o rodapé nem
+    // está visível. Quem chama trata `None` como "não sei" e não como um modo.
+    None
+}
+
+/// Modo de uma sessão viva, lido da tela dela. `None` quando o rodapé não está visível.
+pub fn modo_da_sessao(session: &Arc<LiveSession>) -> Option<&'static str> {
+    let context = session.interaction.lock().ok()?;
+    modo_atual(context.parser.screen())
+}
+
+/// Alterna o modo de permissão até chegar em `alvo` (`plan` ou `auto`), como o shift+tab faz no
+/// terminal.
+///
+/// Mesmo formato do `trust_dialog_keys`: manda tecla, relê a tela, repete. Falha honesta — se o
+/// rodapé não reagir, devolve erro com motivo em vez de seguir apertando às cegas.
+pub fn alternar_modo(state: &Arc<EngineState>, session: &Arc<LiveSession>, alvo: &str) -> Result<String> {
+    let ler_modo = || -> Result<Option<&'static str>> {
+        let context = session.interaction.lock().map_err(|_| anyhow!("screen poisoned"))?;
+        Ok(modo_atual(context.parser.screen()))
+    };
+    let escrever = |bytes: &[u8]| -> Result<()> {
+        let mut context = session.interaction.lock().map_err(|_| anyhow!("screen poisoned"))?;
+        context.input_revision += 1;
+        let mut writer = session.writer.lock().map_err(|_| anyhow!("writer poisoned"))?;
+        writer.write_all(bytes)?;
+        writer.flush()?;
+        Ok(())
+    };
+    let viva = || -> Result<bool> {
+        Ok(state
+            .sessions
+            .lock()
+            .map_err(|_| anyhow!("sessions poisoned"))?
+            .values()
+            .any(|entry| matches!(entry, SessionEntry::Live(s) if Arc::ptr_eq(s, session))))
+    };
+
+    let inicial = ler_modo()?;
+    if inicial == Some(alvo) {
+        return Ok(alvo.to_string());
+    }
+    let mut tecla = CICLAR_MODO;
+    let mut sem_reacao = 0;
+    for _ in 0..VOLTAS_DO_CICLO {
+        if !viva()? {
+            return Err(anyhow!("A sessão não está mais aberta"));
+        }
+        let antes = ler_modo()?;
+        escrever(tecla)?;
+        // Uma volta do Ink leva alguns quadros; sem esta pausa a leitura seguinte ainda vê o modo
+        // antigo e o laço apertaria de novo, passando do alvo.
+        let limite = Instant::now() + Duration::from_millis(1_200);
+        let mut agora = antes;
+        while Instant::now() < limite {
+            std::thread::sleep(Duration::from_millis(80));
+            agora = ler_modo()?;
+            if agora != antes {
+                break;
+            }
+        }
+        if agora == Some(alvo) {
+            return Ok(alvo.to_string());
+        }
+        if agora == antes {
+            sem_reacao += 1;
+            // Duas teclas sem qualquer mudança no rodapé: provavelmente esta CLI está com o atalho
+            // alternativo. Vale uma tentativa antes de desistir.
+            if sem_reacao == 2 && tecla == CICLAR_MODO {
+                tecla = CICLAR_MODO_ALTERNATIVO;
+                continue;
+            }
+            if sem_reacao >= 3 {
+                return Err(anyhow!("O agente não respondeu ao atalho de modo"));
+            }
+        }
+    }
+    Err(anyhow!("Não foi possível chegar no modo pedido"))
+}
+
 /// Digita `/usage` numa sessão ociosa e espera o resultado; fecha o diálogo aberto com Esc — com
 /// sucesso ou não. Pronto quando:
 /// - o `fetchedAtMs` do arquivo mudou (o Claude buscou de novo), ou
@@ -380,6 +487,24 @@ mod tests {
         context.parser.process(b"\x1b[2"); context.parser.process(b"J\x1b[Hshell> ");
         assert!(!ready(context.parser.screen(),"claude"));
     }
+    /// O rodapé é a fonte imediata do modo — o transcript só registra depois. Rótulos tirados do
+    /// binário do Claude Code: `plan mode on`, `auto mode on`, `accept edits on`.
+    #[test] fn modo_sai_do_rodape_e_tela_sem_rodape_nao_chuta() {
+        let tela = |rodape: &str| {
+            let mut context = Interaction::new(10, 80);
+            context.parser.process(format!("> \r\n{rodape}").as_bytes());
+            context
+        };
+        assert_eq!(modo_atual(tela("⏸ plan mode on (shift+tab to cycle)").parser.screen()), Some("plan"));
+        assert_eq!(
+            modo_atual(tela("⏵⏵ auto mode on (shift+tab to cycle) · ← for agents").parser.screen()),
+            Some("auto")
+        );
+        assert_eq!(modo_atual(tela("⏵ accept edits on").parser.screen()), Some("acceptEdits"));
+        // Sem marca nenhuma não dá para afirmar o modo: pode ser só um rodapé fora da tela.
+        assert_eq!(modo_atual(tela("nada aqui").parser.screen()), None);
+    }
+
     /// Tela **real** do Claude Code ocioso, capturada de uma sessão aberta pelo celular (30×120).
     /// Os fixtures anteriores eram todos sintéticos; este é o que o engine realmente recebe.
     #[test] fn claude_ocioso_de_verdade_aceita_prompt() {

@@ -30,6 +30,40 @@ function agent(overrides: Partial<AgentCliStatus> = {}): AgentCliStatus {
   };
 }
 
+describe("CLI que falta", () => {
+  it("oferece instalar com o comando oficial, sem o front escolher o comando", async () => {
+    const invoke = vi.mocked((await import("@tauri-apps/api/core")).invoke);
+    invoke.mockImplementation(async (comando: string, args?: Record<string, unknown>) => {
+      if (comando === "install_hint") {
+        expect(args).toEqual({ id: "codex" });
+        return { comando: "irm https://chatgpt.com/codex/install.ps1 | iex", docs: "https://learn.chatgpt.com/docs/codex/cli", automatico: true };
+      }
+      return null;
+    });
+    listAgentClis.mockResolvedValue([agent({ id: "codex", label: "Codex", command: "codex", path: null, available: false, authenticated: false })]);
+    listProfiles.mockResolvedValue([]);
+    render(<AgentConnections />);
+
+    expect(await screen.findByText(/não encontrou a CLI do Codex/)).toBeInTheDocument();
+    expect(screen.getByText("irm https://chatgpt.com/codex/install.ps1 | iex")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Instalar Codex" }));
+    // O front manda só o id: o comando vive no Rust.
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("install_agent_cli", { id: "codex" }));
+  });
+
+  it("CLI instalada não mostra bloco de instalação", async () => {
+    listAgentClis.mockResolvedValue([agent()]);
+    listProfiles.mockResolvedValue([profile()]);
+    render(<AgentConnections />);
+
+    await screen.findByText("Claude");
+    expect(screen.queryByText(/não encontrou a CLI/)).not.toBeInTheDocument();
+    // O Tailscale continua oferecido: ele é do acesso pelo celular, não de uma CLI.
+    expect(screen.getByText(/Acesso pelo celular/)).toBeInTheDocument();
+  });
+});
+
 function profile(overrides: Partial<Profile> = {}): Profile {
   return {
     id: "claude-padrao",

@@ -68,6 +68,21 @@ export function App() {
     setView(viewBeforeSettings);
   }
 
+  // O engine devolve em `session.name` o nome da **conversa** (o primeiro prompt, ou o que o usuário
+  // renomeou). Espelhar aqui é o que faz a aba deixar de ser "Claude · agent" sem cada tela precisar
+  // saber o que é conversa. O reducer ignora quando o nome não mudou.
+  useEffect(() => {
+    for (const session of sessions) {
+      if (!session.name) continue;
+      dispatch({
+        type: "RENAME_TAB_RESOURCE",
+        fromResourceId: session.id,
+        toResourceId: session.id,
+        title: session.name,
+      });
+    }
+  }, [sessions, activeProject?.id, dispatch]);
+
   // Qual unidade é qual máquina remota: lido uma vez, para os polls saberem que um projeto em
   // `X:\...` é SSH e não disco local (ver `targetState`).
   useEffect(() => {

@@ -2,6 +2,8 @@ import type { TemaPublicado } from "./tema";
 
 export interface Conversation {
   id: string; title: string; project_id: string; provider: string | null; profile_id: string | null; state: string | null;
+  /** Modo de permissão lido do rodapé do CLI: `plan`, `auto`, `acceptEdits` ou `null` (não visível). */
+  mode?: string | null;
   capabilities: { prompt: boolean; approve: boolean; revision: string; approval_text: string | null; reason: string | null } | null;
 }
 export interface Projects {

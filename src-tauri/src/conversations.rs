@@ -40,6 +40,8 @@ impl Default for ConversationStore {
 #[derive(Debug, Clone, Serialize)]
 pub struct LaunchPlan {
     pub conversation_id: String,
+    /// Nome que a aba e a sessão devem usar — até a primeira mensagem, o provisório.
+    pub title: String,
     pub provider: String,
     pub profile_id: Option<String>,
     pub initial_command: String,
@@ -82,12 +84,19 @@ fn find_mut<'a>(
         .ok_or_else(|| "Conversa não encontrada".to_string())
 }
 
+/// `project_id` ausente = todas as conversas (o Histórico precisa disso para achar a conversa de uma
+/// sessão qualquer). O título devolvido já é o de exibição: enquanto ninguém renomeia, é o primeiro
+/// prompt.
 #[tauri::command]
-pub fn list_conversations(project_id: String) -> Vec<Conversation> {
+pub fn list_conversations(project_id: Option<String>) -> Vec<Conversation> {
     let mut conversations: Vec<Conversation> = load()
         .conversations
         .into_iter()
-        .filter(|conversation| conversation.project_id == project_id)
+        .filter(|conversation| project_id.as_ref().is_none_or(|id| &conversation.project_id == id))
+        .map(|mut conversation| {
+            conversation.title = omni_core::conversations::display_title(&conversation);
+            conversation
+        })
         .collect();
     conversations.sort_by_key(|conversation| std::cmp::Reverse(conversation.created_at_ms));
     conversations
@@ -137,7 +146,10 @@ pub fn begin_conversation(
         id: format!("conv-{}", uuid::Uuid::new_v4()),
         project_id,
         cwd,
+        // Nome de nascimento é provisório: enquanto for automático, o primeiro prompt renomeia a
+        // conversa (`omni_core::conversations::display_title`).
         title: title.unwrap_or_else(|| "Conversa".into()),
+        title_source: omni_core::conversations::TitleSource::Auto,
         created_at_ms: now_ms(),
         segments: vec![Segment {
             provider: provider.clone(),
@@ -153,6 +165,7 @@ pub fn begin_conversation(
     let mut store = load();
     let plan = LaunchPlan {
         conversation_id: conversation.id.clone(),
+        title: conversation.title.clone(),
         provider,
         profile_id: conversation.segments[0].profile_id.clone(),
         initial_command,
@@ -219,6 +232,8 @@ pub fn plan_switch(
     let same_provider = current.provider == target_provider;
     let mut plan = LaunchPlan {
         conversation_id: conversation_id.clone(),
+        // Troca de conta/IA continua a **mesma** conversa: o nome vem junto.
+        title: omni_core::conversations::display_title(&conversation),
         provider: target_provider.clone(),
         profile_id: target_profile.as_ref().map(|profile| profile.id.clone()),
         initial_command: target_command.clone(),

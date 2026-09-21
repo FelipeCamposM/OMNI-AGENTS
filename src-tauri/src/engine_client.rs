@@ -55,6 +55,13 @@ pub fn ensure_engine() -> EngineResponse {
     }
 }
 
+/// Renomear conversa. Passa pelo engine de propósito: é ele quem grava o índice, e dois processos
+/// escrevendo o mesmo arquivo já custaram um segmento perdido antes.
+#[tauri::command]
+pub fn rename_conversation(conversation_id: String, title: String) -> EngineResponse {
+    request_or_error(|token| EngineRequest::RenameConversation { token, conversation_id, title })
+}
+
 #[tauri::command]
 pub fn terminal_sessions() -> EngineResponse {
     request_or_error(|token| EngineRequest::ListSessions { token })
@@ -356,7 +363,7 @@ pub fn import_login_shell_path() {
 /// Resolve um comando no PATH **sem criar processo**. A versão anterior rodava `where.exe` por
 /// candidato; num binário de subsistema `windows` (sem console) cada `where.exe` aloca um console
 /// novo — `Stdio::null()` redireciona os streams mas não impede a alocação. Era isso que piscava.
-fn resolve_on_path(name: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_on_path(name: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     // Nome sem sufixo primeiro: o comando é digitado num shell (bash/powershell), que executa
     // script sem extensão — não estamos limitados ao que o CreateProcess aceita sozinho.

@@ -5,7 +5,7 @@ import { Select } from "../components/ui/Select";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
 import { ArrowLeftIcon, FolderIcon, PlayIcon, ReloadIcon, WarningIcon } from "../components/ui/PixelIcon";
-import { request, actionKey, ApiError, salvarToken, type Conversation, type Projects, type Timeline } from "./api";
+import { request, actionKey, ApiError, type Conversation, type Projects, type Timeline } from "./api";
 import { AgentWorking, MessageBubble, PairingScreen } from "./Chat";
 import { Composer } from "./Composer";
 import {
@@ -17,7 +17,7 @@ import {
   type Anexo,
 } from "./anexos";
 import { useRota, type Rota } from "./rota";
-import { aplicarTema, guardarTema, temaGuardado, type TemaPublicado } from "./tema";
+import { useDados } from "./useDados";
 import { usePoll } from "./usePoll";
 
 const STATES: Record<string,string> = { working: "Trabalhando", answered: "Resposta disponível", approval_required: "Aprovação pendente", stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido" };
@@ -79,7 +79,7 @@ function Vazio({ children }: { children: ReactNode }) {
   return <p className="m-vazio">{children}</p>;
 }
 
-function Secao({ titulo, children, acao }: { titulo: string; children: ReactNode; acao?: ReactNode }) {
+export function Secao({ titulo, children, acao }: { titulo: string; children: ReactNode; acao?: ReactNode }) {
   return (
     <section className="m-secao">
       <div className="m-secao-cabecalho">
@@ -93,7 +93,7 @@ function Secao({ titulo, children, acao }: { titulo: string; children: ReactNode
 
 /* ─────────────────────────────────────────────────────────────── listas */
 
-function ProjectList({ projects, conversations, abrir }: {
+export function ProjectList({ projects, conversations, abrir }: {
   projects: Projects["projects"]; conversations: Conversation[]; abrir: (id: string) => void;
 }) {
   if (projects.length === 0) return <Vazio>Nenhum projeto conhecido ainda. Abra um projeto no OMNI do PC.</Vazio>;
@@ -119,7 +119,7 @@ function ProjectList({ projects, conversations, abrir }: {
   })}</ul>;
 }
 
-function ConversationList({ conversations, perfis, abrir, vazio }: {
+export function ConversationList({ conversations, perfis, abrir, vazio }: {
   conversations: Conversation[]; perfis: Projects["profiles"]; abrir: (id: string) => void; vazio: string;
 }) {
   if (conversations.length === 0) return <Vazio>{vazio}</Vazio>;
@@ -146,7 +146,7 @@ function ConversationList({ conversations, perfis, abrir, vazio }: {
   })}</ul>;
 }
 
-function NovaSessao({ project, catalog, onCriada }: {
+export function NovaSessao({ project, catalog, onCriada }: {
   project: { id: string; name: string }; catalog: Projects; onCriada: () => Promise<void>;
 }) {
   const [aberto, setAberto] = useState(false);
@@ -227,7 +227,7 @@ function indiceDaMensagem(id: string): number {
   return Number.isFinite(n) ? n : -1;
 }
 
-function ConversationDetail({ conversation, refresh }: { conversation: Conversation; refresh: () => Promise<void> }) {
+export function ConversationDetail({ conversation, refresh }: { conversation: Conversation; refresh: () => Promise<void> }) {
   const chaveRascunho = `omni-rascunho:${conversation.id}`;
   const [data, setData] = useState<Timeline | null>(null);
   // O rascunho sobrevive ao refresh da página: atualizar no meio da digitação não apaga nada.
@@ -329,7 +329,7 @@ function ConversationDetail({ conversation, refresh }: { conversation: Conversat
   const marcar = (id: string, mudanca: Partial<Anexo>) =>
     setAnexos(lista => lista.map(a => (a.id === id ? { ...a, ...mudanca } : a)));
 
-  async function post(kind: "prompt" | "aprovar", body: Record<string, unknown>) {
+  async function post(kind: "prompt" | "aprovar" | "modo", body: Record<string, unknown>) {
     const capability = conversation.capabilities!;
     const signature = JSON.stringify([kind, body]);
     if (pending.current?.signature !== signature) pending.current = { signature, key: actionKey(), revision: capability.revision };
@@ -354,6 +354,28 @@ function ConversationDetail({ conversation, refresh }: { conversation: Conversat
     try { await post("aprovar", { permitir }); await Promise.all([load(), refresh()]); }
     catch (reason) { falhou(reason); }
     finally { setBusy(false); }
+  }
+
+  /** Alterna entre plano e automático — o que o shift+tab faz no terminal do PC. */
+  async function trocarModo(alvo: "plan" | "auto") {
+    if (!conversation.capabilities?.prompt || busy) return;
+    setBusy(true); setError(null); setFalhaEnvio(null);
+    try { await post("modo", { modo: alvo }); await refresh(); }
+    catch (reason) { falhou(reason); }
+    finally { setBusy(false); }
+  }
+
+  async function renomear(nome: string) {
+    const limpo = nome.trim();
+    if (!limpo || limpo === conversation.title) return;
+    try {
+      await request(`/conversas/${encodeURIComponent(conversation.id)}/nome`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nome: limpo }),
+      });
+      await refresh();
+    } catch (reason) { falhou(reason); }
   }
 
   async function enviarPrompt() {
@@ -435,6 +457,8 @@ function ConversationDetail({ conversation, refresh }: { conversation: Conversat
       </div>
     )}
 
+    <BarraDaConversa conversa={conversation} ocupado={busy} onModo={trocarModo} onRenomear={renomear} />
+
     {(falhaEnvio || error) && <p role="alert" className="m-alerta">{falhaEnvio ?? error}</p>}
     {anexoGrande && <p className="m-aviso">Tire o anexo acima de 25 MB para enviar.</p>}
     {/* O motivo genérico só aparece com o agente parado: trabalhando, o "ocupado" é esperado e o
@@ -447,69 +471,58 @@ function ConversationDetail({ conversation, refresh }: { conversation: Conversat
   </section>;
 }
 
+/** Nome da conversa e modo do agente, na mesma faixa acima do campo de texto.
+ *
+ *  O modo é o que o `shift+tab` alterna no terminal; aqui só plano e automático, que são os dois do
+ *  dia a dia. Sem tela reconhecida (`capabilities.prompt` falso) os botões ficam travados: mandar
+ *  tecla no meio de um turno não é para o agente. */
+export function BarraDaConversa({ conversa, ocupado, onModo, onRenomear }: {
+  conversa: Conversation;
+  ocupado: boolean;
+  onModo: (alvo: "plan" | "auto") => Promise<void>;
+  onRenomear: (nome: string) => Promise<void>;
+}) {
+  const [editando, setEditando] = useState(false);
+  const pronto = Boolean(conversa.capabilities?.prompt) && !ocupado;
+
+  if (editando) {
+    return <form className="m-barra-conversa" onSubmit={(evento) => {
+      evento.preventDefault();
+      const campo = evento.currentTarget.elements.namedItem("nome") as HTMLInputElement | null;
+      setEditando(false);
+      if (campo) void onRenomear(campo.value);
+    }}>
+      <input name="nome" defaultValue={conversa.title} aria-label="Nome da conversa" className="m-campo-nome"
+        autoFocus onKeyDown={(evento) => { if (evento.key === "Escape") setEditando(false); }} />
+      <Button size="sm" type="submit">Salvar</Button>
+    </form>;
+  }
+
+  return <div className="m-barra-conversa">
+    <button type="button" className="m-nome-conversa" onClick={() => setEditando(true)}
+      title="Renomear conversa">{conversa.title}</button>
+    <div className="m-modos">
+      {(["plan", "auto"] as const).map((alvo) => (
+        <Button key={alvo} size="sm" variant={conversa.mode === alvo ? "primary" : "ghost"} disabled={!pronto}
+          aria-pressed={conversa.mode === alvo} onClick={() => void onModo(alvo)}>
+          {alvo === "plan" ? "Plano" : "Auto"}
+        </Button>
+      ))}
+    </div>
+  </div>;
+}
+
 /* ─────────────────────────────────────────────────────────────── app */
 
 const CHAVE_FILTRO = "omni-filtro";
 
 export function MobileApp() {
   const { rota, ir, voltar } = useRota();
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [attention, setAttention] = useState<Conversation[]>([]);
-  const [catalog, setCatalog] = useState<Projects | null>(null);
-  const [carregado, setCarregado] = useState(false);
+  const { conversations, attention, catalog, carregado, error, semAcesso, refresh, atualizar, parear } = useDados();
   const [onlyAttention, setOnlyAttention] = useState(() => lerSessao(CHAVE_FILTRO) === "atencao");
-  const [error, setError] = useState<string | null>(null);
-  // Sem acesso = o servidor respondeu 401. Acontece sempre na primeira abertura do app da tela
-  // inicial do iPhone, que não enxerga o token que o QR gravou no Safari.
-  const [semAcesso, setSemAcesso] = useState(false);
-  // Começa pelo último tema recebido: a tela de pareamento e o primeiro quadro já saem com a cara do PC.
-  const [tema, setTema] = useState<TemaPublicado | null>(() => temaGuardado());
 
-  useEffect(() => aplicarTema(tema), [tema]);
   useEffect(() => { gravarSessao(CHAVE_FILTRO, onlyAttention ? "atencao" : null); }, [onlyAttention]);
 
-  const refresh = useCallback(async () => {
-    const [all,waiting,projetos] = await Promise.all([
-      request<Conversation[]>("/conversas"),
-      request<Conversation[]>("/atencao"),
-      request<Projects>("/projetos"),
-    ]);
-    // Normaliza na entrada: um engine mais antigo (sem `/projetos`) ou uma resposta truncada
-    // deixava `projects` indefinido, e o `.find` logo abaixo derrubava a tela inteira — sem lista,
-    // sem conversa, sem mensagem de erro. Confiar no formato aqui é o que deixa o resto simples.
-    const novoTema = projetos?.theme && typeof projetos.theme === "object" ? projetos.theme : null;
-    setCatalog({
-      published_at_ms: Number(projetos?.published_at_ms) || 0,
-      projects: Array.isArray(projetos?.projects) ? projetos.projects : [],
-      agents: Array.isArray(projetos?.agents) ? projetos.agents : [],
-      profiles: Array.isArray(projetos?.profiles) ? projetos.profiles : [],
-      theme: novoTema,
-    });
-    if (novoTema) {
-      guardarTema(novoTema);
-      // Compara por valor: objeto novo a cada poll reaplicaria o tema (e o `matchMedia`) à toa.
-      setTema(atual => (JSON.stringify(atual) === JSON.stringify(novoTema) ? atual : novoTema));
-    }
-    setConversations(Array.isArray(all) ? all : []);
-    setAttention(Array.isArray(waiting) ? waiting : []);
-    setCarregado(true);
-    setError(null);
-  },[]);
-  usePoll(refresh, reason => {
-    if (reason instanceof ApiError && reason.status === 401) { setSemAcesso(true); return; }
-    setError(String(reason));
-  }, [refresh]);
-
-  async function parear(codigo: string) {
-    const { token } = await request<{ token: string }>("/parear", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ codigo }),
-    });
-    salvarToken(token);
-    setSemAcesso(false); setError(null);
-    await refresh();
-  }
-
-  const atualizar = () => refresh().catch(reason => setError(String(reason)));
 
   if (semAcesso) return <main className="m-shell"><PairingScreen parear={parear} /></main>;
 

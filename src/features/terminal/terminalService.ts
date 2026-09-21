@@ -26,6 +26,8 @@ export interface TerminalSession {
   profile_id?: string | null;
   /** Id da sessão do lado do provider — é o que acha o transcript e, com ele, modelo e esforço. */
   external_session_id?: string | null;
+  /** Conversa a que a sessão pertence. É por ela que o renomear chega ao índice de conversas. */
+  conversation_id?: string | null;
   /** Por que a sessão parou, quando o motivo não cabe no `state` (o engine só distingue seis).
    *  Ortogonal ao `state` de propósito: `state` é reescrito a cada chunk de saída. */
   notice?: "usage_limit" | "api_error";
@@ -257,7 +259,9 @@ export interface Conversation {
   id: string;
   project_id: string;
   cwd: string;
+  /** Nome de exibição: o que o usuário escreveu, ou o primeiro prompt enquanto ele não escreveu. */
   title: string;
+  title_source: "auto" | "manual";
   created_at_ms: number;
   segments: ConversationSegment[];
 }
@@ -265,6 +269,7 @@ export interface Conversation {
 /** O que a UI precisa para abrir o próximo terminal de uma conversa. */
 export interface LaunchPlan {
   conversation_id: string;
+  title: string;
   provider: AgentCliId;
   profile_id: string | null;
   initial_command: string;
@@ -275,9 +280,15 @@ export interface LaunchPlan {
   notice: string | null;
 }
 
-export async function listConversations(projectId: string) {
-  const conversations = await invoke<Conversation[]>("list_conversations", { projectId });
+/** Sem `projectId`, todas as conversas — o Histórico precisa achar a conversa de qualquer sessão. */
+export async function listConversations(projectId?: string) {
+  const conversations = await invoke<Conversation[]>("list_conversations", { projectId: projectId ?? null });
   return Array.isArray(conversations) ? conversations : [];
+}
+
+/** Renomeia a conversa (e trava o nome automático). Quem grava é o engine. */
+export async function renameConversation(conversationId: string, title: string) {
+  expect(await invoke<EngineResponse>("rename_conversation", { conversationId, title }), "ok");
 }
 
 export async function beginConversation(input: {

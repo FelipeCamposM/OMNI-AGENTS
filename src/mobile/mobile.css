@@ -322,3 +322,39 @@ body { user-select: text; -webkit-user-select: text; -webkit-tap-highlight-color
   .m-dot-ativo, .anexo-girando { animation: none; }
   .m-card { transition: none; }
 }
+
+/* Faixa com o nome da conversa e o modo do agente, logo acima do campo de texto. */
+.m-barra-conversa {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+.m-nome-conversa {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: 0.75rem;
+  color: rgb(var(--c-text-secondary));
+  background: none;
+  border: none;
+  padding: 0.25rem 0;
+}
+.m-campo-nome {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 16px: abaixo disso o iOS dá zoom ao focar o campo. */
+  font-size: 16px;
+  color: rgb(var(--c-text-primary));
+  background: rgb(var(--c-bg-elevated));
+  border: 1px solid rgb(var(--c-border-subtle));
+  padding: 0.35rem 0.5rem;
+}
+.m-modos {
+  display: flex;
+  gap: 0.25rem;
+  flex-shrink: 0;
+}

@@ -13,14 +13,105 @@ pub struct Segment {
     pub ended_at_ms: Option<u64>,
 }
 
+/// De onde veio o nome da conversa. `Manual` trava o nome automático: escreveu, é seu.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleSource {
+    #[default]
+    Auto,
+    Manual,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Conversation {
     pub id: String,
     pub project_id: String,
     pub cwd: String,
     pub title: String,
+    /// `default` para o índice que já está gravado em disco: conversa antiga nasce como automática e
+    /// ganha nome de verdade na primeira leitura.
+    #[serde(default)]
+    pub title_source: TitleSource,
     pub created_at_ms: u64,
     pub segments: Vec<Segment>,
+}
+
+/// Tamanho do nome derivado do primeiro prompt. Cabe numa aba sem virar reticências.
+const TITULO_MAX: usize = 60;
+
+/// Nome curto tirado do **primeiro prompt do usuário**, lido do transcript que a própria CLI grava.
+///
+/// Só a primeira linha útil, sem marcação de bloco: o começo de um prompt costuma dizer do que a
+/// conversa trata, e o resto vira ruído numa aba. Devolve `None` enquanto ninguém falou nada — aí o
+/// título de nascimento continua valendo.
+pub fn auto_title(conversation: &Conversation) -> Option<String> {
+    for segment in &conversation.segments {
+        let Some(path) = segment.transcript_path.as_deref() else { continue };
+        let Ok(file) = File::open(path) else { continue };
+        for line in BufReader::new(file).lines().map_while(Result::ok) {
+            let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
+            let Some((role, text)) = text_message(&value, &segment.provider) else { continue };
+            if role != "user" {
+                continue;
+            }
+            // Mensagem de sistema do próprio CLI (comando local, lembrete) não é o assunto da conversa.
+            if text.trim_start().starts_with('<') || text.trim_start().starts_with("Caveat:") {
+                continue;
+            }
+            if let Some(resumo) = resumir(&text) {
+                return Some(resumo);
+            }
+        }
+    }
+    None
+}
+
+fn resumir(texto: &str) -> Option<String> {
+    let linha = texto
+        .lines()
+        .map(str::trim)
+        .find(|linha| !linha.is_empty() && !linha.starts_with("```"))?;
+    let limpo = linha.trim_start_matches(['#', '*', '-', '>', ' ']).trim();
+    if limpo.is_empty() {
+        return None;
+    }
+    Some(match limpo.char_indices().nth(TITULO_MAX) {
+        Some((corte, _)) => format!("{}…", limpo[..corte].trim_end()),
+        None => limpo.to_string(),
+    })
+}
+
+/// O nome que todas as telas devem mostrar: o que o usuário escreveu, ou o derivado do primeiro
+/// prompt enquanto ele não escreveu nada.
+pub fn display_title(conversation: &Conversation) -> String {
+    if conversation.title_source == TitleSource::Manual {
+        return conversation.title.clone();
+    }
+    auto_title(conversation).unwrap_or_else(|| conversation.title.clone())
+}
+
+/// Limite do nome escrito à mão. Mesma regra que o spawn pelo celular já aplicava.
+pub fn valid_title(title: &str) -> bool {
+    let limpo = title.trim();
+    !limpo.is_empty() && limpo.len() <= 120 && !limpo.chars().any(char::is_control)
+}
+
+/// Renomeia e marca como manual. Escritor único: quem chama isto é o engine — o desktop pede por
+/// ele, para não existirem dois processos gravando o mesmo índice.
+pub fn rename(dir: &Path, conversation_id: &str, title: &str) -> Result<Conversation, String> {
+    if !valid_title(title) {
+        return Err("Título inválido".into());
+    }
+    let mut index = read_index(dir);
+    let conversation = index
+        .iter_mut()
+        .find(|item| item.id == conversation_id)
+        .ok_or("Conversa não encontrada")?;
+    conversation.title = title.trim().to_string();
+    conversation.title_source = TitleSource::Manual;
+    let atualizada = conversation.clone();
+    write_index(dir, &index).map_err(|erro| erro.to_string())?;
+    Ok(atualizada)
 }
 
 pub fn read_index(dir: &Path) -> Vec<Conversation> {
@@ -169,13 +260,73 @@ mod tests {
         assert!(text_message(&json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"secret"}]}}),"claude").is_none());
     }
 
+    fn conversa_com_transcript(dir: &std::path::Path, linhas: &[serde_json::Value]) -> Conversation {
+        let transcript = dir.join("t.jsonl");
+        std::fs::write(&transcript, linhas.iter().map(|l| l.to_string()).collect::<Vec<_>>().join("
+")).unwrap();
+        Conversation {
+            id: "c".into(), project_id: "p".into(), cwd: "C:/t".into(),
+            title: "Conversa".into(), title_source: TitleSource::Auto, created_at_ms: 0,
+            segments: vec![Segment { provider: "claude".into(), profile_id: Some("p".into()), external_session_id: None,
+                transcript_path: Some(transcript.to_string_lossy().into_owned()), terminal_session_id: None,
+                started_at_ms: 0, ended_at_ms: None }],
+        }
+    }
+
+    /// O nome da aba sai do **primeiro prompt**: é o que diz de que conversa se trata, e é o que o
+    /// usuário reconhece ao voltar dias depois.
+    #[test] fn nome_automatico_vem_do_primeiro_prompt_do_usuario() {
+        let dir = tempfile::tempdir().unwrap();
+        let conversa = conversa_com_transcript(dir.path(), &[
+            json!({"type":"user","message":{"role":"user","content":"<command-name>/init</command-name>"}}),
+            json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"claro"}]}}),
+            json!({"type":"user","message":{"role":"user","content":"Corrigir o login que quebra no Safari
+segunda linha"}}),
+        ]);
+        // Mensagem de sistema da própria CLI não conta; a primeira linha do prompt de verdade, sim.
+        assert_eq!(display_title(&conversa), "Corrigir o login que quebra no Safari");
+    }
+
+    #[test] fn nome_longo_e_cortado_e_conversa_vazia_mantem_o_provisorio() {
+        let dir = tempfile::tempdir().unwrap();
+        let longo = "a".repeat(200);
+        let conversa = conversa_com_transcript(dir.path(), &[
+            json!({"type":"user","message":{"role":"user","content":longo}}),
+        ]);
+        let titulo = display_title(&conversa);
+        assert!(titulo.ends_with('…') && titulo.chars().count() == TITULO_MAX + 1);
+
+        let vazia = conversa_com_transcript(dir.path(), &[]);
+        assert_eq!(display_title(&vazia), "Conversa");
+    }
+
+    /// Renomear trava o automático: o nome escrito à mão não pode ser trocado pelo primeiro prompt
+    /// na leitura seguinte.
+    #[test] fn renomear_trava_o_nome_automatico() {
+        let dir = tempfile::tempdir().unwrap();
+        let conversa = conversa_com_transcript(dir.path(), &[
+            json!({"type":"user","message":{"role":"user","content":"Corrigir o login"}}),
+        ]);
+        write_index(dir.path(), &[conversa]).unwrap();
+
+        let renomeada = rename(dir.path(), "c", "  Refatorar autenticação  ").unwrap();
+        assert_eq!(renomeada.title, "Refatorar autenticação");
+        assert_eq!(renomeada.title_source, TitleSource::Manual);
+        assert_eq!(display_title(&read_index(dir.path())[0]), "Refatorar autenticação");
+
+        assert!(rename(dir.path(), "c", "  ").is_err());
+        assert!(rename(dir.path(), "c", "nome
+com quebra").is_err());
+        assert!(rename(dir.path(), "outra", "x").is_err());
+    }
+
     #[test] fn pagination_deduplicates_copied_claude_messages_and_rejects_outside_profile() {
         let dir = tempfile::tempdir().unwrap();
         let transcript = dir.path().join("transcript.jsonl");
         std::fs::write(&transcript,(0..105).map(|i|json!({"uuid":format!("m{i}"),"type":"user","message":{"role":"user","content":format!("message {i}")}}).to_string()).collect::<Vec<_>>().join("\n")).unwrap();
         let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false};
         let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(transcript.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
-        let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),created_at_ms:0,segments:vec![segment.clone(),segment]};
+        let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),title_source:TitleSource::default(),created_at_ms:0,segments:vec![segment.clone(),segment]};
         let first = timeline(&conversation,std::slice::from_ref(&profile),Some(0),100);
         assert_eq!(first.messages.len(),100); assert_eq!(first.next_cursor,Some(100)); assert!(first.prev_cursor.is_none());
         let second = timeline(&conversation,std::slice::from_ref(&profile),Some(100),100);
@@ -192,7 +343,7 @@ mod tests {
         std::fs::write(&transcript,(0..250).map(|i|json!({"uuid":format!("m{i}"),"type":"user","message":{"role":"user","content":format!("message {i}")}}).to_string()).collect::<Vec<_>>().join("\n")).unwrap();
         let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false};
         let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(transcript.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
-        let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),created_at_ms:0,segments:vec![segment]};
+        let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),title_source:TitleSource::default(),created_at_ms:0,segments:vec![segment]};
 
         let fim = timeline(&conversation,std::slice::from_ref(&profile),None,100);
         assert_eq!(fim.messages.len(),100);
@@ -220,7 +371,7 @@ mod tests {
         let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:true,created_at_ms:0,last_used_at_ms:None,authenticated:false};
         let futuro = dir.path().join("projects").join("x").join("ainda-nao-existe.jsonl");
         let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:Some("s".into()),transcript_path:Some(futuro.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
-        let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),created_at_ms:0,segments:vec![segment]};
+        let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),title_source:TitleSource::default(),created_at_ms:0,segments:vec![segment]};
         let vazia = timeline(&conversation,std::slice::from_ref(&profile),None,100);
         assert!(vazia.messages.is_empty());
         assert!(vazia.unavailable_segments.is_empty(),"arquivo ainda não gravado não é histórico perdido");

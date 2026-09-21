@@ -54,5 +54,11 @@ export default defineConfig({
   plugins: [react(), iconesDoApp()],
   css: { postcss: { plugins: [tailwindcss({ config: resolve("tailwind.config.ts") }), autoprefixer()] } },
   resolve: { alias: { "/src": resolve("src") } },
-  build: { outDir: "../dist-mobile", emptyOutDir: true },
+  build: {
+    outDir: "../dist-mobile",
+    emptyOutDir: true,
+    // Duas páginas no mesmo build: a do celular (`/`) e a de computador (`/pc`). O celular não
+    // baixa o código da outra — o Rollup separa por entrada.
+    rollupOptions: { input: { index: resolve("mobile/index.html"), pc: resolve("mobile/pc.html") } },
+  },
 });

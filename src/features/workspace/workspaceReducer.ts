@@ -300,22 +300,29 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           ),
         };
       });
-    case "RENAME_TAB_RESOURCE":
+    case "RENAME_TAB_RESOURCE": {
       // Percorre todas as panes (não só a ativa) — o mesmo arquivo pode estar
       // aberto em mais de uma tab ao mesmo tempo.
-      return updateActiveProject(state, (project) => ({
-        ...project,
-        layout: mapNode(project.layout, (node) => {
-          if (node.type !== "pane") return node;
-          let changed = false;
-          const tabs = node.tabs.map((tab) => {
-            if (tab.resourceId !== action.fromResourceId) return tab;
-            changed = true;
-            return { ...tab, resourceId: action.toResourceId, title: action.title ?? tab.title };
-          });
-          return changed ? { ...node, tabs } : node;
-        }),
-      }));
+      const project = state.projects.find((item) => item.id === state.activeProjectId);
+      if (!project) return state;
+      const layout = mapNode(project.layout, (node) => {
+        if (node.type !== "pane") return node;
+        let changed = false;
+        const tabs = node.tabs.map((tab) => {
+          if (tab.resourceId !== action.fromResourceId) return tab;
+          const title = action.title ?? tab.title;
+          if (tab.resourceId === action.toResourceId && tab.title === title) return tab;
+          changed = true;
+          return { ...tab, resourceId: action.toResourceId, title };
+        });
+        return changed ? { ...node, tabs } : node;
+      });
+      // Nada mudou = **mesmo estado**. O espelho do nome da sessão roda a cada poll; devolver um
+      // objeto novo de segundo em segundo re-renderizaria a árvore inteira e gravaria o workspace
+      // sem motivo.
+      if (layout === project.layout) return state;
+      return updateActiveProject(state, (current) => ({ ...current, layout }));
+    }
     case "CLOSE_TABS_BY_RESOURCE_PREFIX":
       // Fecha todas as tabs cujo resourceId é (ou está dentro de) `prefix` — usado quando um
       // arquivo/pasta é excluído no painel de arquivos. Repete takeTab uma tab de cada vez:

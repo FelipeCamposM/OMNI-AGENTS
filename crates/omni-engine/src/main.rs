@@ -146,6 +146,9 @@ impl EngineState {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // O engine pode subir sozinho (o app instalado o deixa vivo): amplia o próprio PATH para os
+    // shells das PTYs acharem as CLIs instaladas em pasta que o instalador não propagou.
+    omni_core::cli_path::ampliar_path();
     let engine_dir = engine_dir()?;
     fs::create_dir_all(&engine_dir)?;
     executable_identity(); // captura antes que uma atualização troque o arquivo
@@ -259,6 +262,11 @@ fn handle_request(request: EngineRequest, state: &Arc<EngineState>) -> EngineRes
         EngineRequest::DuplicateSession { session_id, .. } => duplicate_session(state, &session_id),
         EngineRequest::RestartSession { session_id, .. } => restart_session(state, &session_id),
         EngineRequest::Snapshot { session_id, since, .. } => snapshot(state, &session_id, since),
+        EngineRequest::RenameConversation { conversation_id, title, .. } => engine_dir()
+            .and_then(|dir| {
+                omni_core::conversations::rename(&dir, &conversation_id, &title).map_err(|erro| anyhow!(erro))
+            })
+            .map(|_| EngineResponse::Ok),
         EngineRequest::Shutdown { .. } => {
             std::process::exit(0);
         }
@@ -277,6 +285,15 @@ fn list_sessions(state: &EngineState) -> Result<EngineResponse> {
         .values()
         .map(SessionEntry::metadata)
         .collect();
+    // O nome que vale é o da **conversa**: barra lateral, painel de atenção e notificação do sistema
+    // leem `session.name`, e antes disso todos mostravam o genérico "Claude · agent".
+    let conversas = engine_dir().map(|dir| omni_core::conversations::read_index(&dir)).unwrap_or_default();
+    for session in &mut sessions {
+        let Some(id) = session.conversation_id.as_deref() else { continue };
+        if let Some(conversa) = conversas.iter().find(|item| item.id == id) {
+            session.name = omni_core::conversations::display_title(conversa);
+        }
+    }
     sessions.sort_by_key(|session| session.created_at_ms);
     Ok(EngineResponse::Sessions { sessions })
 }

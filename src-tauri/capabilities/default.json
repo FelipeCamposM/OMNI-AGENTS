@@ -27,6 +27,10 @@
     "opener:allow-reveal-item-in-dir",
     { "identifier": "opener:allow-open-url", "allow": [
       { "url": "https://login.tailscale.com/*" },
+      { "url": "https://tailscale.com/*" },
+      { "url": "https://code.claude.com/*" },
+      { "url": "https://learn.chatgpt.com/*" },
+      { "url": "https://cursor.com/*" },
       { "url": "https://*.ts.net/*" },
       { "url": "http://100.*/*" }
     ] }
