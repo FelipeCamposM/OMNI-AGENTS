@@ -2224,3 +2224,20 @@ Suíte: 315 testes de front, 61 do engine, 12 do core, 16 do Tauri.
   conversa e alternar pelo celular uma vez.
 - [ ] `RENAME_TAB_RESOURCE` só renomeia no projeto ativo; aba de outro projeto atualiza o nome ao
   voltar para ele.
+
+## Release v0.5.1 (2026-09-21)
+
+- [x] `VERSION` 0.5.1 + `version:sync`; entrada em `src/lib/changelog.ts` (nome de conversa e
+  renomear, modo plano/auto pelo celular/web, página `/pc`, instalar ferramenta pelo app, PATH das
+  CLIs recém-instaladas).
+- [x] Verificado antes da tag: typecheck, 315 testes de front, `cargo test --workspace`
+  (60 engine + core/protocolo/shim), `cargo check --workspace`. Build local assinado como prova de
+  que a chave e a senha ainda valem (`OMNI.AGENTS_0.5.1_x64-setup.exe` + `.sig`).
+- [x] Commit `59c4e99` + tag `v0.5.1`. Workflow `release.yml` (run 35604863398) verde em 18min.
+  Rascunho conferido: `latest.json` 0.5.1 com assinatura nas 11 entradas (Windows NSIS/MSI, macOS
+  universal, Linux AppImage/deb/rpm) e URLs apontando para a tag certa. Publicado como release normal
+  (não pre-release).
+- [x] Conferido depois de publicar: `releases/latest/download/latest.json` responde **0.5.1** e o
+  `x64-setup.exe` baixa (200, 6,6 MB).
+- [ ] Não conferido: atualização 0.5.0 → 0.5.1 dentro do app instalado; troca de modo plano/auto numa
+  sessão viva.
