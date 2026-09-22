@@ -12,6 +12,7 @@ function session(overrides: Partial<TerminalSession> & Pick<TerminalSession, "id
     state: "answered",
     pid: 1,
     output_seq: 7,
+    attention_seq: 1,
     rows: 24,
     cols: 80,
     ...overrides,
@@ -44,13 +45,13 @@ function workspace(id: string, name: string, projects: Project[], activeProjectI
 }
 
 describe("useAttention", () => {
-  it("dispensar pelo X esconde o item até a sessão soltar saída nova", () => {
+  it("dispensar pelo X esconde o item até o próximo evento de atenção", () => {
     const workspaces = [
       workspace("ws-a", "Cliente X", [project("api", null)], "api"),
       workspace("ws-b", "Estudos", [project("web", null)], "web"),
     ];
     const { result, rerender } = renderHook(
-      ({ seq }) => useAttention([session({ id: "s1", project_id: "api", output_seq: seq })], workspaces, "ws-b"),
+      ({ seq }) => useAttention([session({ id: "s1", project_id: "api", attention_seq: seq })], workspaces, "ws-b"),
       { initialProps: { seq: 1 } }
     );
 
@@ -60,6 +61,51 @@ describe("useAttention", () => {
 
     rerender({ seq: 2 });
     expect(result.current.items).toHaveLength(1);
+  });
+
+  /** O bug relatado: o aviso já lido voltava sozinho. A chave era `output_seq`, que sobe a cada
+   *  pedaço de saída — e a TUI do Claude redesenha o tempo todo, mesmo sem nada acontecer. */
+  it("redesenho da tela não traz de volta um aviso já visto", () => {
+    const workspaces = [
+      workspace("ws-a", "Cliente X", [project("api", null)], "api"),
+      workspace("ws-b", "Estudos", [project("web", null)], "web"),
+    ];
+    const { result, rerender } = renderHook(
+      ({ saida }) =>
+        useAttention(
+          [session({ id: "s1", project_id: "api", attention_seq: 4, output_seq: saida })],
+          workspaces,
+          "ws-b"
+        ),
+      { initialProps: { saida: 100 } }
+    );
+
+    act(() => result.current.dismiss("s1"));
+    expect(result.current.items).toHaveLength(0);
+
+    // Só redesenho: o contador de saída anda, o de atenção não.
+    rerender({ saida: 101 });
+    expect(result.current.items).toHaveLength(0);
+    rerender({ saida: 150 });
+    expect(result.current.items).toHaveLength(0);
+  });
+
+  /** Limite de uso e erro de API não mexem no contador de atenção, mas são evento novo: trocar de
+   *  motivo tem de reacender o aviso. */
+  it("motivo novo reacende o aviso mesmo sem evento de turno", () => {
+    const workspaces = [workspace("ws-a", "Cliente X", [project("api", null)], "api")];
+    const { result, rerender } = renderHook(
+      ({ notice }) =>
+        useAttention([session({ id: "s1", project_id: "api", attention_seq: 4, notice })], workspaces, "ws-a"),
+      { initialProps: { notice: undefined as "usage_limit" | undefined } }
+    );
+
+    act(() => result.current.dismiss("s1"));
+    expect(result.current.items).toHaveLength(0);
+
+    rerender({ notice: "usage_limit" });
+    expect(result.current.items).toHaveLength(1);
+    expect(result.current.items[0].reason).toBe("usage_limit");
   });
 
   it("lista agente de workspace inativo com o nome do workspace e do projeto", () => {
@@ -82,7 +128,7 @@ describe("useAttention", () => {
     expect(result.current.countByWorkspace).toEqual({ "ws-a": 1 });
   });
 
-  it("some enquanto está na tela e volta quando produz saída nova em outro workspace", () => {
+  it("some enquanto está na tela e volta com evento novo em outro workspace", () => {
     const workspaces = [
       workspace("ws-a", "Cliente X", [project("api", "s1")], "api"),
       workspace("ws-b", "Estudos", [project("web", null)], "web"),
@@ -100,9 +146,9 @@ describe("useAttention", () => {
     // Aba ativa do projeto ativo: o usuário está olhando pra ela.
     expect(result.current.items).toHaveLength(0);
 
-    // Trocou de workspace e o agente terminou algo novo depois disso.
+    // Trocou de workspace e o agente terminou um turno novo depois disso.
     rerender({
-      sessions: [session({ id: "s1", project_id: "api", output_seq: 12 })],
+      sessions: [session({ id: "s1", project_id: "api", attention_seq: 12 })],
       activeWorkspaceId: "ws-b",
     });
     expect(result.current.items).toHaveLength(1);
@@ -110,7 +156,7 @@ describe("useAttention", () => {
 
     // Voltar pro workspace dele zera o aviso de novo.
     rerender({
-      sessions: [session({ id: "s1", project_id: "api", output_seq: 12 })],
+      sessions: [session({ id: "s1", project_id: "api", attention_seq: 12 })],
       activeWorkspaceId: "ws-a",
     });
     expect(result.current.items).toHaveLength(0);

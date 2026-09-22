@@ -47,6 +47,22 @@ export interface AttentionItem {
   workspaceName: string;
 }
 
+/**
+ * O que caracteriza um evento de atenção desta sessão.
+ *
+ * **Não é `output_seq`.** Esse contador sobe a cada pedaço de saída, e a TUI do Claude redesenha o
+ * tempo todo (relógio, rodapé, spinner) — então um aviso já lido voltava sozinho segundos depois,
+ * sem nada ter acontecido. Era o bug de "já abri e continua apontando não lido".
+ *
+ * O engine tem o sinal certo: `attention_seq` sobe **uma vez** por fim de turno de verdade ou
+ * diálogo de aprovação (ver `settle`/`append_output` no engine). O motivo entra na assinatura para
+ * cobrir o que não mexe nesse contador — limite de uso, erro de API, sessão que travou: trocar de
+ * motivo é evento novo e merece aparecer de novo.
+ */
+function assinatura(session: TerminalSession): string {
+  return `${session.attention_seq ?? 0}:${session.notice ?? session.state}`;
+}
+
 /** Abas ATIVAS de cada pane — as únicas que estão de fato na tela. Difere de `collectResourceIds`
  *  (que colhe todas as abas) porque uma aba em segundo plano não foi vista por ninguém. */
 function activeResourceIds(node: LayoutNode): string[] {
@@ -94,18 +110,19 @@ export function useAttention(
 } {
   // ponytail: mapa em memória — recarregar o app rebadgeia tudo que continua pendente, que é o
   // comportamento certo (o usuário não triou nada). Persistir exigiria podar ids mortos e lidar
-  // com o `output_seq`, que reinicia em 0 a cada restart do engine.
-  const seen = useRef<Record<string, number>>({});
+  // com sequências que reiniciam em 0 a cada restart do engine.
+  const seen = useRef<Record<string, string>>({});
 
   const [, rerender] = useReducer((n: number) => n + 1, 0);
 
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
 
-  /** O X do Attention Center: marca como visto sem abrir. Volta sozinho se a sessão soltar saída nova. */
+  /** O X do Attention Center: marca como visto sem abrir. Volta sozinho no **próximo evento** —
+   *  fim de turno, pedido de aprovação ou motivo novo. */
   function dismiss(sessionId: string) {
     const session = sessionById.get(sessionId);
     if (!session) return;
-    seen.current[sessionId] = session.output_seq;
+    seen.current[sessionId] = assinatura(session);
     rerender();
   }
   const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId);
@@ -118,7 +135,7 @@ export function useAttention(
   if (paneVisible) {
     for (const resourceId of visibleResourceIds(activeProject)) {
       const session = sessionById.get(resourceId);
-      if (session) seen.current[resourceId] = session.output_seq;
+      if (session) seen.current[resourceId] = assinatura(session);
     }
   }
 
@@ -156,8 +173,8 @@ export function useAttention(
       workspaceName: place.workspaceName,
     };
     all.push(item);
-    // Já visto: nada mudou desde a última vez que essa sessão esteve na tela.
-    if (seen.current[session.id] !== session.output_seq) items.push(item);
+    // Já visto: nenhum evento novo desde a última vez que essa sessão esteve na tela.
+    if (seen.current[session.id] !== assinatura(session)) items.push(item);
   }
 
   items.sort((a, b) => ATTENTION_ORDER.indexOf(a.reason) - ATTENTION_ORDER.indexOf(b.reason));

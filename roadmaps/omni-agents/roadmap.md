@@ -2266,3 +2266,20 @@ Suíte: 315 testes de front, 61 do engine, 12 do core, 16 do Tauri.
 - [ ] Ainda em aberto se sobrar atraso: o xterm usa o renderizador DOM com `allowTransparency`, e o
   addon WebGL estável (0.19) não declara compatibilidade com o xterm 6.0 — o beta pede `^6.1.0-beta`.
   Próximo passo seria medir o tempo de pintura antes de trocar de renderizador.
+
+### Aviso de atenção que voltava sozinho — 2026-09-22
+
+- **Sintoma (usuário):** "já abri e continua apontando que não foi lido; some e volta depois que eu
+  olho".
+- **Causa:** o mapa de "já visto" (`useAttention`) guardava o `output_seq` da sessão, que sobe a
+  **cada pedaço de saída** — e a TUI do Claude redesenha o tempo todo (rodapé, relógio, spinner).
+  Bastava um redesenho para a assinatura mudar e o item voltar, sem nada ter acontecido. O sinal
+  certo já existia no engine e já era usado pelo notificador: `attention_seq`, que sobe **uma vez**
+  por fim de turno de verdade ou diálogo de aprovação.
+- [x] `useAttention` passa a marcar visto por `attention_seq` + motivo. O motivo entra na assinatura
+  porque limite de uso, erro de API e sessão travada não mexem no contador — trocar de motivo é
+  evento novo e deve reacender o aviso.
+- [x] 2 testes novos: redesenho não traz de volta o que já foi visto; motivo novo reacende.
+  Os dois testes que fixavam o comportamento antigo (`output_seq`) foram reescritos para o contrato
+  novo. 15 testes na dupla `useAttention`/`useAttentionNotifier`.
+- [ ] Não conferido no app rodando — precisa de build novo.
