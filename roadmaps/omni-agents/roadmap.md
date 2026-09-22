@@ -2283,3 +2283,16 @@ Suíte: 315 testes de front, 61 do engine, 12 do core, 16 do Tauri.
   Os dois testes que fixavam o comportamento antigo (`output_seq`) foram reescritos para o contrato
   novo. 15 testes na dupla `useAttention`/`useAttentionNotifier`.
 - [ ] Não conferido no app rodando — precisa de build novo.
+
+## Release v0.5.2 (2026-09-22)
+
+- [x] `VERSION` 0.5.2 + `version:sync`; changelog em linguagem de usuário (teclado sem atraso,
+  janela sem travadinha do Git, aviso de atenção que não volta, renomear aba sem reiniciar terminal).
+- [x] Verificado antes da tag: typecheck, 320 testes de front, `cargo test --workspace`.
+- [x] Commit `380052c` + tag `v0.5.2`. Workflow (run 35714679085) verde em 13min40s. Rascunho
+  conferido: `latest.json` 0.5.2, 11 plataformas, todas assinadas e apontando para a tag certa.
+  Publicado como release normal.
+- [x] Conferido depois: `releases/latest/download/latest.json` responde 0.5.2 e o `x64-setup.exe`
+  baixa (200, 6,7 MB).
+- [ ] **A conferir no uso**: se o teclado ainda tiver atraso perceptível depois desta versão, o
+  próximo suspeito é o renderizador do xterm (DOM + transparência) — medir a pintura antes de trocar.
