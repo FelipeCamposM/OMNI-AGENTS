@@ -128,3 +128,65 @@ describe("TerminalPane — sessão morta", () => {
     expect(engine.restartTerminal).not.toHaveBeenCalled();
   });
 });
+
+describe("TerminalPane — ritmo da leitura", () => {
+  /** Não há eco local: a tecla só aparece quando a leitura seguinte traz o redesenho da CLI. Com
+   *  ritmo fixo de 100ms isso custava até 100ms por tecla — o "teclado lerdo" relatado. */
+  it("com saída nova, lê num ritmo de quadro em vez de 100ms", async () => {
+    let seq = 1;
+    engine.terminalSnapshot.mockImplementation(async () => {
+      seq += 1;
+      return { ...snapshot(seq), data: "x" };
+    });
+
+    renderPane();
+    await waitFor(() => expect(engine.terminalSnapshot).toHaveBeenCalled());
+    const inicio = engine.terminalSnapshot.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const leituras = engine.terminalSnapshot.mock.calls.length - inicio;
+
+    // Em 250ms, o ritmo econômico daria ~2 leituras; o de quadro dá mais de 10. A folga do limite
+    // absorve a lentidão do jsdom sem deixar a regressão passar.
+    expect(leituras).toBeGreaterThan(5);
+  });
+
+  it("sem saída nenhuma, volta ao ritmo econômico", async () => {
+    engine.terminalSnapshot.mockResolvedValue({ ...snapshot(1), data: "" });
+
+    renderPane();
+    await waitFor(() => expect(engine.terminalSnapshot).toHaveBeenCalled());
+    // Passa a janela de atividade inicial antes de medir.
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    const inicio = engine.terminalSnapshot.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const leituras = engine.terminalSnapshot.mock.calls.length - inicio;
+
+    expect(leituras).toBeLessThan(8);
+  });
+});
+
+it("renomear a aba não derruba o terminal", async () => {
+  // O nome automático chega depois do primeiro prompt. Se o título estivesse nas dependências do
+  // efeito, o xterm seria destruído e o scrollback reproduzido do zero no meio da conversa.
+  engine.terminalSnapshot.mockResolvedValue(snapshot(1));
+  const { rerender } = render(
+    <TerminalPane projectId="p1" projectPath="C:/dev/projeto" paneId="pane-1" tab={tab} onSessionCreated={vi.fn()} />
+  );
+  await waitFor(() => expect(engine.terminalSnapshot).toHaveBeenCalled());
+  const leiturasAntes = engine.terminalSnapshot.mock.calls.length;
+
+  rerender(
+    <TerminalPane
+      projectId="p1"
+      projectPath="C:/dev/projeto"
+      paneId="pane-1"
+      tab={{ ...tab, title: "Corrigir o login" }}
+      onSessionCreated={vi.fn()}
+    />
+  );
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  // Remontar recomeçaria a sequência: a primeira leitura da montagem nova pede `since` 0.
+  const desdeZero = engine.terminalSnapshot.mock.calls.slice(leiturasAntes).filter(([, since]) => since === 0);
+  expect(desdeZero).toHaveLength(0);
+});

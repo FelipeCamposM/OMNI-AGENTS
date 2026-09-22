@@ -10,7 +10,7 @@ use std::process::Command;
 
 /// Caminhos absolutos **do lado do Windows** (é isso que a UI e o editor usam), ou `None` quando o
 /// projeto é local — aí quem lista é o caminho normal do front, que já funciona bem.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn target_project_files(project_path: String, limit: usize) -> Result<Option<Vec<String>>, String> {
     let conexoes = crate::ssh::connections();
     let alvo = resolve(&project_path, &conexoes);

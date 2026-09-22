@@ -132,7 +132,7 @@ fn parse_status_v1(output: &str) -> Vec<GitStatusEntry> {
 /// `None` = projeto não é (nem está dentro de) um repositório git — não é erro, é um estado
 /// normal (a maioria dos projetos abertos aqui não tem git). Só vira `Err` se o próprio `git`
 /// falhar por outro motivo (não encontrado no PATH, etc).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_status(project_path: String) -> Result<Option<GitStatus>, String> {
     if !git_available() {
         return Err("git não encontrado no PATH.".into());
@@ -153,7 +153,7 @@ pub fn git_status(project_path: String) -> Result<Option<GitStatus>, String> {
     Ok(Some(GitStatus { branch, entries: parse_status_v1(&raw) }))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_diff(project_path: String, file: String, staged: bool) -> Result<String, String> {
     let mut args = vec!["diff"];
     if staged {
@@ -164,7 +164,7 @@ pub fn git_diff(project_path: String, file: String, staged: bool) -> Result<Stri
     run_git(&project_path, &args)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_stage(project_path: String, files: Vec<String>) -> Result<(), String> {
     if files.is_empty() {
         return Ok(());
@@ -174,7 +174,7 @@ pub fn git_stage(project_path: String, files: Vec<String>) -> Result<(), String>
     run_git(&project_path, &args).map(|_| ())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_unstage(project_path: String, files: Vec<String>) -> Result<(), String> {
     if files.is_empty() {
         return Ok(());
@@ -184,7 +184,7 @@ pub fn git_unstage(project_path: String, files: Vec<String>) -> Result<(), Strin
     run_git(&project_path, &args).map(|_| ())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_commit(project_path: String, message: String) -> Result<(), String> {
     // `diff --cached --quiet` sai 0 quando NÃO há nada preparado. Sem esta checagem, o git recusa o
     // commit imprimindo o `status` longo inteiro no stdout, e aquilo chega na UI como um parágrafo
@@ -199,7 +199,7 @@ pub fn git_commit(project_path: String, message: String) -> Result<(), String> {
 /// Branch nova nunca tem upstream, e aí `git push` puro falha mandando configurar. Em vez de
 /// checar o texto do stderr (frágil, muda com idioma/versão — mesma razão do comentário em
 /// `git_status`), pergunta direto se existe `@{u}`: sem upstream, publica a branch com `-u`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_push(project_path: String) -> Result<(), String> {
     if run_git(&project_path, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).is_ok() {
         return run_git(&project_path, &["push"]).map(|_| ());
@@ -213,7 +213,7 @@ pub fn git_push(project_path: String) -> Result<(), String> {
 
 /// `--ff-only`: sem upstream novo por cima do trabalho local, o pull vira merge (ou rebase) e um
 /// conflito nasceria sem ninguém olhando. Falhando, a mensagem do git diz o que fazer.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_pull(project_path: String) -> Result<String, String> {
     run_git(&project_path, &["pull", "--ff-only"])
 }
@@ -224,7 +224,7 @@ pub struct GitBranch {
     current: bool,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_branches(project_path: String) -> Result<Vec<GitBranch>, String> {
     let raw = run_git(&project_path, &["branch", "--format=%(HEAD)%(refname:short)"])?;
     Ok(raw
@@ -238,7 +238,7 @@ pub fn git_branches(project_path: String) -> Result<Vec<GitBranch>, String> {
 }
 
 /// `create` = `checkout -b`: nasce a partir do HEAD atual, que é o que o rodapé oferece.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_checkout_branch(project_path: String, branch: String, create: bool) -> Result<(), String> {
     let args = if create { vec!["checkout", "-b", &branch] } else { vec!["checkout", &branch] };
     run_git(&project_path, &args).map(|_| ())
@@ -257,7 +257,7 @@ pub struct GitCommit {
 const LOG_SEP: &str = "\u{1}";
 const LOG_FORMAT: &str = "%H\u{1}%P\u{1}%an\u{1}%aI\u{1}%s\u{1}%D";
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn git_log_graph(project_path: String) -> Result<Vec<GitCommit>, String> {
     // --topo-order: garante pai sempre antes de todos os filhos na lista (a ordem por data padrão
     // não garante isso — rebase/cherry-pick/clock skew podem listar um pai depois do filho, o que

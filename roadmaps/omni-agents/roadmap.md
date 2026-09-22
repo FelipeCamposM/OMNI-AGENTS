@@ -2241,3 +2241,28 @@ Suíte: 315 testes de front, 61 do engine, 12 do core, 16 do Tauri.
   `x64-setup.exe` baixa (200, 6,6 MB).
 - [ ] Não conferido: atualização 0.5.0 → 0.5.1 dentro do app instalado; troca de modo plano/auto numa
   sessão viva.
+
+### Teclado lerdo no terminal — 2026-09-22
+
+- **Sintoma (usuário):** digitar no terminal do OMNI tem atraso visível em relação à tecla.
+- **Medido antes de mexer:** o engine responde um `snapshot` em **0,3ms** (mediana de 15 leituras,
+  resposta de 0,6KB) e `list_sessions` em 2,6ms. Não era o engine.
+- **Causa 1 — eco espera a leitura seguinte.** Não existe eco local: a letra só aparece quando a CLI
+  redesenha e o `snapshot` traz. Com ritmo fixo de 100ms, cada tecla esperava de 0 a 100ms.
+- [x] `TerminalPane`: ritmo adaptativo — 16ms enquanto há atividade (tecla ou saída nova), 100ms
+  parado, 1s no modo de falha. 2 testes travam as duas pontas do ritmo.
+- **Causa 2 — comando síncrono do Tauri roda na thread principal.** Confirmado na documentação
+  ("Commands without the async keyword are executed on the main thread"). O painel Git e o rodapé
+  disparavam `git_status` a cada 3s **cada um** — em projeto WSL/SSH isso é `wsl.exe`/`ssh`, ~150ms
+  por chamada, congelando a interface no meio da digitação.
+- [x] 43 comandos passaram a `#[tauri::command(async)]` (git, ssh, conversas, profiles, instalação,
+  índice do alvo, engine). `write_terminal` e `resize_terminal` **continuam síncronos de propósito**:
+  são baratos e precisam manter a ordem das teclas, que tarefas concorrentes não garantem.
+- **Causa 3 (regressão desta semana):** `tab.title` estava nas dependências do efeito que monta o
+  xterm, então o nome automático vindo do primeiro prompt destruía o terminal e reproduzia o
+  scrollback no meio da conversa.
+- [x] Título passou a ser lido de um `ref`; teste novo garante que renomear não reinicia a leitura.
+- [ ] **Não medido no app rodando** (as três correções precisam de build novo para serem sentidas).
+- [ ] Ainda em aberto se sobrar atraso: o xterm usa o renderizador DOM com `allowTransparency`, e o
+  addon WebGL estável (0.19) não declara compatibilidade com o xterm 6.0 — o beta pede `^6.1.0-beta`.
+  Próximo passo seria medir o tempo de pintura antes de trocar de renderizador.

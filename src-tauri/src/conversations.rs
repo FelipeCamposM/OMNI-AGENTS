@@ -87,7 +87,7 @@ fn find_mut<'a>(
 /// `project_id` ausente = todas as conversas (o Histórico precisa disso para achar a conversa de uma
 /// sessão qualquer). O título devolvido já é o de exibição: enquanto ninguém renomeia, é o primeiro
 /// prompt.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_conversations(project_id: Option<String>) -> Vec<Conversation> {
     let mut conversations: Vec<Conversation> = load()
         .conversations
@@ -111,7 +111,7 @@ fn resumed_session_id(command: &str) -> Option<String> {
 /// Abre uma conversa nova. Para o Claude, gera o UUID e devolve `claude --session-id <uuid>`:
 /// escolher o id na largada é o que torna o caminho do transcript conhecido desde já, sem precisar
 /// vigiar diretório atrás do arquivo que acabou de nascer.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn begin_conversation(
     project_id: String,
     cwd: String,
@@ -181,7 +181,7 @@ pub fn begin_conversation(
 
 /// Liga o trecho corrente ao terminal que acabou de subir, para que a troca de conta saiba qual
 /// sessão parar.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn attach_terminal(conversation_id: String, terminal_session_id: String) -> Result<(), String> {
     let mut store = load();
     let conversation = find_mut(&mut store, &conversation_id)?;
@@ -193,7 +193,7 @@ pub fn attach_terminal(conversation_id: String, terminal_session_id: String) -> 
 
 /// Prompt do handoff gracioso: pede ao agente que ainda responde para deixar o briefing em disco
 /// antes de sair. Sempre preferível ao forçado — o agente sabe o que estava fazendo.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn handoff_prompt(conversation_id: String) -> String {
     format!(
         "Antes de encerrar: escreva o arquivo .omni/handoff/{conversation_id}.md com o contexto \
@@ -209,7 +209,7 @@ pub fn handoff_prompt(conversation_id: String) -> String {
 ///   destino e retoma pelo mesmo id.
 /// - Provider diferente ⇒ **handoff**, não continuação: não existe formato comum entre CLIs. O
 ///   agente novo começa do zero, lendo um briefing em markdown.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn plan_switch(
     conversation_id: String,
     target_provider: String,

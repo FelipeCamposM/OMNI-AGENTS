@@ -35,6 +35,22 @@ const CLI_IMAGE_PASTE = "\x1bv";
  *  ~0,3s de engine mudo — abaixo disso é soluço, não queda, e o banner só atrapalha. */
 const FALHAS_ATE_AVISAR = 3;
 
+/**
+ * Ritmo de leitura da PTY.
+ *
+ * **Não existe eco local**: o que aparece na tela é o que a CLI redesenhou e o engine devolveu, então
+ * a letra digitada só aparece na leitura seguinte. Com um ritmo fixo de 100ms, cada tecla esperava
+ * de 0 a 100ms para aparecer — é isso que se sente como teclado lerdo.
+ *
+ * Enquanto há atividade (tecla digitada ou saída nova) a leitura vai a um quadro; parada a conversa,
+ * volta ao ritmo econômico. O engine responde um snapshot em ~0,3ms, então o custo é a viagem de IPC
+ * e só acontece enquanto alguém está usando aquela pane.
+ */
+const POLL_ATIVO_MS = 16;
+const POLL_OCIOSO_MS = 100;
+/** Quanto tempo depois da última atividade o ritmo rápido continua valendo. */
+const JANELA_ATIVA_MS = 700;
+
 interface TerminalPaneProps {
   projectId: string;
   projectPath: string;
@@ -55,6 +71,12 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   const [switching, setSwitching] = useState(false);
   const [inputLocked, setInputLocked] = useState(false);
   const conversationRef = useRef<string | null>(null);
+  /** Título da aba num ref, **fora das dependências do efeito**: ele só é lido na hora de abrir a
+   *  sessão, e tê-lo como dependência fazia renomear a aba derrubar o xterm e reproduzir o
+   *  scrollback inteiro. Com o nome automático vindo do primeiro prompt, isso passou a acontecer em
+   *  toda conversa. */
+  const tituloRef = useRef(tab.title);
+  tituloRef.current = tab.title;
   /** Quem está atendendo esta aba, do ponto de vista da SESSÃO (e não do launcher).
    *
    *  Tem de vir do snapshot: `launch` só existe quando foi esta montagem da pane que abriu o
@@ -74,6 +96,8 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     let pollTimer: number | undefined;
     let firstPoll = true;
     let reviving = false;
+    /** Última tecla digitada ou saída recebida — decide o ritmo da leitura. */
+    let atividadeEm = Date.now();
     const terminal = new Terminal({
       convertEol: true,
       cursorBlink: true,
@@ -128,7 +152,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
                   provider: agent.id,
                   profileId: launch?.profile?.id,
                   command: agent.command,
-                  title: tab.title,
+                  title: tituloRef.current,
                 });
             conversationRef.current = plan?.conversation_id ?? launch?.conversationId ?? null;
             if (plan) {
@@ -142,7 +166,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
             projectId,
             // Nome da **conversa**, não "Claude · agent": é ele que aparece na aba, na barra lateral
             // e na notificação, e o engine o atualiza sozinho quando o primeiro prompt der um nome.
-            name: planoTitulo ?? (agent ? `${agent.label} · agent` : tab.title),
+            name: planoTitulo ?? (agent ? `${agent.label} · agent` : tituloRef.current),
             cwd: projectPath,
             rows: terminal.rows,
             cols: terminal.cols,
@@ -227,11 +251,17 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
       // Enquanto está falhando, espaça as tentativas: martelar de 100 em 100ms um engine que caiu
       // só gasta socket e atrasa a recuperação.
       if (!cancelled) {
-        pollTimer = window.setTimeout(poll, falhasRef.current >= FALHAS_ATE_AVISAR ? 1_000 : 100);
+        const ativo = Date.now() - atividadeEm < JANELA_ATIVA_MS;
+        const intervalo = falhasRef.current >= FALHAS_ATE_AVISAR
+          ? 1_000
+          : ativo ? POLL_ATIVO_MS : POLL_OCIOSO_MS;
+        pollTimer = window.setTimeout(poll, intervalo);
       }
     }
 
     const dataSubscription = terminal.onData((data) => {
+      // Digitou: a leitura acelera para o eco aparecer no quadro seguinte, não em até 100ms.
+      atividadeEm = Date.now();
       const sessionId = sessionRef.current;
       if (sessionId) void writeTerminal(sessionId, data).catch((reason) => {
         if (String(reason).includes("Consulta de uso")) setInputLocked(true);
@@ -294,7 +324,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
       dataSubscription.dispose();
       terminal.dispose();
     };
-  }, [agent, launch?.profile?.id, paneId, projectId, projectPath, retry, tab.id, tab.title, onSessionCreated]);
+  }, [agent, launch?.profile?.id, paneId, projectId, projectPath, retry, tab.id, onSessionCreated]);
 
   /** Aplica a troca preparada pelo backend: para a sessão atual e relança na conta/IA nova,
    *  mantendo a mesma conversa. Não abre aba nem conversa nova — é a mesma timeline. */

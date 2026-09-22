@@ -45,7 +45,7 @@ fn docs(id: &str) -> Option<&'static str> {
 }
 
 /// Como instalar uma ferramenta neste sistema. `None` para id desconhecido.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_hint(id: String) -> Option<Instalacao> {
     let comando = comando(&id);
     docs(&id).map(|docs| Instalacao {
@@ -59,7 +59,7 @@ pub fn install_hint(id: String) -> Option<Instalacao> {
 ///
 /// Visível de propósito: instalar mexe na máquina do usuário, e ele acompanha a saída, responde ao
 /// que o instalador perguntar e vê o erro se houver. Nada roda escondido.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn install_agent_cli(id: String) -> Result<(), String> {
     let comando = comando(&id).ok_or("Esta ferramenta não tem instalador automático; abra a página oficial")?;
     abrir_console(comando)

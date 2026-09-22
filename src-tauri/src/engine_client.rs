@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_millis(400);
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn engine_status() -> EngineResponse {
     match authenticated_request(|token| EngineRequest::Ping { token }) {
         Ok(response) => response,
@@ -26,7 +26,7 @@ pub fn engine_status() -> EngineResponse {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ensure_engine() -> EngineResponse {
     if let Ok(response) = authenticated_request(|token| EngineRequest::Ping { token }) {
         if !engine_binary_replaced(&response) {
@@ -57,18 +57,18 @@ pub fn ensure_engine() -> EngineResponse {
 
 /// Renomear conversa. Passa pelo engine de propósito: é ele quem grava o índice, e dois processos
 /// escrevendo o mesmo arquivo já custaram um segmento perdido antes.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_conversation(conversation_id: String, title: String) -> EngineResponse {
     request_or_error(|token| EngineRequest::RenameConversation { token, conversation_id, title })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_sessions() -> EngineResponse {
     request_or_error(|token| EngineRequest::ListSessions { token })
 }
 
 #[allow(clippy::too_many_arguments)]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn spawn_terminal(
     project_id: String,
     name: String,
@@ -136,7 +136,7 @@ pub struct AgentCliStatus {
 
 
 /// Distros instaladas (`wsl -l -q`). A saída vem em UTF-16 com NUL entre os bytes — daí o filtro.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn wsl_distros() -> Vec<String> {
     #[cfg(not(windows))]
     return Vec::new();
@@ -159,7 +159,7 @@ pub fn wsl_distros() -> Vec<String> {
 /// do Windows, e só os comandos dele são desviados para o alvo (ver `omni-shim`). `project_path`
 /// segue no parâmetro porque a UI já o envia e ele volta a ser útil se um dia houver detecção por
 /// projeto.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn agent_cli_statuses(project_path: Option<String>) -> Vec<AgentCliStatus> {
     let _ = &project_path;
     AGENT_CLIS
@@ -186,7 +186,7 @@ pub fn agent_cli_statuses(project_path: Option<String>) -> Vec<AgentCliStatus> {
         .collect()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn connect_agent_cli(id: String, profile_id: Option<String>) -> Result<(), String> {
     let (_, _, candidates, arguments) = AGENT_CLIS
         .into_iter()
@@ -259,7 +259,7 @@ fn open_login_console(command: &str, arguments: &[&str], env: &[(String, String)
 /// espírito do `ensureTrusted` do Maestrus (electron/claude-pty.js): grava a confirmação de
 /// confiança diretamente no arquivo de config do CLI. Tabela por agente — hoje só o Claude Code
 /// tem esse diálogo confirmado; adicionar outro é só uma entrada nova aqui.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ensure_agent_trust(agent_id: String, cwd: String, profile_id: Option<String>) -> Result<(), String> {
     match agent_id.as_str() {
         "claude" => trust_claude(&cwd, profile_id.as_deref()),
@@ -396,27 +396,27 @@ pub fn resize_terminal(session_id: String, rows: u16, cols: u16) -> EngineRespon
     request_or_error(|token| EngineRequest::ResizeTerminal { token, session_id, rows, cols })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_terminal(session_id: String) -> EngineResponse {
     request_or_error(|token| EngineRequest::StopSession { token, session_id })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn close_terminal(session_id: String) -> EngineResponse {
     request_or_error(|token| EngineRequest::CloseSession { token, session_id })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn duplicate_terminal(session_id: String) -> EngineResponse {
     request_or_error(|token| EngineRequest::DuplicateSession { token, session_id })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn restart_terminal(session_id: String) -> EngineResponse {
     request_or_error(|token| EngineRequest::RestartSession { token, session_id })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn terminal_snapshot(session_id: String, since: u64) -> EngineResponse {
     request_or_error(|token| EngineRequest::Snapshot { token, session_id, since })
 }

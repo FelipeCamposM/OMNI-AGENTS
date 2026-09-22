@@ -154,7 +154,7 @@ fn hydrate(mut store: ProfileStore) -> ProfileStore {
     store
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_profiles() -> Vec<Profile> {
     let store = with_defaults(load());
     // Os builtin recém-criados precisam sobreviver ao próximo boot, senão o `last_used_at`
@@ -184,7 +184,7 @@ pub fn preferred(provider: &str) -> Option<Profile> {
 /// padrão — nesse caso o CLI já usa o diretório nativo sozinho.
 
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_profile(provider: String, name: String) -> Result<Profile, String> {
     if config_dir_var(&provider).is_none() {
         return Err(format!(
@@ -212,7 +212,7 @@ pub fn create_profile(provider: String, name: String) -> Result<Profile, String>
     Ok(profile)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn rename_profile(profile_id: String, name: String) -> Result<(), String> {
     let mut store = with_defaults(load());
     let profile = store
@@ -226,7 +226,7 @@ pub fn rename_profile(profile_id: String, name: String) -> Result<(), String> {
 
 /// Remove o registro **e** o config dir — é lá que mora a credencial daquela conta, e deixá-la
 /// para trás num diretório órfão seria pior do que apagar.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_profile(profile_id: String) -> Result<(), String> {
     let mut store = with_defaults(load());
     let profile = store

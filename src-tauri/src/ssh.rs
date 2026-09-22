@@ -33,13 +33,13 @@ pub fn connections() -> Vec<SshConnection> {
     load().connections
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ssh_connections() -> Vec<SshConnection> {
     connections()
 }
 
 /// Cadastra ou atualiza. `id` vazio nasce com um id novo — o front não precisa inventar um.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_ssh_connection(mut connection: SshConnection) -> Result<SshConnection, String> {
     if connection.host.trim().is_empty() || connection.user.trim().is_empty() {
         return Err("Host e usuário são obrigatórios.".into());
@@ -72,7 +72,7 @@ pub fn save_ssh_connection(mut connection: SshConnection) -> Result<SshConnectio
     Ok(connection)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn remove_ssh_connection(id: String) -> Result<(), String> {
     let mut store = load();
     store.connections.retain(|item| item.id != id);
@@ -91,7 +91,7 @@ fn normalize_drive(value: &str) -> String {
 
 /// Abre uma conexão de verdade e volta o que a máquina respondeu. É o botão "Testar conexão": sem
 /// ele, o primeiro sinal de chave errada seria um terminal que não abre.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn test_ssh_connection(connection: SshConnection) -> Result<String, String> {
     let mut args = connection.ssh_args();
     args.push("echo omni-ok; uname -a".into());
@@ -139,7 +139,7 @@ fn drive_mounted(drive: &str) -> bool {
     std::path::Path::new(&format!("{drive}\\")).is_dir()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ssh_mount_status(id: String) -> Result<MountStatus, String> {
     let connection = find(&id).ok_or("Conexão SSH não encontrada.")?;
     Ok(MountStatus {
@@ -153,7 +153,7 @@ pub fn ssh_mount_status(id: String) -> Result<MountStatus, String> {
 /// Monta (se preciso) e devolve o caminho local do projeto. Idempotente: já montado só confirma.
 ///
 /// O SSHFS-Win aceita o mesmo formato de destino do `sshfs` de Linux, com a porta depois de `!`.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ssh_mount(id: String) -> Result<String, String> {
     let connection = find(&id).ok_or("Conexão SSH não encontrada.")?;
     if drive_mounted(&connection.drive) {
@@ -191,7 +191,7 @@ pub fn ssh_mount(id: String) -> Result<String, String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn ssh_unmount(id: String) -> Result<(), String> {
     let connection = find(&id).ok_or("Conexão SSH não encontrada.")?;
     if !drive_mounted(&connection.drive) {
