@@ -14,6 +14,16 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.5.2",
+    date: "2026-09-22",
+    changes: [
+      "O terminal responde na hora ao que você digita: o atraso entre a tecla e a letra na tela praticamente sumiu.",
+      "A janela não trava mais de tempos em tempos enquanto o painel Git consulta o repositório — isso atrapalhava justamente quem estava digitando.",
+      "Os avisos da seção Atenção param de reaparecer depois de lidos. Agora eles só voltam quando o agente termina algo novo, pede aprovação ou esbarra num limite.",
+      "Renomear uma aba não reinicia mais o terminal dela.",
+    ],
+  },
+  {
     version: "0.5.1",
     date: "2026-09-21",
     changes: [
