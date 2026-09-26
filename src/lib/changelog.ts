@@ -21,6 +21,7 @@ export const CHANGELOG: EntradaChangelog[] = [
       "Contas esgotadas voltam a ficar disponíveis sozinhas no horário de renovação e podem ser usadas novamente na mesma conversa.",
       "O celular e a página para computador agora mostram também o histórico de conversas do Claude e do Codex, com busca por conversa.",
       "Na página para computador, ficou mais fácil rolar as listas, trocar de projeto com uma conversa aberta e voltar para a tela anterior. O seletor Plano/Auto também aparece no campo de mensagem.",
+      "Nova tentativa de resolver o caso de CLI instalada que o app não encontrava: agora ele procura em muito mais lugares (nvm, fnm, Volta, pnpm, bun, asdf, mise, Scoop, WinGet, Homebrew, entre outros), confere de novo a cada detecção e repassa esse caminho para os terminais que abre. Se ainda assim faltar alguma, avise em qual gerenciador ela foi instalada.",
     ],
   },
   {

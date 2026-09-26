@@ -5,35 +5,140 @@
 //! app depois, até a próxima sessão. Resultado: a CLI está instalada, funciona no terminal, e o
 //! OMNI jura que não existe. Era preciso editar o PATH na mão.
 //!
-//! Acrescentar as pastas conhecidas resolve tanto a detecção quanto a execução: o shell da PTY
-//! herda o `PATH` de quem o abriu, então quem amplia é o app **e** o engine, cada um na subida.
+//! Acrescentar as pastas conhecidas resolve tanto a detecção quanto a execução: app e engine
+//! ampliam na subida, e o app repassa seu PATH atualizado a cada terminal que abre.
 
-use std::{env, ffi::OsString, path::PathBuf};
+use std::{
+    cmp::Reverse,
+    env,
+    ffi::OsString,
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn home() -> Option<PathBuf> {
     let chave = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     env::var_os(chave).map(PathBuf::from).filter(|caminho| !caminho.as_os_str().is_empty())
 }
 
+fn env_path(chave: &str, sufixo: &str) -> Option<PathBuf> {
+    env::var_os(chave)
+        .map(PathBuf::from)
+        .filter(|caminho| !caminho.as_os_str().is_empty())
+        .map(|caminho| if sufixo.is_empty() { caminho } else { caminho.join(sufixo) })
+}
+
+/// `nvm` e `fnm` põem os pacotes globais dentro da versão do Node. Apps abertos pelo Finder,
+/// Dock ou Explorer não recebem o shell hook que seleciona essa versão, então procuramos os bins
+/// instalados e preferimos a versão numericamente mais nova como fallback.
+fn bins_versionados(root: &Path, sufixo: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir(root) else { return Vec::new() };
+    let mut versions: Vec<_> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.path())
+        .collect();
+    let version = |path: &PathBuf| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .trim_start_matches('v')
+            .split('.')
+            .map(|part| part.parse::<u64>().unwrap_or_default())
+            .collect::<Vec<_>>()
+    };
+    versions.sort_by_key(|path| Reverse(version(path)));
+    versions.into_iter().map(|path| path.join(sufixo)).collect()
+}
+
 /// Pastas candidatas, na ordem em que entram no PATH. Só isto muda quando um instalador novo
 /// aparece — o resto do módulo é mecânica.
 pub fn locais_conhecidos() -> Vec<PathBuf> {
     let mut locais = Vec::new();
+
+    // Configuração explícita ganha dos defaults. São diretórios, nunca comandos vindos da UI.
+    for (variavel, sufixo) in [
+        ("BUN_INSTALL", "bin"),
+        ("VOLTA_HOME", "bin"),
+        ("PNPM_HOME", ""),
+        ("DENO_INSTALL", "bin"),
+        ("CARGO_HOME", "bin"),
+        ("ASDF_DATA_DIR", "shims"),
+        ("MISE_DATA_DIR", "shims"),
+        ("FNM_MULTISHELL_PATH", ""),
+        ("NVM_SYMLINK", ""),
+        ("XDG_BIN_HOME", ""),
+        ("ChocolateyInstall", "bin"),
+    ] {
+        if let Some(path) = env_path(variavel, sufixo) { locais.push(path); }
+    }
+    for variavel in ["NPM_CONFIG_PREFIX", "npm_config_prefix"] {
+        if let Some(prefixo) = env_path(variavel, "") {
+            locais.push(if cfg!(windows) { prefixo } else { prefixo.join("bin") });
+        }
+    }
+
     if let Some(home) = home() {
-        // Instalador nativo do Claude Code (`claude.exe`), e convenção geral no Linux/macOS.
+        // Instaladores nativos de Claude/Codex e convenções de gerenciadores de pacotes.
         locais.push(home.join(".local").join("bin"));
         locais.push(home.join(".bun").join("bin"));
+        locais.push(home.join(".volta").join("bin"));
+        locais.push(home.join(".cargo").join("bin"));
+        locais.push(home.join(".asdf").join("shims"));
+        locais.push(home.join(".nodenv").join("shims"));
+        locais.push(home.join(".local").join("share").join("mise").join("shims"));
+        locais.push(home.join(".local").join("share").join("pnpm"));
+        locais.push(home.join(".yarn").join("bin"));
+        locais.push(home.join(".cursor").join("bin"));
+
+        let nvm = env_path("NVM_DIR", "").unwrap_or_else(|| home.join(".nvm"));
+        locais.extend(bins_versionados(&nvm.join("versions").join("node"), Path::new("bin")));
+
         #[cfg(windows)]
         {
             // `npm i -g` no Windows (Codex, Gemini).
-            if let Some(appdata) = env::var_os("APPDATA") { locais.push(PathBuf::from(appdata).join("npm")); }
+            if let Some(appdata) = env::var_os("APPDATA").map(PathBuf::from) {
+                locais.push(appdata.join("npm"));
+                // nvm-windows guarda um npm global em cada versão quando o symlink corrente não
+                // chegou ao ambiente do Explorer.
+                locais.extend(bins_versionados(&appdata.join("nvm"), Path::new("")));
+                locais.extend(bins_versionados(&appdata.join("fnm").join("node-versions"), Path::new("installation")));
+            }
+            if let Some(nvm_home) = env_path("NVM_HOME", "") {
+                locais.extend(bins_versionados(&nvm_home, Path::new("")));
+            }
+            if let Some(fnm_dir) = env_path("FNM_DIR", "") {
+                locais.extend(bins_versionados(&fnm_dir.join("node-versions"), Path::new("installation")));
+            }
             // Instalador do CLI do Cursor (`agent.cmd`).
-            if let Some(local) = env::var_os("LOCALAPPDATA") { locais.push(PathBuf::from(local).join("cursor-agent")); }
+            if let Some(local) = env::var_os("LOCALAPPDATA").map(PathBuf::from) {
+                locais.push(local.join("cursor-agent"));
+                locais.push(local.join("pnpm"));
+                locais.push(local.join("Microsoft").join("WinGet").join("Links"));
+                locais.push(local.join("nvs").join("default"));
+            }
+            locais.push(home.join("scoop").join("shims"));
+            if let Some(program_files) = env::var_os("ProgramFiles") {
+                locais.push(PathBuf::from(program_files).join("nodejs"));
+            }
         }
         #[cfg(not(windows))]
         {
             locais.push(home.join(".npm-global").join("bin"));
-            locais.push(home.join(".volta").join("bin"));
+            locais.push(home.join(".nix-profile").join("bin"));
+            let xdg_data = env_path("XDG_DATA_HOME", "").unwrap_or_else(|| home.join(".local").join("share"));
+            locais.extend(bins_versionados(&xdg_data.join("fnm").join("node-versions"), Path::new("installation/bin")));
+            if let Some(fnm_dir) = env_path("FNM_DIR", "") {
+                locais.extend(bins_versionados(&fnm_dir.join("node-versions"), Path::new("installation/bin")));
+            }
+            #[cfg(target_os = "macos")]
+            {
+                locais.push(home.join("Library").join("pnpm"));
+                locais.extend(bins_versionados(
+                    &home.join("Library").join("Application Support").join("fnm").join("node-versions"),
+                    Path::new("installation/bin"),
+                ));
+            }
         }
     }
     #[cfg(not(windows))]
@@ -41,6 +146,9 @@ pub fn locais_conhecidos() -> Vec<PathBuf> {
         locais.push(PathBuf::from("/usr/local/bin"));
         // Homebrew no Apple Silicon fica fora do PATH de app aberto pelo Finder.
         locais.push(PathBuf::from("/opt/homebrew/bin"));
+        locais.push(PathBuf::from("/opt/local/bin"));
+        locais.push(PathBuf::from("/home/linuxbrew/.linuxbrew/bin"));
+        locais.push(PathBuf::from("/snap/bin"));
     }
     locais
 }
@@ -110,10 +218,26 @@ mod tests {
         let locais = locais_conhecidos();
         let tem = |trecho: &str| locais.iter().any(|caminho| caminho.to_string_lossy().replace('\\', "/").contains(trecho));
         assert!(tem(".local/bin"), "instalador nativo do Claude Code");
+        assert!(tem(".volta/bin"), "Volta");
+        assert!(tem(".asdf/shims"), "asdf");
         #[cfg(windows)]
         {
             assert!(tem("npm"), "npm global (Codex)");
+            assert!(tem("pnpm"), "pnpm global");
             assert!(tem("cursor-agent"), "CLI do Cursor");
         }
+    }
+
+    #[test]
+    fn versoes_do_node_entram_da_mais_nova_para_a_mais_antiga() {
+        let dir = tempfile::tempdir().unwrap();
+        for version in ["v9.1.0", "v20.12.2", "v18.20.0"] {
+            std::fs::create_dir_all(dir.path().join(version).join("bin")).unwrap();
+        }
+        let bins = bins_versionados(dir.path(), Path::new("bin"));
+        let nomes: Vec<_> = bins.iter()
+            .map(|path| path.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(nomes, ["v20.12.2", "v18.20.0", "v9.1.0"]);
     }
 }

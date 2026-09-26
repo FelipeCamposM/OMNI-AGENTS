@@ -82,13 +82,19 @@ pub fn spawn_terminal(
     conversation_id: Option<String>,
     external_session_id: Option<String>,
 ) -> EngineResponse {
+    // A CLI pode ter sido instalada depois que o app/engine abriu. Revarre os locais conhecidos e
+    // envia o PATH atual ao engine, inclusive quando ele é um processo antigo ainda em execução.
+    omni_core::cli_path::ampliar_path();
     // O profile decide o config dir, e o config dir decide a conta. Resolver aqui (e não na UI)
     // mantém o mapeamento provider -> env var num lugar só.
     let profile = profile_id
         .as_deref()
         .and_then(crate::profiles::find)
         .or_else(|| provider.as_deref().and_then(crate::profiles::preferred));
-    let env = profile.as_ref().map(crate::profiles::env_for).unwrap_or_default();
+    let mut env = profile.as_ref().map(crate::profiles::env_for).unwrap_or_default();
+    if let Some(path) = env::var_os("PATH") {
+        env.push(("PATH".into(), path.to_string_lossy().into_owned()));
+    }
     if let Some(profile) = profile.as_ref() {
         crate::profiles::touch(&profile.id);
     }
@@ -162,6 +168,8 @@ pub fn wsl_distros() -> Vec<String> {
 #[tauri::command(async)]
 pub fn agent_cli_statuses(project_path: Option<String>) -> Vec<AgentCliStatus> {
     let _ = &project_path;
+    // Permite instalar uma CLI com o OMNI aberto: a próxima leitura da tela já enxerga o binário.
+    omni_core::cli_path::ampliar_path();
     AGENT_CLIS
         .into_iter()
         .map(|(id, label, candidates, _)| {
@@ -188,6 +196,7 @@ pub fn agent_cli_statuses(project_path: Option<String>) -> Vec<AgentCliStatus> {
 
 #[tauri::command(async)]
 pub fn connect_agent_cli(id: String, profile_id: Option<String>) -> Result<(), String> {
+    omni_core::cli_path::ampliar_path();
     let (_, _, candidates, arguments) = AGENT_CLIS
         .into_iter()
         .find(|(cli_id, ..)| *cli_id == id)
