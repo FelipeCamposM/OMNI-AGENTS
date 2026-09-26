@@ -37,6 +37,9 @@ export function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>();
   // Para onde o "fechar" das Configurações volta: a tela de antes, com o workspace intacto no reducer.
   const [viewBeforeSettings, setViewBeforeSettings] = useState<Exclude<View, "settings">>("workspace");
+  // Mesma ideia para o Histórico. Aberto por cima das Configurações, volta para a tela de antes
+  // delas — senão fechar o histórico reabriria as Configurações, que o usuário já tinha deixado.
+  const [viewBeforeHistory, setViewBeforeHistory] = useState<Exclude<View, "history">>("workspace");
   const { settings, updateSettings, resetSettings } = useSettings();
   // Memo: o objeto novo a cada render faria o `useWorkspace` recalcular a projeção à toa.
   const temaPublicado = useMemo(
@@ -68,6 +71,18 @@ export function App() {
     setView(viewBeforeSettings);
   }
 
+  function openHistory() {
+    if (view === "history") return;
+    const origem = view === "settings" ? viewBeforeSettings : view;
+    // Histórico → Configurações → Histórico: mantém a volta que o primeiro Histórico já guardou.
+    if (origem !== "history") setViewBeforeHistory(origem);
+    setView("history");
+  }
+
+  function closeHistory() {
+    setView(viewBeforeHistory);
+  }
+
   // O engine devolve em `session.name` o nome da **conversa** (o primeiro prompt, ou o que o usuário
   // renomeou). Espelhar aqui é o que faz a aba deixar de ser "Claude · agent" sem cada tela precisar
   // saber o que é conversa. O reducer ignora quando o nome não mudou.
@@ -90,17 +105,17 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (view !== "settings") return;
+    if (view !== "settings" && view !== "history") return;
     function onKeyDown(event: KeyboardEvent) {
       // Esc dentro de campo/menu é do campo; só fecha a tela se ninguém mais tratou a tecla.
       if (event.defaultPrevented || (event.target as HTMLElement | null)?.closest?.("input, textarea, [role=listbox]")) return;
       if (!matchesShortcut(event, "closeSettings")) return;
       event.preventDefault();
-      setView(viewBeforeSettings);
+      setView(view === "settings" ? viewBeforeSettings : viewBeforeHistory);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [view, viewBeforeSettings]);
+  }, [view, viewBeforeSettings, viewBeforeHistory]);
 
   function focusSession(item: AttentionItem) {
     dispatch({
@@ -209,7 +224,7 @@ export function App() {
         )}
         showSettings={view === "settings"}
         showHistory={view === "history"}
-        onOpenHistory={() => setView("history")}
+        onOpenHistory={openHistory}
         onHome={() => setView("workspace")}
         onAddProject={(path) => {
           rememberProject(path);
@@ -275,7 +290,7 @@ export function App() {
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <main className="flex-1 min-h-0">
           {view === "history" ? (
-            <HistoryView onResume={resumeHistory} />
+            <HistoryView onResume={resumeHistory} onClose={closeHistory} />
           ) : view === "settings" ? (
             <div className="h-full overflow-y-auto px-6 py-6 [scrollbar-gutter:stable]">
               <div className="w-full mx-auto max-w-3xl">

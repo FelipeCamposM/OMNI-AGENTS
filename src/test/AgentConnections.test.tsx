@@ -140,6 +140,20 @@ describe("AgentConnections", () => {
     expect(within(builtin).queryByRole("button", { name: "Remover" })).toBeNull();
   });
 
+  it("mostra o e-mail de cada conta conectada para distinguir os perfis", async () => {
+    listAgentClis.mockResolvedValue([agent()]);
+    listProfiles.mockResolvedValue([
+      profile({ email: "pessoal@example.com" }),
+      profile({ id: "emailuber", name: "EmailUber", builtin: false, email: "uber@example.com" }),
+    ]);
+
+    render(<AgentConnections />);
+
+    const conta = (await screen.findByText("EmailUber")).closest("li") as HTMLElement;
+    expect(within(conta).getByText("uber@example.com")).toBeInTheDocument();
+    expect(screen.getByText("pessoal@example.com")).toBeInTheDocument();
+  });
+
   it("criar conta grava o perfil e já abre o login dele", async () => {
     listAgentClis.mockResolvedValue([agent()]);
     listProfiles.mockResolvedValue([profile()]);

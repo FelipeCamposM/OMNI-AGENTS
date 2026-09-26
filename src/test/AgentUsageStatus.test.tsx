@@ -92,3 +92,32 @@ it("tempo relativo", () => {
   expect(timeAgo(0, 30_000)).toBe("agora");
   expect(timeAgo(0, 2 * 3600_000)).toBe("há 2 h");
 });
+
+it("rodapé diz de qual conta é o limite, relendo perfis criados depois", async () => {
+  let chamadas = 0;
+  vi.mocked(invoke).mockReset().mockImplementation(async (command) => {
+    if (command === "list_profiles") {
+      chamadas += 1;
+      // Primeira leitura é de antes da conta nova existir.
+      return chamadas === 1
+        ? [{ id: "claude-padrao", provider: "claude", name: "Padrão", last_used_at_ms: 1 }]
+        : [
+            { id: "claude-padrao", provider: "claude", name: "Padrão", last_used_at_ms: 1 },
+            { id: "emailuber", provider: "claude", name: "EmailUber", last_used_at_ms: 2 },
+          ];
+    }
+    if (command === "agent_runtime") return null;
+    return { status: "available", observed_at_ms: Date.now(), primary: janela(10), secondary: janela(5), reason: null };
+  });
+
+  const sessions = { s1: sessao({ provider: "claude", profile_id: "emailuber" }) };
+  render(
+    <SessionProvidersContext.Provider value={sessions}>
+      <AgentUsageStatus engineOnline activeSessionId="s1" />
+    </SessionProvidersContext.Provider>
+  );
+
+  expect(await screen.findByText("EmailUber")).toBeInTheDocument();
+  expect(screen.getByLabelText("Uso do CLAUDE — conta EmailUber")).toBeInTheDocument();
+  expect(invoke).toHaveBeenCalledWith("account_usage", { profileId: "emailuber", refresh: false });
+});

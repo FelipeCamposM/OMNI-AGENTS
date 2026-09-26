@@ -4,6 +4,8 @@ import remarkGfm from "remark-gfm";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button, Input, SegmentedControl, Select } from "../../components/ui";
 import { AgentIcon } from "../../components/ui/AgentIcon";
+import { CloseIcon } from "../../components/ui/PixelIcon";
+import { shortcutFor } from "../../lib/shortcuts";
 import { baseName } from "../files/filesService";
 import { EditableLabel } from "../../components/ui/EditableLabel";
 import { listConversations, renameConversation, type Conversation } from "../terminal/terminalService";
@@ -60,11 +62,13 @@ interface HistoryViewProps {
   lock?: { provider: HistoryProvider; cwd: string };
   /** Botão extra no cabeçalho (ex.: voltar ao seletor de CLI). */
   actions?: ReactNode;
+  /** Tela cheia: volta para onde estava, igual às Configurações. Ausente quando embutido. */
+  onClose?: () => void;
 }
 
 /** Conversas gravadas pelo Claude Code e pelo Codex em todas as contas cadastradas, com o OMNI
  *  aberto ou não. Lê direto dos transcripts do CLI — nada é copiado. */
-export function HistoryView({ onResume, lock, actions }: HistoryViewProps) {
+export function HistoryView({ onResume, lock, actions, onClose }: HistoryViewProps) {
   const [provider, setProvider] = useState<HistoryProvider>(lock?.provider ?? "claude");
   const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
   const [reload, setReload] = useState(0);
@@ -130,6 +134,19 @@ export function HistoryView({ onResume, lock, actions }: HistoryViewProps) {
           Atualizar
         </Button>
         {actions}
+        {onClose && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={onClose}
+            aria-label="Fechar histórico"
+            title={`Fechar histórico (${shortcutFor("closeSettings")})`}
+          >
+            <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />
+            Fechar
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2">

@@ -1,7 +1,8 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MobileSettings } from "../features/mobile/MobileSettings";
+import { corDoQr, linkDoPc, MobileSettings } from "../features/mobile/MobileSettings";
+import { PALETAS } from "../lib/palettes";
 
 const invoke = vi.mocked((await import("@tauri-apps/api/core")).invoke);
 const openUrl = vi.mocked((await import("@tauri-apps/plugin-opener")).openUrl);
@@ -81,5 +82,50 @@ describe("aba Celular: endereço do QR", () => {
     const link = await screen.findByRole("button", { name: "http://100.64.0.10:47322" });
     await act(async () => { await userEvent.click(link); });
     expect(await screen.findByText(/Não consegui abrir o navegador/)).toBeInTheDocument();
+  });
+});
+
+describe("aba Celular: acesso pelo computador", () => {
+  beforeEach(() => invoke.mockReset());
+
+  it("deriva o link /pc do link do QR, com o mesmo token", () => {
+    expect(linkDoPc("https://pc.tail.ts.net/#t=abc123")).toBe("https://pc.tail.ts.net/pc/#t=abc123");
+    expect(linkDoPc("http://100.64.0.10:47322#t=abc")).toBe("http://100.64.0.10:47322/pc/#t=abc");
+    expect(linkDoPc(null)).toBeNull();
+    expect(linkDoPc("https://pc.tail.ts.net/?x=1")).toBeNull();
+  });
+
+  it("mostra o endereço do computador e copia o link com o acesso", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    invoke.mockImplementation(async (comando: string) => comando === "mobile_settings" ? status() : undefined);
+
+    render(<MobileSettings />);
+
+    expect(await screen.findByText("No notebook ou em outro computador")).toBeInTheDocument();
+    // Na tela vai só o endereço; o token fica no que é copiado.
+    expect(screen.getByText("http://100.64.0.10:47322/pc/")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Copiar link do computador" }));
+    expect(writeText).toHaveBeenCalledWith("http://100.64.0.10:47322/pc/#t=abc123");
+    expect(screen.getByRole("button", { name: "Link do computador copiado" })).toBeInTheDocument();
+  });
+});
+
+describe("aba Celular: QR com a cor do app", () => {
+  /** Contraste WCAG entre duas cores hex. */
+  function contraste(a: string, b: string) {
+    const lum = (hex: string) => {
+      const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+        .map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+    };
+    const [claro, escuro] = [lum(a), lum(b)].sort((x, y) => y - x);
+    return (claro + 0.05) / (escuro + 0.05);
+  }
+
+  it("toda paleta gera módulos legíveis para a câmera no fundo branco", () => {
+    for (const paleta of PALETAS) {
+      expect(contraste(corDoQr(paleta.id), "#FFFFFF"), paleta.id).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });

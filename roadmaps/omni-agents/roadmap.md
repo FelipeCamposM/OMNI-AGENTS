@@ -2317,3 +2317,69 @@ Suíte: 315 testes de front, 61 do engine, 12 do core, 16 do Tauri.
   `x64-setup.exe` baixa (200, 6,7 MB). Suíte: 327 testes de front + `cargo test --workspace`.
 - [ ] Não conferido no app instalado: se alguma CLI continuar invisível, falta saber por qual
   gerenciador ela foi instalada.
+
+## Failover que não voltava a tentar + conta no rodapé (2026-09-26, sem release)
+
+- **O que aconteceu:** às 18:28 a conta Padrão do Claude estourou o limite. A EmailUber já tinha login
+  desde 18:18, mas a aba ficou em "sem outra conta". Em `TerminalPane.tsx`, a flag
+  `failoverInProgress` só era ligada: depois de um "sem outra conta" ou de um "troca automática
+  falhou", aquela aba nunca mais tentava. Qualquer detecção de limite que acontecesse antes da conta
+  nova existir travava a troca de vez.
+- [x] `src/features/terminal/TerminalPane.tsx`: quando não acha conta ou falha, volta a tentar a cada
+  `FAILOVER_RETRY_MS` (30 s) enquanto o aviso de limite continuar na tela. Nessas novas tentativas o
+  status não pisca. Teste novo em `src/test/TerminalPane.test.tsx`.
+- [x] `src/features/terminal/AgentUsageStatus.tsx`: o rodapé mostra o nome da conta ao lado de
+  CLAUDE/CODEX (também no tooltip e no aria-label). Se a conta for criada depois da primeira leitura,
+  a lista de perfis é lida de novo. Teste novo em `src/test/AgentUsageStatus.test.tsx`.
+- [x] **Causa real encontrada depois:** `omni_core::Profile.authenticated` tinha `#[serde(skip)]`,
+  e isso também tirava o campo do JSON enviado ao front. Toda conta chegava sem `authenticated`, o
+  failover (que filtra por ele) nunca tinha conta elegível, e Configurações mostrava "sem login".
+  Agora é `skip_deserializing` + `skip_serializing_if` (vai para o front, não entra no
+  `profiles.json`). Teste `computed_fields_reach_the_front_but_not_the_store` em
+  `src-tauri/src/profiles.rs`.
+- [x] Campo calculado `email` no `Profile`: Claude pelo `oauthAccount.emailAddress` do `.claude.json`,
+  Codex pela claim `email` do `id_token` do `auth.json` (só o payload é decodificado, nada é
+  guardado). Aparece em Configurações → Agentes, no diálogo "trocar conta / IA" e no tooltip do
+  rodapé. Testes em `profiles.rs` e `src/test/AgentConnections.test.tsx`.
+- Nota: `npm run dev` usa outra pasta de dados (`com.omni.agents.dev`). Contas criadas no app
+  instalado não aparecem no dev; a EmailUber foi copiada à mão para o `profiles.json` do dev.
+- [ ] Entrar numa release (changelog em linguagem de usuário).
+- [x] Histórico fecha igual às Configurações: botão "Fechar" no topo (`HistoryView` recebe `onClose`)
+  e Esc (atalho `closeSettings`, agora chamado "Fechar configurações e histórico"). A volta é para a
+  tela de antes (`viewBeforeHistory` em `src/App.tsx`); aberto por cima das Configurações, volta
+  para a tela de antes delas. Teste em `src/test/HistoryView.test.tsx`.
+- [x] Failover funcionou no dev (Padrão → EmailUber), mas em seguida a aba mostrou "sem outra conta":
+  o `--resume` reexibe o "Usage limit reached" da conta anterior e o engine, que lê a tela, o
+  atribuiu à conta nova. `staleLimitProfileRef` em `TerminalPane.tsx` ignora o limite da conta
+  recém-assumida até o aviso sair da tela uma vez. Limitação: um limite real da conta nova antes
+  disso passa despercebido. Teste em `TerminalPane.test.tsx`.
+- Nota: o "Histórico não fecha" relatado era o app instalado (0.5.3), aberto ao lado do dev.
+- [x] Retomada **silenciosa** depois do failover, por escolha do usuário. O prompt automático
+  ("retome a tarefa pendente") aparecia no terminal como se fosse do usuário e, depois de um simples
+  "ola" sem resposta, fez o agente sair rodando comandos. Agora `TerminalPane.tsx` roda só o
+  `claude --resume <id>` / `codex resume <id>`, e a barra da aba mostra
+  "conta trocada: Padrão → EmailUber" (os detalhes e o horário de reset ficam no tooltip). Quem
+  continua é o usuário. Uma tarefa longa interrompida pelo limite espera um "continue".
+- [x] Configurações → Celular, passo 3: bloco "No notebook ou em outro computador" com o endereço
+  `/pc/` e o botão "Copiar link do computador". O link é o do QR com `/pc` no caminho e o mesmo
+  token no fragmento (`linkDoPc` em `src/features/mobile/MobileSettings.tsx`). Na tela aparece só o
+  endereço; o token vai apenas no que é copiado. O notebook precisa estar no mesmo Tailscale. Testes
+  em `src/test/MobileSettings.test.tsx`.
+- [x] Visual da aba Celular refeito (`src/features/mobile/MobileSettings.tsx`). Cabeçalho em card
+  com a logo, um selo de estado (no ar / ligando… / só neste PC / desligado / com erro) e uma barra
+  de 4 passos. Cada passo virou um card `glass`, com número que vira ✓. O modo (Direto/HTTPS) virou
+  dois cartões clicáveis, e o radio continua lá para teclado e leitor de tela. O QR ganhou a cor da
+  paleta, moldura em degradê e a logo no centro (correção "H"). A cor dos módulos é o tom escuro da
+  paleta clara (`corDoQr`); um teste garante contraste ≥ 4,5:1 em toda paleta. O `Card` das
+  Configurações saiu do `SettingsView` para `src/components/ui/Card.tsx`, e a aba recebe `accent`
+  por prop.
+
+## Release v0.5.4 (2026-09-26)
+
+- [x] Junta as correções acima: failover que funciona de verdade (`authenticated` chegando ao front),
+  retomada silenciosa, conta e e-mail visíveis, Histórico que fecha com Esc/botão, aba Celular nova
+  com link para computador. Changelog 0.5.4 em linguagem de usuário.
+- [x] Verificado antes da tag: `version:check`, `typecheck`, 336 testes de front,
+  `cargo test --workspace`.
+- [ ] Tag `v0.5.4` → workflow `release.yml` deixa o Release em rascunho → publicar como release
+  normal (não pre-release) e conferir `releases/latest/download/latest.json`.

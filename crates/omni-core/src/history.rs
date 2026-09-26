@@ -224,7 +224,7 @@ mod tests {
     use serde_json::json;
 
     fn profile(provider: &str, dir: &Path) -> Profile {
-        Profile { id: format!("{provider}-p"), provider: provider.into(), name: "Padrão".into(), config_dir: dir.to_string_lossy().into_owned(), builtin: true, created_at_ms: 0, last_used_at_ms: None, authenticated: false }
+        Profile { id: format!("{provider}-p"), provider: provider.into(), name: "Padrão".into(), config_dir: dir.to_string_lossy().into_owned(), builtin: true, created_at_ms: 0, last_used_at_ms: None, authenticated: false, email: None }
     }
 
     fn lines(values: &[Value]) -> String {

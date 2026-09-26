@@ -98,6 +98,9 @@ export function AgentSwitcher({
                   />
                   <span className="min-w-0 flex-1 truncate text-[11px] text-text-secondary">
                     {profile.name}
+                    {profile.email && (
+                      <span className="ml-2 text-[10px] text-text-primary">{profile.email}</span>
+                    )}
                     <span className="ml-2 text-[10px] text-text-muted">
                       {profile.authenticated ? "conectado" : "sem login"}
                     </span>

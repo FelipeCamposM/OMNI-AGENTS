@@ -257,13 +257,91 @@ describe("TerminalPane — failover automático de conta", () => {
     await waitFor(() => expect(engine.stopTerminal).toHaveBeenCalledWith("s1"));
     await waitFor(() => expect(engine.spawnTerminal).toHaveBeenCalledWith(
       expect.objectContaining({
-        initialCommand: expect.stringMatching(
-          /^claude --resume native-1 "Continue exatamente de onde a conta anterior parou\./
-        ),
+        // Retomada silenciosa: nada além do comando de resume é digitado no terminal.
+        initialCommand: "claude --resume native-1",
         profileId: "trabalho",
         conversationId: "conv-1",
       })
     ));
-    expect(await screen.findByRole("status")).toHaveTextContent("conta: Trabalho");
+    expect(await screen.findByRole("status")).toHaveTextContent("conta trocada: Pessoal → Trabalho");
+  });
+
+  it("tenta de novo depois de 'sem outra conta' e usa a conta conectada nesse meio-tempo", async () => {
+    const realNow = Date.now.bind(Date);
+    let deslocamento = 0;
+    const agora = vi.spyOn(Date, "now").mockImplementation(() => realNow() + deslocamento);
+    const pessoal = {
+      id: "pessoal", provider: "claude", name: "Pessoal", config_dir: "C:/claude/pessoal",
+      builtin: true, created_at_ms: 0, last_used_at_ms: 1, authenticated: true,
+    };
+    const trabalho = {
+      id: "trabalho", provider: "claude", name: "Trabalho", config_dir: "C:/claude/trabalho",
+      builtin: false, created_at_ms: 1, last_used_at_ms: null, authenticated: true,
+    };
+    engine.accountUsage.mockResolvedValue(null);
+    engine.listProfiles.mockResolvedValueOnce([pessoal]).mockResolvedValue([pessoal, trabalho]);
+    engine.listAgentClis.mockResolvedValue([
+      { id: "claude", label: "Claude", command: "claude", path: "C:/bin/claude.exe", available: true, authenticated: true },
+    ]);
+    engine.planSwitch.mockResolvedValue({
+      conversation_id: "conv-1", title: "Conversa", provider: "claude", profile_id: "trabalho",
+      initial_command: "claude --resume native-1", external_session_id: "native-1",
+      handoff: false, handoff_path: null, notice: null,
+    });
+    engine.spawnTerminal.mockResolvedValue({ id: "s2", name: "Conversa", state: "working" });
+    engine.terminalSnapshot.mockImplementation(async (_id: string, since: number) => snapshot(since, {
+      state: "answered", notice: "usage_limit", provider: "claude", profile_id: "pessoal",
+      conversation_id: "conv-1", external_session_id: "native-1",
+    }));
+
+    try {
+      renderPane();
+      expect(await screen.findByRole("status")).toHaveTextContent("sem outra conta");
+      expect(engine.planSwitch).not.toHaveBeenCalled();
+
+      deslocamento = 31_000;
+      await waitFor(() => expect(engine.planSwitch).toHaveBeenCalledWith(
+        expect.objectContaining({ conversationId: "conv-1", targetProfileId: "trabalho" })
+      ));
+      expect(await screen.findByRole("status")).toHaveTextContent("conta trocada: Pessoal → Trabalho");
+    } finally {
+      agora.mockRestore();
+    }
+  });
+
+  it("o aviso antigo reexibido ao retomar não dispara outra troca na conta nova", async () => {
+    engine.accountUsage.mockResolvedValue(null);
+    engine.listProfiles.mockResolvedValue([
+      { id: "pessoal", provider: "claude", name: "Pessoal", config_dir: "C:/p", builtin: true, created_at_ms: 0, last_used_at_ms: 1, authenticated: true },
+      { id: "trabalho", provider: "claude", name: "Trabalho", config_dir: "C:/t", builtin: false, created_at_ms: 1, last_used_at_ms: null, authenticated: true },
+    ]);
+    engine.listAgentClis.mockResolvedValue([
+      { id: "claude", label: "Claude", command: "claude", path: "C:/bin/claude.exe", available: true, authenticated: true },
+    ]);
+    engine.planSwitch.mockResolvedValue({
+      conversation_id: "conv-1", title: "Conversa", provider: "claude", profile_id: "trabalho",
+      initial_command: "claude --resume native-1", external_session_id: "native-1",
+      handoff: false, handoff_path: null, notice: null,
+    });
+    engine.spawnTerminal.mockResolvedValue({ id: "s2", name: "Conversa", state: "working" });
+    // A conta nova também "mostra" limite: é o transcript antigo sendo reexibido pelo --resume.
+    engine.terminalSnapshot
+      .mockResolvedValueOnce(snapshot(1, {
+        state: "answered", notice: "usage_limit", provider: "claude", profile_id: "pessoal",
+        conversation_id: "conv-1", external_session_id: "native-1",
+      }))
+      .mockImplementation(async (_id: string, since: number) => snapshot(since, {
+        notice: "usage_limit", provider: "claude", profile_id: "trabalho",
+        conversation_id: "conv-1", external_session_id: "native-1",
+      }));
+
+    renderPane();
+
+    await waitFor(() => expect(engine.spawnTerminal).toHaveBeenCalled());
+    expect(await screen.findByRole("status")).toHaveTextContent("conta trocada: Pessoal → Trabalho");
+    // Várias leituras depois, ainda uma única troca e nenhum "sem outra conta".
+    await waitFor(() => expect(engine.terminalSnapshot.mock.calls.length).toBeGreaterThan(8));
+    expect(engine.planSwitch).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status")).toHaveTextContent("conta trocada: Pessoal → Trabalho");
   });
 });

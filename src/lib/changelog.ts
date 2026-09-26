@@ -14,6 +14,17 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.5.4",
+    date: "2026-09-26",
+    changes: [
+      "A troca automática de conta quando o limite acaba agora funciona de verdade: antes o app achava que nenhuma conta tinha login e ficava em \"sem outra conta\". Ele também tenta de novo sozinho se você conectar uma conta depois do limite.",
+      "Depois da troca, a conversa reabre na outra conta sem escrever nada no terminal por você. Aparece só o aviso \"conta trocada\", e você continua com a próxima mensagem.",
+      "A barra de baixo mostra qual conta está sendo usada naquela aba, e as Configurações mostram o e-mail de cada conta conectada.",
+      "O Histórico agora fecha como as Configurações: pelo botão Fechar no topo ou com Esc.",
+      "A aba Celular ficou mais bonita, com o código QR nas cores do app, e ganhou o endereço para abrir o OMNI em outro computador, como um notebook.",
+    ],
+  },
+  {
     version: "0.5.3",
     date: "2026-09-26",
     changes: [

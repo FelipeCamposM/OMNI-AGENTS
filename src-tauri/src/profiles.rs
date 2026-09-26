@@ -141,6 +141,7 @@ fn with_defaults(mut store: ProfileStore) -> ProfileStore {
             created_at_ms: now_ms(),
             last_used_at_ms: None,
             authenticated: false,
+            email: None,
         });
     }
     store
@@ -150,8 +151,57 @@ fn hydrate(mut store: ProfileStore) -> ProfileStore {
     for profile in &mut store.profiles {
         profile.authenticated =
             credential_present(&profile.provider, Path::new(&profile.config_dir));
+        profile.email = profile.authenticated.then(|| account_email(profile)).flatten();
     }
     store
+}
+
+/// E-mail da conta logada, só para a tela distinguir perfis. Nada de token sai daqui: do Claude
+/// vem do `oauthAccount` do `.claude.json`; do Codex, da claim `email` do `id_token` (JWT) do
+/// `auth.json` — decodifica só o payload, sem guardar nem repassar o token.
+fn account_email(profile: &Profile) -> Option<String> {
+    let email = match profile.provider.as_str() {
+        "claude" => {
+            let state: serde_json::Value =
+                serde_json::from_slice(&fs::read(omni_core::usage::claude_state_path(profile)).ok()?).ok()?;
+            state.pointer("/oauthAccount/emailAddress")?.as_str()?.to_owned()
+        }
+        "codex" => {
+            let auth: serde_json::Value =
+                serde_json::from_slice(&fs::read(Path::new(&profile.config_dir).join("auth.json")).ok()?).ok()?;
+            let payload = auth.pointer("/tokens/id_token")?.as_str()?.split('.').nth(1)?;
+            let claims: serde_json::Value = serde_json::from_slice(&base64url_decode(payload)?).ok()?;
+            claims.get("email")?.as_str()?.to_owned()
+        }
+        _ => return None,
+    };
+    let email = email.trim();
+    (!email.is_empty()).then(|| email.to_owned())
+}
+
+/// Base64url sem padding (payload de JWT). Pequeno demais para justificar uma dependência.
+fn base64url_decode(input: &str) -> Option<Vec<u8>> {
+    let mut bits = 0u32;
+    let mut count = 0;
+    let mut out = Vec::with_capacity(input.len() * 3 / 4);
+    for byte in input.trim_end_matches('=').bytes() {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'-' | b'+' => 62,
+            b'_' | b'/' => 63,
+            _ => return None,
+        };
+        bits = (bits << 6) | u32::from(value);
+        count += 6;
+        if count >= 8 {
+            count -= 8;
+            out.push((bits >> count) as u8);
+            bits &= (1 << count) - 1;
+        }
+    }
+    Some(out)
 }
 
 #[tauri::command(async)]
@@ -206,6 +256,7 @@ pub fn create_profile(provider: String, name: String) -> Result<Profile, String>
         created_at_ms: now_ms(),
         last_used_at_ms: None,
         authenticated: false,
+        email: None,
     };
     store.profiles.push(profile.clone());
     save(&store)?;
@@ -258,6 +309,65 @@ pub fn touch(profile_id: &str) {
 mod tests {
     use super::*;
 
+    fn sample(provider: &str, config_dir: &Path, builtin: bool) -> Profile {
+        Profile {
+            id: "p".into(),
+            provider: provider.into(),
+            name: "P".into(),
+            config_dir: config_dir.to_string_lossy().into_owned(),
+            builtin,
+            created_at_ms: 0,
+            last_used_at_ms: None,
+            authenticated: false,
+            email: None,
+        }
+    }
+
+    /// Com `serde(skip)` o front nunca recebia `authenticated`, e o failover descartava toda conta.
+    #[test]
+    fn computed_fields_reach_the_front_but_not_the_store() {
+        let mut profile = sample("claude", Path::new("C:/x"), false);
+        let stored = serde_json::to_value(&profile).expect("json");
+        assert!(stored.get("authenticated").is_none() && stored.get("email").is_none());
+
+        profile.authenticated = true;
+        profile.email = Some("a@b.com".into());
+        let sent = serde_json::to_value(&profile).expect("json");
+        assert_eq!(sent["authenticated"], true);
+        assert_eq!(sent["email"], "a@b.com");
+
+        // Um profiles.json antigo ou adulterado não consegue se declarar autenticado.
+        let read: Profile = serde_json::from_value(sent).expect("read");
+        assert!(!read.authenticated && read.email.is_none());
+    }
+
+    #[test]
+    fn account_email_reads_claude_state_and_codex_id_token() {
+        let claude = tempfile::tempdir().expect("claude dir");
+        fs::write(
+            claude.path().join(".claude.json"),
+            r#"{"oauthAccount":{"emailAddress":"uber@example.com"}}"#,
+        )
+        .expect("write");
+        assert_eq!(
+            account_email(&sample("claude", claude.path(), false)).as_deref(),
+            Some("uber@example.com")
+        );
+
+        // Payload {"email":"dev@example.com"} em base64url, sem padding.
+        let codex = tempfile::tempdir().expect("codex dir");
+        fs::write(
+            codex.path().join("auth.json"),
+            r#"{"tokens":{"id_token":"x.eyJlbWFpbCI6ImRldkBleGFtcGxlLmNvbSJ9.sig"}}"#,
+        )
+        .expect("write");
+        assert_eq!(
+            account_email(&sample("codex", codex.path(), false)).as_deref(),
+            Some("dev@example.com")
+        );
+        assert_eq!(account_email(&sample("cursor", codex.path(), false)), None);
+    }
+
     #[test]
     fn slugify_is_stable_and_avoids_collisions() {
         assert_eq!(slugify("Trabalho", &[]), "trabalho");
@@ -280,6 +390,7 @@ mod tests {
             created_at_ms: 0,
             last_used_at_ms: None,
             authenticated: false,
+            email: None,
         };
         assert!(env_for(&builtin).is_empty());
 

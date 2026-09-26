@@ -18,7 +18,14 @@ pub struct Profile {
     #[serde(default)] pub builtin: bool,
     pub created_at_ms: u64,
     #[serde(default)] pub last_used_at_ms: Option<u64>,
-    #[serde(skip)] pub authenticated: bool,
+    /// Calculado a cada leitura, nunca lido do `profiles.json`. Só `skip_deserializing` — com
+    /// `skip` o campo também não chegava ao front, que via toda conta como "sem login" e deixava o
+    /// failover sem nenhuma conta elegível. Falso não é serializado, então o arquivo segue limpo.
+    #[serde(default, skip_deserializing, skip_serializing_if = "std::ops::Not::not")]
+    pub authenticated: bool,
+    /// E-mail da conta logada, para distinguir perfis. Mesma regra: calculado, nunca persistido.
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
 }
 
 /// Env var que cada CLI lê para trocar de diretório de configuração. `None` = o provider não

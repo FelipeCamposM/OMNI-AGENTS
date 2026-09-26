@@ -24,7 +24,7 @@ export const SHORTCUTS: { id: ShortcutId; label: string; default: string }[] = [
   { id: "nextAttention", label: "Ir pro agente pedindo atenção", default: "Ctrl+Tab" },
   { id: "newBranch", label: "Criar branch a partir da atual", default: "Ctrl+Shift+B" },
   { id: "returnToApp", label: "Sair do terminal (devolve o teclado ao app)", default: "Ctrl+Shift+Space" },
-  { id: "closeSettings", label: "Fechar configurações", default: "Escape" },
+  { id: "closeSettings", label: "Fechar configurações e histórico", default: "Escape" },
 ];
 
 export type ShortcutOverrides = Partial<Record<ShortcutId, string>>;

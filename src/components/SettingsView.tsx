@@ -5,7 +5,7 @@ import { UpdateCard } from "./UpdateCard";
 import { BACKGROUND_EFFECTS, isBackgroundEffect } from "./backgrounds/registry";
 import { PALETAS } from "../lib/palettes";
 import { CHANGELOG } from "../lib/changelog";
-import { Button, Field, Input, SegmentedControl, Slider } from "./ui";
+import { Button, Card, Field, Input, SegmentedControl, Slider } from "./ui";
 import { AgentConnections } from "../features/terminal/AgentConnections";
 import { SkillsManager } from "../features/skills/SkillsManager";
 import { MobileSettings } from "../features/mobile/MobileSettings";
@@ -116,7 +116,7 @@ export function SettingsView({ settings, onChange, onReset, initialSection, proj
           {section === "aparencia" && <AparenciaSection settings={settings} onChange={onChange} />}
           {section === "agentes" && <AgentConnections />}
           {section === "skills" && <SkillsManager projectPath={projectPath} />}
-          {section === "mobile" && <MobileSettings />}
+          {section === "mobile" && <MobileSettings accent={settings.accent} />}
           {section === "atalhos" && <AtalhosSection settings={settings} onChange={onChange} />}
           {section === "sobre" && <SobreSection onReset={onReset} />}
         </div>
@@ -502,15 +502,6 @@ function Info({ label, value }: { label: string; value: string }) {
 }
 
 /* ------------------------------------------------------------- primitivas */
-
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="glass rounded-none p-5 space-y-4">
-      <h2 className="pixel-text text-text-primary text-sm">{title}</h2>
-      {children}
-    </section>
-  );
-}
 
 function Divider() {
   return <hr className="border-border-subtle/60" />;

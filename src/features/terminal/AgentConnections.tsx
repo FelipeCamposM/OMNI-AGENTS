@@ -177,6 +177,9 @@ export function AgentConnections() {
                         title={profile.config_dir}
                       >
                         {profile.name}
+                        {profile.email && (
+                          <span className="ml-2 text-[10px] text-text-primary">{profile.email}</span>
+                        )}
                         <span className="ml-2 text-[10px] text-text-muted">
                           {profile.authenticated ? "conectado" : "sem login"}
                         </span>

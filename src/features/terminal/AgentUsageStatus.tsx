@@ -118,6 +118,19 @@ export function AgentUsageStatus({ engineOnline, activeSessionId }: AgentUsageSt
   const profileId =
     session?.profile_id ?? (provider ? recente(profiles.filter(p => p.provider === provider))?.id ?? null : null);
 
+  const conta = profiles.find(p => p.id === profileId && p.name) ?? null;
+
+  // Conta criada depois que o rodapé leu a lista (ou aberta por failover) não tem nome ainda:
+  // relê uma vez por id desconhecido, senão o rodapé não diria de quem é o limite exibido.
+  useEffect(() => {
+    if (!engineOnline || !profileId || conta) return;
+    let cancelled = false;
+    void listProfiles()
+      .then(lista => { if (!cancelled && lista.some(p => p.id === profileId)) setProfiles(lista); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [engineOnline, profileId, conta]);
+
   const leitura = useCallback(async (refresh: boolean) => {
     if (!profileId) return null;
     return invoke<Usage>("account_usage", { profileId, refresh });
@@ -200,6 +213,7 @@ export function AgentUsageStatus({ engineOnline, activeSessionId }: AgentUsageSt
   const modelo = modeloCru ? nomeCurtoDoModelo(modeloCru) : null;
   const esforco = runtime?.effort ? rotuloDoEsforco(runtime.effort) : null;
   const title = [
+    conta && `Conta: ${conta.name}${conta.email ? ` (${conta.email})` : ""}`,
     modeloCru && `Modelo: ${modeloCru}${esforco ? ` · ${esforco}` : ""}`,
     runtime?.cli_version && `CLI ${runtime.cli_version}`,
     resets("5 horas", usage?.primary ?? null),
@@ -208,9 +222,14 @@ export function AgentUsageStatus({ engineOnline, activeSessionId }: AgentUsageSt
     reason,
   ].filter(Boolean).join("\n");
   return (
-    <span className="flex min-w-0 items-center gap-2 lg:gap-3 text-[11px] font-semibold text-text-primary" title={title || undefined} aria-label={`Uso do ${rotulo}`}>
+    <span className="flex min-w-0 items-center gap-2 lg:gap-3 text-[11px] font-semibold text-text-primary" title={title || undefined} aria-label={`Uso do ${rotulo}${conta ? ` — conta ${conta.name}` : ""}`}>
       <AgentIcon provider={provider} size={12} className="shrink-0" />
       <span className="hidden md:inline text-accent">{rotulo}</span>
+      {conta && (
+        <span className="max-w-32 truncate font-normal text-text-primary" title={`Conta: ${conta.name}${conta.email ? ` (${conta.email})` : ""}`} aria-label={`Conta ${conta.name}`}>
+          {conta.name}
+        </span>
+      )}
       {modelo && (
         <span className="hidden lg:inline max-w-40 truncate font-normal text-text-secondary">
           {modelo}{esforco ? ` · ${esforco}` : ""}

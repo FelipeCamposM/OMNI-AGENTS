@@ -101,6 +101,8 @@ export interface Profile {
   created_at_ms: number;
   last_used_at_ms: number | null;
   authenticated: boolean;
+  /** E-mail da conta logada, lido do que a CLI gravou. Ausente sem login ou quando a CLI não expõe. */
+  email?: string | null;
 }
 
 export async function listProfiles() {

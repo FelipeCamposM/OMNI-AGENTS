@@ -216,7 +216,7 @@ mod tests {
     }
     #[test] fn claude_state_path_follows_profile_isolation() {
         let profile = |builtin, dir: &str| crate::Profile { id:"p".into(), provider:"claude".into(), name:"n".into(),
-            config_dir: dir.into(), builtin, created_at_ms: 0, last_used_at_ms: None, authenticated: false };
+            config_dir: dir.into(), builtin, created_at_ms: 0, last_used_at_ms: None, authenticated: false, email: None };
         assert_eq!(claude_state_path(&profile(true, "/home/u/.claude")), Path::new("/home/u/.claude.json"));
         assert_eq!(claude_state_path(&profile(false, "/data/profiles/work")), Path::new("/data/profiles/work/.claude.json"));
     }

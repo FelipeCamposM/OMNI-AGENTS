@@ -59,8 +59,10 @@ const POLL_ATIVO_MS = 16;
 const POLL_OCIOSO_MS = 100;
 /** Quanto tempo depois da última atividade o ritmo rápido continua valendo. */
 const JANELA_ATIVA_MS = 700;
-const AUTO_FAILOVER_PROMPT =
-  "Continue exatamente de onde a conta anterior parou. Retome a tarefa pendente sem pedir confirmação nem repetir o que já foi concluído.";
+/** Intervalo entre tentativas quando o failover não achou conta ou falhou. O aviso de limite
+ *  continua na tela, então a próxima leitura reabre a busca — e uma conta conectada depois do
+ *  limite passa a ser encontrada sem o usuário precisar reabrir a aba. */
+const FAILOVER_RETRY_MS = 30_000;
 
 type FailoverStatus = {
   tone: "working" | "success" | "warning";
@@ -94,6 +96,10 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   const exhaustedProfilesRef = useRef(new Map<string, number>());
   const availabilityTimersRef = useRef(new Map<string, number>());
   const failoverConversationRef = useRef<string | null>(null);
+  /** Conta que acabou de receber a conversa por failover. Ao retomar, o CLI reexibe o aviso de
+   *  limite da conta anterior, e o engine (que lê a tela) o reporta como se fosse desta — sem este
+   *  filtro a aba tentava trocar de novo na hora. Vale até o aviso sair da tela uma vez. */
+  const staleLimitProfileRef = useRef<string | null>(null);
   /** Título da aba num ref, **fora das dependências do efeito**: ele só é lido na hora de abrir a
    *  sessão, e tê-lo como dependência fazia renomear a aba derrubar o xterm e reproduzir o
    *  scrollback inteiro. Com o nome automático vindo do primeiro prompt, isso passou a acontecer em
@@ -165,6 +171,8 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     let firstPoll = true;
     let reviving = false;
     let failoverInProgress = false;
+    /** Antes disso não tenta de novo; 0 = nenhuma tentativa frustrada ainda. */
+    let failoverRetryAt = 0;
     /** Última tecla digitada ou saída recebida — decide o ritmo da leitura. */
     let atividadeEm = Date.now();
     const terminal = new Terminal({
@@ -282,13 +290,22 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
       provider: AgentCliId;
       profileId: string;
     }) {
-      if (failoverInProgress) return;
+      if (failoverInProgress || Date.now() < failoverRetryAt) return;
       failoverInProgress = true;
-      setFailoverStatus({
-        tone: "working",
-        text: "trocando conta…",
-        detail: "Limite de uso atingido; procurando outra conta conectada.",
-      });
+      // Nova tentativa depois de "sem outra conta" não pisca o aviso: só troca se achar alguém.
+      if (failoverRetryAt === 0) {
+        setFailoverStatus({
+          tone: "working",
+          text: "trocando conta…",
+          detail: "Limite de uso atingido; procurando outra conta conectada.",
+        });
+      }
+      /** Libera nova tentativa mais tarde. Sem isto a flag ficava presa e a aba nunca mais trocava
+       *  de conta, mesmo com o limite voltando à tela e outra conta já conectada. */
+      const retryLater = () => {
+        failoverRetryAt = Date.now() + FAILOVER_RETRY_MS;
+        failoverInProgress = false;
+      };
 
       try {
         const [profiles, agents] = await Promise.all([listProfiles(), listAgentClis(projectPath)]);
@@ -323,8 +340,9 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
           setFailoverStatus({
             tone: "warning",
             text: "sem outra conta",
-            detail: `O limite de ${current?.name ?? "esta conta"} foi atingido e não há outra conta conectada disponível. Ela volta ao rodízio em ${new Date(currentResetAtMs).toLocaleString("pt-BR")}.`,
+            detail: `O limite de ${current?.name ?? "esta conta"} foi atingido e não há outra conta conectada disponível. Ela volta ao rodízio em ${new Date(currentResetAtMs).toLocaleString("pt-BR")}. Uma conta conectada depois disso é usada automaticamente.`,
           });
+          retryLater();
           return;
         }
 
@@ -344,16 +362,14 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         conversationRef.current = plan.conversation_id;
         setFailoverStatus({
           tone: "success",
-          text: `conta: ${target.name}`,
-          detail: plan.notice
-            ? `${plan.notice} A sessão foi aberta automaticamente em ${target.name}. ${current?.name ?? "A conta anterior"} volta ao rodízio em ${new Date(currentResetAtMs).toLocaleString("pt-BR")}.`
-            : `Limite de ${current?.name ?? "outra conta"} atingido. A conversa continuou automaticamente em ${target.name}; ${current?.name ?? "a conta anterior"} volta ao rodízio em ${new Date(currentResetAtMs).toLocaleString("pt-BR")}.`,
+          text: `conta trocada: ${current?.name ?? "anterior"} → ${target.name}`,
+          detail: `${plan.notice ? `${plan.notice} ` : ""}Limite de ${current?.name ?? "outra conta"} atingido; a conversa foi reaberta em ${target.name} e espera a sua próxima mensagem. ${current?.name ?? "A conta anterior"} volta ao rodízio em ${new Date(currentResetAtMs).toLocaleString("pt-BR")}.`,
         });
-        // Claude e Codex aceitam um prompt posicional junto do comando de retomada. Sem ele a
-        // conversa abriria na conta nova, mas ficaria esperando o usuário digitar "continue".
-        const resumedCommand = plan.handoff
-          ? plan.initial_command
-          : `${plan.initial_command} "${AUTO_FAILOVER_PROMPT}"`;
+        // Retoma em silêncio: nenhum prompt é digitado no terminal. Um texto automático ("retome a
+        // tarefa pendente") aparecia como se fosse do usuário e fazia o agente inventar trabalho —
+        // com um simples "oi" sem resposta, ele saiu rodando comandos. Quem continua é o usuário.
+        const resumedCommand = plan.initial_command;
+        staleLimitProfileRef.current = target.id;
         setLaunch({
           agent: { ...nextAgent, command: resumedCommand },
           profile: target,
@@ -366,6 +382,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
             text: "troca automática falhou",
             detail: reason instanceof Error ? reason.message : String(reason),
           });
+          retryLater();
         }
       }
     }
@@ -410,8 +427,13 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         sequenceRef.current = snapshot.next_seq;
         const provider = snapshot.session.provider as AgentCliId | null | undefined;
         const profileId = snapshot.session.profile_id;
+        const limitOnScreen = snapshot.session.notice === "usage_limit";
+        if (profileId && profileId === staleLimitProfileRef.current && !limitOnScreen) {
+          staleLimitProfileRef.current = null;
+        }
         if (
-          snapshot.session.notice === "usage_limit" &&
+          limitOnScreen &&
+          profileId !== staleLimitProfileRef.current &&
           conversationId &&
           provider &&
           MULTI_ACCOUNT_PROVIDERS.includes(provider) &&

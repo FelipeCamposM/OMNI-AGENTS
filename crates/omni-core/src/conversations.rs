@@ -374,7 +374,7 @@ segunda linha"}}),
         ].iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
 
         let profile = crate::Profile { id:"codex-p".into(),provider:"codex".into(),name:"Codex".into(),
-            config_dir:dir.path().to_string_lossy().into_owned(),builtin:true,created_at_ms:0,last_used_at_ms:None,authenticated:false };
+            config_dir:dir.path().to_string_lossy().into_owned(),builtin:true,created_at_ms:0,last_used_at_ms:None,authenticated:false,email:None };
         let mut conversations = vec![Conversation { id:"c".into(),project_id:"p".into(),cwd:"C:/projeto".into(),
             title:"Projeto · novo agente".into(),title_source:TitleSource::Auto,created_at_ms:9_000,
             segments:vec![Segment { provider:"codex".into(),profile_id:Some("codex-p".into()),external_session_id:None,
@@ -411,7 +411,7 @@ com quebra").is_err());
         let dir = tempfile::tempdir().unwrap();
         let transcript = dir.path().join("transcript.jsonl");
         std::fs::write(&transcript,(0..105).map(|i|json!({"uuid":format!("m{i}"),"type":"user","message":{"role":"user","content":format!("message {i}")}}).to_string()).collect::<Vec<_>>().join("\n")).unwrap();
-        let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false};
+        let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false,email:None};
         let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(transcript.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
         let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),title_source:TitleSource::default(),created_at_ms:0,segments:vec![segment.clone(),segment]};
         let first = timeline(&conversation,std::slice::from_ref(&profile),Some(0),100);
@@ -428,7 +428,7 @@ com quebra").is_err());
         let dir = tempfile::tempdir().unwrap();
         let transcript = dir.path().join("transcript.jsonl");
         std::fs::write(&transcript,(0..250).map(|i|json!({"uuid":format!("m{i}"),"type":"user","message":{"role":"user","content":format!("message {i}")}}).to_string()).collect::<Vec<_>>().join("\n")).unwrap();
-        let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false};
+        let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false,email:None};
         let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(transcript.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
         let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),title_source:TitleSource::default(),created_at_ms:0,segments:vec![segment]};
 
@@ -455,7 +455,7 @@ com quebra").is_err());
     /// "sem mensagens ainda", não "histórico indisponível" — que era o aviso que o celular mostrava.
     #[test] fn transcript_ainda_nao_gravado_e_vazio_e_nao_indisponivel() {
         let dir = tempfile::tempdir().unwrap();
-        let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:true,created_at_ms:0,last_used_at_ms:None,authenticated:false};
+        let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:true,created_at_ms:0,last_used_at_ms:None,authenticated:false,email:None};
         let futuro = dir.path().join("projects").join("x").join("ainda-nao-existe.jsonl");
         let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:Some("s".into()),transcript_path:Some(futuro.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
         let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),title_source:TitleSource::default(),created_at_ms:0,segments:vec![segment]};

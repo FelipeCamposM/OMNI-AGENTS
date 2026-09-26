@@ -12,3 +12,5 @@ export type { ColorPickerProps } from "./ColorPicker";
 export { Select } from "./Select";
 export type { SelectProps, SelectOption } from "./Select";
 export type { InputProps, TextareaProps, FieldSize } from "./Input";
+export { Card } from "./Card";
+export type { CardProps } from "./Card";
