@@ -2381,5 +2381,9 @@ Suíte: 315 testes de front, 61 do engine, 12 do core, 16 do Tauri.
   com link para computador. Changelog 0.5.4 em linguagem de usuário.
 - [x] Verificado antes da tag: `version:check`, `typecheck`, 336 testes de front,
   `cargo test --workspace`.
-- [ ] Tag `v0.5.4` → workflow `release.yml` deixa o Release em rascunho → publicar como release
-  normal (não pre-release) e conferir `releases/latest/download/latest.json`.
+- [x] Tag `v0.5.4` em `45ef33e`. Run 36276266360 verde nas 3 plataformas (~14 min). `latest.json`
+  do rascunho conferido antes de publicar: 0.5.4, 11 plataformas assinadas, URL na tag certa.
+  Publicado como release normal. `releases/latest/download/latest.json` responde 0.5.4, e o
+  `x64-setup.exe` baixa (200, 6,7 MB).
+- [ ] Aviso do Actions: `actions/checkout@v4` e `setup-node@v4` rodam em Node 20, que está
+  depreciado (o GitHub força Node 24). Ainda não quebra, mas vale subir as versões das actions.
