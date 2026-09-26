@@ -2296,3 +2296,24 @@ Suíte: 315 testes de front, 61 do engine, 12 do core, 16 do Tauri.
   baixa (200, 6,7 MB).
 - [ ] **A conferir no uso**: se o teclado ainda tiver atraso perceptível depois desta versão, o
   próximo suspeito é o renderizador do xterm (DOM + transparência) — medir a pintura antes de trocar.
+
+## Release v0.5.3 (2026-09-26)
+
+- **O que tinha acontecido:** a primeira tentativa (tag em `e544c55`, run 36270666954) **não falhou** —
+  o workflow terminou com sucesso e deixou o Release em **rascunho**, que é o desenho dele (nada chega
+  ao usuário até alguém publicar). O que faltava era a correção de PATH, que estava sem commit na
+  árvore e por isso não entrou naquele build.
+- [x] Correção de PATH commitada (`3d9a7c0`): além das pastas clássicas, entram nvm/fnm/nvs (versões do
+  Node da mais nova para a mais antiga), Volta, pnpm, bun, deno, cargo, asdf, mise, yarn, Scoop,
+  WinGet, Chocolatey, nix e Homebrew/Linuxbrew, mais o que vier em `NPM_CONFIG_PREFIX` e afins. A
+  varredura deixou de ser só na subida: detectar CLI, conectar conta e abrir terminal reconferem, e o
+  `spawn_terminal` repassa o PATH atual ao engine (engine antigo em execução passa a ver o que foi
+  instalado depois dele). 2 testes em `cli_path.rs`.
+- [x] Nota de versão correspondente acrescentada na entrada 0.5.3 do changelog, em linguagem de
+  usuário e sem prometer cura: é "nova tentativa", com pedido para avisar qual gerenciador faltou.
+- [x] Rascunho antigo e tag `v0.5.3` apagados; tag recriada em `3d9a7c0`. Run 36271615146 verde em
+  10min41s, `latest.json` 0.5.3 com 11 plataformas assinadas e apontando para a tag certa.
+- [x] Publicado como release normal. `releases/latest/download/latest.json` responde 0.5.3 e o
+  `x64-setup.exe` baixa (200, 6,7 MB). Suíte: 327 testes de front + `cargo test --workspace`.
+- [ ] Não conferido no app instalado: se alguma CLI continuar invisível, falta saber por qual
+  gerenciador ela foi instalada.
