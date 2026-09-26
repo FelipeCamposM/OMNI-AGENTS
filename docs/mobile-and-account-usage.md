@@ -5,6 +5,20 @@
 Em **Configurações → Agentes**, cada conta Claude/Codex tem consumo de 5 horas, consumo semanal,
 reset e origem da observação. Ausência de dado não significa 0%.
 
+Quando uma sessão aberta no desktop recebe do Claude/Codex a mensagem de limite atingido, o OMNI
+continua automaticamente a mesma conversa na próxima conta autenticada do provider. Claude copia o
+transcript e usa `--resume`; Codex copia o rollout e usa `resume <id>`. Contas que já atingiram o
+limite naquela conversa ficam fora das próximas tentativas, evitando ciclo. O comando de retomada
+leva um prompt curto para o agente continuar o trabalho sem esperar outro comando. Sem outra conta
+disponível, a sessão permanece parada e o cabeçalho informa o motivo. Cursor não participa porque
+seu CLI não oferece um diretório de configuração isolado por conta.
+
+O bloqueio de uma conta dura até o `resets_at` da janela que efetivamente esgotou. Se 5 horas e
+semana estiverem ambas em 100%, vale o reset mais distante. O desktop agenda a liberação para esse
+instante e também relê o cache de todas as contas antes do próximo failover; assim uma conta volta
+automaticamente ao rodízio na mesma conversa e o estado é reconstruído mesmo depois de reiniciar o
+app. Se o provider informou limite sem publicar um reset legível, usa 5 horas como fallback.
+
 - **Codex:** leitura local do último `event_msg/token_count` no rollout mais recentemente
   modificado em `<config_dir>/sessions`. Valida percentual e duração das janelas; ignora uma
   cauda ainda incompleta. Cache de 60 segundos. Depois do reset, o registro anterior aparece
@@ -65,11 +79,21 @@ Só `/` e `/assets/` dispensam o token, porque o bundle precisa carregar antes d
 o resto é negado por padrão, então rota nova nasce protegida. **Gerar novo código** rotaciona o
 token e desconecta os celulares já pareados.
 
-O celular lista projetos, conversas, mostra mensagens, permite responder, permitir/negar um
-pedido reconhecido e **abrir sessão nova** num projeto conhecido. Não é um terminal. Sem sessão viva, a conversa permanece consultável, mas o envio
-fica desativado. Os adaptadores de escrita são conservadores e verificam processos Windows;
+O celular lista projetos e une às conversas do OMNI o histórico nativo das contas Claude/Codex.
+Transcripts que já pertencem a uma conversa do OMNI são deduplicados; os demais aparecem no projeto
+da mesma pasta e abrem em modo somente leitura. A busca encontra conversas por título, provider,
+conta, projeto ou caminho, inclusive atravessando projetos a partir da tela inicial.
+
+O celular mostra mensagens, permite responder, alternar **Plano/Auto**, permitir/negar um pedido
+reconhecido e **abrir sessão nova** num projeto conhecido. Não é um terminal. Sem sessão viva, a
+conversa permanece consultável, mas o envio e a troca de modo ficam desativados. Os adaptadores de escrita são conservadores e verificam processos Windows;
 menus desconhecidos exigem intervenção no desktop. O rótulo “Possível aprovação pendente”
 vem da heurística antiga; sozinho não habilita o botão de aprovação.
+
+Em `/pc`, projetos e conversas têm rolagens independentes. É possível trocar o projeto enquanto
+outra conversa continua aberta no centro; o botão de voltar fecha o detalhe, e a busca percorre
+todas as conversas quando contém texto. A faixa fixa do composer mantém Plano/Auto e o campo de
+resposta visíveis.
 
 ## Contrato HTTP
 
@@ -77,8 +101,8 @@ UI e API usam a mesma origem, com validação de `Host`, `Origin` nos POSTs e co
 
 | Rota | Contrato |
 | --- | --- |
-| `GET /conversas` | Lista resumida, provider/perfil, estado e capacidades/revisão atuais. |
-| `GET /conversas/:id/timeline?cursor=0` | Até 100 mensagens, próximo cursor, trechos indisponíveis e ações recentes. |
+| `GET /conversas` | Lista resumida do índice OMNI unida ao histórico nativo deduplicado, com provider/perfil, estado e capacidades/revisão atuais. |
+| `GET /conversas/:id/timeline?cursor=0` | Até 100 mensagens do índice; históricos nativos devolvem a prévia segura de até 400 mensagens. |
 | `POST /conversas/:id/prompt` | `{ "texto": "..." }`, até 16000 bytes; sem slash command ou controles de terminal. |
 | `POST /conversas/:id/aprovar` | `{ "permitir": true }` ou `false`; apenas escolha de uso único reconhecida. |
 | `GET /atencao` | Sessões esperando entrada e possíveis pedidos de aprovação. |

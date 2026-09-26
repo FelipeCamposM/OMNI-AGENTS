@@ -1,6 +1,6 @@
 [package]
 name = "omni-agents"
-version = "0.5.2"
+version = "0.5.3"
 description = "OMNI AGENTS desktop workspace"
 authors = []
 edition = "2021"
@@ -27,6 +27,9 @@ uuid = { version = "1", features = ["v4"] }
 tokio = { version = "1", features = ["full"] }
 omni-protocol = { path = "../crates/omni-protocol" }
 omni-core = { path = "../crates/omni-core" }
+
+[dev-dependencies]
+tempfile = "3"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

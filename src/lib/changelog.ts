@@ -14,6 +14,16 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.5.3",
+    date: "2026-09-26",
+    changes: [
+      "Quando uma conta do Claude ou do Codex atinge o limite, a conversa continua automaticamente em outra conta disponível do mesmo agente.",
+      "Contas esgotadas voltam a ficar disponíveis sozinhas no horário de renovação e podem ser usadas novamente na mesma conversa.",
+      "O celular e a página para computador agora mostram também o histórico de conversas do Claude e do Codex, com busca por conversa.",
+      "Na página para computador, ficou mais fácil rolar as listas, trocar de projeto com uma conversa aberta e voltar para a tela anterior. O seletor Plano/Auto também aparece no campo de mensagem.",
+    ],
+  },
+  {
     version: "0.5.2",
     date: "2026-09-22",
     changes: [

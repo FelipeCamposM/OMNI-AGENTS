@@ -287,7 +287,16 @@ fn list_sessions(state: &EngineState) -> Result<EngineResponse> {
         .collect();
     // O nome que vale é o da **conversa**: barra lateral, painel de atenção e notificação do sistema
     // leem `session.name`, e antes disso todos mostravam o genérico "Claude · agent".
-    let conversas = engine_dir().map(|dir| omni_core::conversations::read_index(&dir)).unwrap_or_default();
+    let conversas = state.state_file.parent().map(|dir| {
+        let mut conversas = omni_core::conversations::read_index(dir);
+        let profiles = omni_core::profiles(dir);
+        if omni_core::conversations::discover_codex_transcripts(&mut conversas, &profiles) {
+            // Descoberta é reparo de índice: se a persistência falhar, o nome ainda aparece nesta
+            // leitura e a próxima tentativa pode gravar. Listar sessões não deve derrubar o app.
+            let _ = omni_core::conversations::write_index(dir, &conversas);
+        }
+        conversas
+    }).unwrap_or_default();
     for session in &mut sessions {
         let Some(id) = session.conversation_id.as_deref() else { continue };
         if let Some(conversa) = conversas.iter().find(|item| item.id == id) {
@@ -1108,6 +1117,42 @@ mod tests {
         assert_eq!(meta.profile_id.as_deref(), Some("claude-padrao"));
         assert_eq!(meta.conversation_id.as_deref(), Some("conv"));
         assert_eq!(meta.external_session_id.as_deref(), Some("ext"));
+    }
+
+    #[test]
+    fn list_sessions_troca_novo_agente_pelo_primeiro_prompt_do_codex() {
+        let state = test_state();
+        let dir = state.state_file.parent().unwrap();
+        let config_dir = dir.join("codex");
+        let sessions_dir = config_dir.join("sessions").join("1970").join("01").join("01");
+        fs::create_dir_all(&sessions_dir).unwrap();
+        fs::write(sessions_dir.join("rollout-codex.jsonl"), [
+            serde_json::json!({"type":"session_meta","payload":{"id":"codex-1","cwd":"C:/projeto","timestamp":"1970-01-01T00:00:10Z"}}),
+            serde_json::json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Criar relatório financeiro"}]}}),
+        ].iter().map(serde_json::Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+        atomic_write_json(&dir.join("profiles.json"), &serde_json::json!({"profiles":[{
+            "id":"codex-p","provider":"codex","name":"Codex","config_dir":config_dir,
+            "builtin":true,"created_at_ms":0
+        }]})).unwrap();
+        atomic_write_json(&dir.join("conversations.json"), &serde_json::json!({"version":1,"conversations":[{
+            "id":"conv","project_id":"p","cwd":"C:/projeto","title":"Projeto · novo agente",
+            "created_at_ms":9_000,"segments":[{"provider":"codex","profile_id":"codex-p",
+            "external_session_id":null,"transcript_path":null,"terminal_session_id":"s",
+            "started_at_ms":9_000,"ended_at_ms":null}]
+        }]})).unwrap();
+        let session: TerminalSession = serde_json::from_value(serde_json::json!({
+            "id":"s","project_id":"p","name":"Projeto · novo agente","cwd":"C:/projeto","shell":"sh",
+            "state":"answered","pid":null,"created_at_ms":9_000,"last_activity_at_ms":9_000,
+            "output_seq":0,"rows":10,"cols":10,"provider":"codex","profile_id":"codex-p",
+            "conversation_id":"conv"
+        })).unwrap();
+        state.sessions.lock().unwrap().insert("s".into(), SessionEntry::Historical(session));
+
+        let EngineResponse::Sessions { sessions } = list_sessions(&state).unwrap() else { panic!("sessions expected") };
+        assert_eq!(sessions[0].name, "Criar relatório financeiro");
+        let conversations = omni_core::conversations::read_index(dir);
+        assert_eq!(conversations[0].segments[0].external_session_id.as_deref(), Some("codex-1"));
+        assert!(conversations[0].segments[0].transcript_path.is_some());
     }
 
     #[tokio::test]

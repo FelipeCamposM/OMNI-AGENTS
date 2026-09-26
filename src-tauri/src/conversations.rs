@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     fs,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -89,7 +90,10 @@ fn find_mut<'a>(
 /// prompt.
 #[tauri::command(async)]
 pub fn list_conversations(project_id: Option<String>) -> Vec<Conversation> {
-    let mut conversations: Vec<Conversation> = load()
+    let mut store = load();
+    let profiles = crate::profiles::list_profiles();
+    omni_core::conversations::discover_codex_transcripts(&mut store.conversations, &profiles);
+    let mut conversations: Vec<Conversation> = store
         .conversations
         .into_iter()
         .filter(|conversation| project_id.as_ref().is_none_or(|id| &conversation.project_id == id))
@@ -271,6 +275,32 @@ pub fn plan_switch(
         }
     }
 
+    // O Codex também retoma uma sessão exata, mas o arquivo dela mora dentro do CODEX_HOME da
+    // conta. Levar o rollout para a mesma posição relativa no perfil de destino torna
+    // `codex resume <id>` uma continuação real, igual ao `claude --resume` acima.
+    if same_provider && target_provider == "codex" {
+        let profiles = crate::profiles::list_profiles();
+        let source_profile = current
+            .profile_id
+            .as_deref()
+            .and_then(|id| profiles.iter().find(|profile| profile.id == id));
+        let source =
+            omni_core::conversations::resolve_transcript(&current, &conversation, &profiles);
+        if let (Some(source), Some(source_profile), Some(target_profile)) =
+            (source, source_profile, target_profile.as_ref())
+        {
+            let (destination, session_id) = copy_codex_transcript(
+                &source,
+                Path::new(&source_profile.config_dir),
+                Path::new(&target_profile.config_dir),
+            )?;
+            plan.initial_command = format!("{target_command} resume {session_id}");
+            plan.external_session_id = Some(session_id);
+            push_segment(&mut store, &conversation_id, &plan, Some(destination))?;
+            return Ok(plan);
+        }
+    }
+
     // Todo o resto é handoff: reinício com briefing.
     let briefing = build_handoff(&conversation, &current)?;
     let path = write_handoff(&conversation, &briefing)?;
@@ -293,6 +323,44 @@ pub fn plan_switch(
     });
     push_segment(&mut store, &conversation_id, &plan, None)?;
     Ok(plan)
+}
+
+/// Copia um rollout do Codex sem deixar o diretório `sessions` da conta de origem. O id nativo
+/// vem do `session_meta`, e não do nome do arquivo: é esse id que o CLI aceita em `codex resume`.
+fn copy_codex_transcript(
+    source: &Path,
+    source_config_dir: &Path,
+    target_config_dir: &Path,
+) -> Result<(PathBuf, String), String> {
+    let source_root = source_config_dir.canonicalize().map_err(|error| error.to_string())?;
+    let source = source.canonicalize().map_err(|error| error.to_string())?;
+    let relative = source
+        .strip_prefix(&source_root)
+        .map_err(|_| "Rollout do Codex fora da conta de origem".to_string())?;
+    if !relative.starts_with("sessions") || source.extension().is_none_or(|ext| ext != "jsonl") {
+        return Err("Rollout do Codex inválido".into());
+    }
+
+    let first = BufReader::new(fs::File::open(&source).map_err(|error| error.to_string())?)
+        .lines()
+        .next()
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Rollout do Codex vazio".to_string())?;
+    let meta: Value = serde_json::from_str(&first).map_err(|error| error.to_string())?;
+    let session_id = (meta["type"] == "session_meta")
+        .then(|| meta["payload"]["id"].as_str())
+        .flatten()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| "Rollout do Codex sem id de sessão".to_string())?
+        .to_owned();
+
+    let destination = target_config_dir.join(relative);
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::copy(&source, &destination).map_err(|error| error.to_string())?;
+    Ok((destination, session_id))
 }
 
 fn push_segment(
@@ -422,6 +490,49 @@ fn tail_within_budget(turns: &[(String, String)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_rollout_is_copied_and_resumed_by_native_id() {
+        let source_root = tempfile::tempdir().expect("source config");
+        let target_root = tempfile::tempdir().expect("target config");
+        let source = source_root
+            .path()
+            .join("sessions")
+            .join("2026")
+            .join("09")
+            .join("26")
+            .join("rollout-test.jsonl");
+        fs::create_dir_all(source.parent().expect("rollout parent")).expect("mkdir");
+        fs::write(
+            &source,
+            concat!(
+                r#"{"type":"session_meta","payload":{"id":"codex-native-1","cwd":"C:/dev/app"}}"#,
+                "\n",
+                r#"{"type":"response_item","payload":{"type":"message","role":"user","content":"continue"}}"#,
+                "\n"
+            ),
+        )
+        .expect("write rollout");
+
+        let (destination, session_id) =
+            copy_codex_transcript(&source, source_root.path(), target_root.path()).expect("copy");
+
+        assert_eq!(session_id, "codex-native-1");
+        assert_eq!(
+            destination,
+            target_root
+                .path()
+                .join("sessions")
+                .join("2026")
+                .join("09")
+                .join("26")
+                .join("rollout-test.jsonl")
+        );
+        assert_eq!(
+            fs::read_to_string(destination).expect("copied contents"),
+            fs::read_to_string(source).expect("source contents")
+        );
+    }
 
     #[test]
     fn resumed_session_id_reads_resume_flag() {

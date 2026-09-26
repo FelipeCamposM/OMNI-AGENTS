@@ -4,7 +4,10 @@ use axum::{Router, Json, extract::{State, Path as RoutePath, Query, DefaultBodyL
 use omni_protocol::{MobileConfig, PublishedAgent, PublishedProject, PublishedTheme, PublishedWorkspace, TotpAction};
 use serde::{Serialize, Deserialize};
 use serde_json::{Value, json};
-use std::net::{SocketAddr, IpAddr};
+use std::{
+    collections::HashSet,
+    net::{SocketAddr, IpAddr},
+};
 use tokio::sync::Notify;
 
 #[cfg(mobile_assets)]
@@ -26,6 +29,14 @@ pub struct MobileRuntime {
     changed: Notify,
     actions: Mutex<VecDeque<Action>>,
     pending: Notify,
+    history: Mutex<MobileHistory>,
+}
+
+#[derive(Default)]
+struct MobileHistory {
+    scan: omni_core::history::ScanCache,
+    entries: Vec<omni_core::history::HistoryEntry>,
+    scanned_at_ms: u64,
 }
 #[derive(Clone, Serialize)]
 struct Action {
@@ -65,7 +76,8 @@ impl MobileRuntime {
             magic_dns: Mutex::new(None),
             serve_state: Mutex::new((None,None)),
             pareamento: Mutex::new(Pareamento::default()),
-            status: Mutex::new((None,None)),changed: Notify::new(),actions: Mutex::new(VecDeque::new()),pending: Notify::new() }
+            status: Mutex::new((None,None)),changed: Notify::new(),actions: Mutex::new(VecDeque::new()),pending: Notify::new(),
+            history: Mutex::new(MobileHistory::default()) }
     }
 }
 
@@ -586,11 +598,78 @@ fn linked_session(state: &EngineState, conversation: &omni_core::conversations::
     })
 }
 
+const HISTORY_REFRESH_MS: u64 = 5_000;
+
+fn historical_entries(state: &EngineState) -> Vec<omni_core::history::HistoryEntry> {
+    let now = now_ms();
+    let mut history = state.mobile.history.lock().expect("history poisoned");
+    if history.scanned_at_ms != 0 && now.saturating_sub(history.scanned_at_ms) < HISTORY_REFRESH_MS {
+        return history.entries.clone();
+    }
+    let profiles = omni_core::profiles(state.state_file.parent().unwrap());
+    let mut entries = omni_core::history::scan("claude", &profiles, &mut history.scan);
+    entries.extend(omni_core::history::scan("codex", &profiles, &mut history.scan));
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.updated_at_ms));
+    history.entries = entries;
+    history.scanned_at_ms = now;
+    history.entries.clone()
+}
+
+fn stable_id(prefix: &str, parts: &[&str]) -> String {
+    // FNV-1a explícito: o id precisa continuar igual depois de reiniciar ou atualizar o engine;
+    // `DefaultHasher` não promete algoritmo estável entre versões do Rust.
+    let mut hash = 0xcbf29ce484222325_u64;
+    for part in parts {
+        for byte in part.bytes().chain(std::iter::once(0)) {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+    }
+    format!("{prefix}-{hash:016x}")
+}
+
+fn history_id(entry: &omni_core::history::HistoryEntry) -> String {
+    stable_id("history", &[&entry.provider,&entry.profile_id,&entry.session_id])
+}
+
+fn history_project_id(cwd: &str) -> String {
+    stable_id("history-project", &[&normalized_path(cwd)])
+}
+
+fn normalized_path(path: &str) -> String {
+    let normalized = path.replace('\\',"/").trim_end_matches('/').to_lowercase();
+    normalized.strip_prefix("//wsl$/").map_or(normalized.clone(),|rest|format!("//wsl.localhost/{rest}"))
+}
+
+fn same_path(left: &str, right: &str) -> bool {
+    normalized_path(left) == normalized_path(right)
+}
+
+fn history_key(provider: &str, session_id: &str) -> String {
+    format!("{provider}\0{session_id}")
+}
+
 fn summaries(state: &EngineState) -> Vec<Value> {
     let dir = state.state_file.parent().unwrap();
     let mut index = omni_core::conversations::read_index(dir);
-    index.sort_by_key(|c|std::cmp::Reverse(c.created_at_ms));
-    index.iter().map(|c| {
+    let profiles = omni_core::profiles(dir);
+    if omni_core::conversations::discover_codex_transcripts(&mut index, &profiles) {
+        let _ = omni_core::conversations::write_index(dir, &index);
+    }
+    let projects = known_projects(state);
+    let history = historical_entries(state);
+    let mut known_sessions = HashSet::new();
+    let mut known_transcripts = HashSet::new();
+    let mut result = Vec::new();
+    for c in &index {
+        for segment in &c.segments {
+            if let Some(session_id) = &segment.external_session_id {
+                known_sessions.insert(history_key(&segment.provider,session_id));
+            }
+            if let Some(path) = &segment.transcript_path {
+                known_transcripts.insert(path.replace('\\',"/").to_lowercase());
+            }
+        }
         let live = linked_session(state,c);
         let capabilities = live.as_ref().map(interaction::capabilities);
         let status = live.as_ref().map(|s| {
@@ -598,9 +677,23 @@ fn summaries(state: &EngineState) -> Vec<Value> {
         });
         // `mode` sai da tela viva (o rodapé responde na hora); sessão fechada não tem modo.
         let mode = live.as_ref().and_then(interaction::modo_da_sessao);
-        json!({"id":c.id,"title":omni_core::conversations::display_title(c),"project_id":c.project_id,"provider":c.segments.last().map(|s|&s.provider),
-            "profile_id":c.segments.last().and_then(|s|s.profile_id.as_ref()),"state":status,"mode":mode,"capabilities":capabilities})
-    }).collect()
+        result.push((c.created_at_ms,json!({"id":c.id,"title":omni_core::conversations::display_title(c),"project_id":c.project_id,"provider":c.segments.last().map(|s|&s.provider),
+            "profile_id":c.segments.last().and_then(|s|s.profile_id.as_ref()),"state":status,"mode":mode,"capabilities":capabilities})));
+    }
+    for entry in history {
+        let transcript = entry.path.replace('\\',"/").to_lowercase();
+        if known_sessions.contains(&history_key(&entry.provider,&entry.session_id)) || known_transcripts.contains(&transcript) {
+            continue;
+        }
+        let project_id = entry.cwd.as_deref()
+            .and_then(|cwd|projects.iter().find(|project|same_path(&project.path,cwd)).map(|project|project.id.clone()))
+            .unwrap_or_else(||history_project_id(entry.cwd.as_deref().unwrap_or("")));
+        let title = entry.title.clone().or(entry.first_prompt.clone()).unwrap_or_else(||"Conversa anterior".into());
+        result.push((entry.updated_at_ms,json!({"id":history_id(&entry),"title":title,"project_id":project_id,"provider":entry.provider,
+            "profile_id":entry.profile_id,"state":Value::Null,"mode":Value::Null,"capabilities":Value::Null,"historical":true})));
+    }
+    result.sort_by_key(|(updated,_)|std::cmp::Reverse(*updated));
+    result.into_iter().map(|(_,summary)|summary).collect()
 }
 
 pub fn publish(state: &EngineState, projects: Vec<PublishedProject>, agents: Vec<PublishedAgent>, theme: Option<PublishedTheme>) -> Result<EngineResponse> {
@@ -612,17 +705,23 @@ pub fn publish(state: &EngineState, projects: Vec<PublishedProject>, agents: Vec
     Ok(EngineResponse::Ok)
 }
 
-/// Projetos que o celular pode escolher: os publicados pelo desktop, **mais** os que aparecem em
-/// conversas já registradas. A união é o que faz o celular continuar útil quando o desktop nunca
-/// publicou (instalação antiga) ou está fechado há muito tempo.
+/// Projetos que o celular pode escolher: os publicados pelo desktop, os do índice do OMNI e os
+/// encontrados nos históricos nativos do Claude/Codex.
 fn known_projects(state: &EngineState) -> Vec<PublishedProject> {
     let dir = state.state_file.parent().unwrap();
     let mut projects = state.mobile.workspace.lock().expect("workspace poisoned").projects.clone();
     for conversation in omni_core::conversations::read_index(dir) {
-        if projects.iter().any(|p| p.id == conversation.project_id) { continue }
+        if projects.iter().any(|p| p.id == conversation.project_id || same_path(&p.path,&conversation.cwd)) { continue }
         let name = Path::new(&conversation.cwd).file_name().map(|n|n.to_string_lossy().into_owned())
             .unwrap_or_else(|| conversation.cwd.clone());
         projects.push(PublishedProject { id: conversation.project_id.clone(), name, path: conversation.cwd.clone() });
+    }
+    for entry in historical_entries(state) {
+        let cwd = entry.cwd.unwrap_or_default();
+        if projects.iter().any(|project|same_path(&project.path,&cwd)) { continue }
+        let name = Path::new(&cwd).file_name().filter(|name|!name.is_empty()).map(|name|name.to_string_lossy().into_owned())
+            .unwrap_or_else(||"Histórico".into());
+        projects.push(PublishedProject { id: history_project_id(&cwd), name, path: cwd });
     }
     projects
 }
@@ -652,11 +751,23 @@ async fn attention(State(state): State<Arc<EngineState>>) -> Json<Value> {
 #[derive(Deserialize)] struct Page { #[serde(default)] cursor: Option<usize> }
 async fn timeline(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, Query(page): Query<Page>) -> Result<Json<Value>, ApiError> {
     tokio::task::spawn_blocking(move || {
-        let (conversation,_) = current(&state,&id)?;
         let dir = state.state_file.parent().unwrap();
-        let timeline = omni_core::conversations::timeline(&conversation,&omni_core::profiles(dir),page.cursor,100);
-        let actions: Vec<_> = state.mobile.actions.lock().expect("actions poisoned").iter().filter(|a|a.conversation_id == id).cloned().collect();
-        Ok(Json(json!({"timeline":timeline,"actions":actions})))
+        let profiles = omni_core::profiles(dir);
+        if let Ok((conversation,_)) = current(&state,&id) {
+            let timeline = omni_core::conversations::timeline(&conversation,&profiles,page.cursor,100);
+            let actions: Vec<_> = state.mobile.actions.lock().expect("actions poisoned").iter().filter(|a|a.conversation_id == id).cloned().collect();
+            return Ok(Json(json!({"timeline":timeline,"actions":actions})));
+        }
+        let entry = historical_entries(&state).into_iter().find(|entry|history_id(entry) == id)
+            .ok_or_else(||error(StatusCode::NOT_FOUND,"Conversa não encontrada"))?;
+        let transcript = omni_core::history::transcript(Path::new(&entry.path),&entry.provider,&profiles)
+            .ok_or_else(||error(StatusCode::NOT_FOUND,"Histórico não encontrado"))?;
+        let messages: Vec<_> = transcript.messages.into_iter().enumerate().map(|(index,message)|json!({
+            "id":format!("{id}:{index}"),"role":message.role,"text":message.text,
+            "provider":entry.provider,"timestamp":message.timestamp,
+        })).collect();
+        Ok(Json(json!({"timeline":{"messages":messages,"next_cursor":Value::Null,"prev_cursor":Value::Null,
+            "unavailable_segments":[]},"actions":[]})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler timeline"))?
 }
 /// Renomear a conversa. Vale para o celular e para a web de computador; o desktop chega aqui pelo
@@ -1281,6 +1392,37 @@ quebra"}"#] {
         assert!(ids.contains(&"p"),"o projeto da conversa do fixture tem de entrar: {ids:?}");
         assert!(data["published_at_ms"].as_u64().unwrap() > 0);
         assert_eq!(data["agents"][0]["resume"],"--continue");
+    }
+
+    #[tokio::test] async fn historico_nativo_entra_na_lista_mobile_e_abre_a_timeline() {
+        let (dir,state) = fixture();
+        let profile_dir = dir.path().join("claude-history");
+        let transcript = profile_dir.join("projects").join("test").join("old-session.jsonl");
+        std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+        std::fs::write(&transcript,[
+            json!({"type":"user","cwd":"C:/test","timestamp":"2026-09-20T10:00:00Z",
+                "message":{"role":"user","content":"Encontre esta conversa antiga"}}).to_string(),
+            json!({"type":"assistant","timestamp":"2026-09-20T10:01:00Z",
+                "message":{"role":"assistant","content":"Histórico encontrado"}}).to_string(),
+        ].join("\n")).unwrap();
+        atomic_write_json(&dir.path().join("profiles.json"),&json!({"profiles":[{
+            "id":"claude-history","provider":"claude","name":"Pessoal","config_dir":profile_dir,
+            "builtin":false,"created_at_ms":0
+        }]})).unwrap();
+
+        let list = summaries(&state);
+        let historical = list.iter().find(|item|item["historical"] == true)
+            .expect("o histórico do CLI precisa aparecer junto das conversas do OMNI");
+        assert_eq!(historical["title"],"Encontre esta conversa antiga");
+        assert_eq!(historical["project_id"],"p","a pasta conhecida deve reutilizar o projeto existente");
+        assert!(historical["capabilities"].is_null(),"histórico sem PTY é somente leitura");
+
+        let id = historical["id"].as_str().unwrap();
+        let response = router(state).oneshot(req("GET",&format!("/conversas/{id}/timeline"),"","")).await.unwrap();
+        assert_eq!(response.status(),StatusCode::OK);
+        let data:Value = serde_json::from_slice(&to_bytes(response.into_body(),1_000_000).await.unwrap()).unwrap();
+        assert_eq!(data["timeline"]["messages"][0]["text"],"Encontre esta conversa antiga");
+        assert_eq!(data["timeline"]["messages"][1]["text"],"Histórico encontrado");
     }
 
     #[test] fn publicacao_sobrevive_ao_reinicio_do_engine() {

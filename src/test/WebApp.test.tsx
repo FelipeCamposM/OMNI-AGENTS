@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi, afterEach } from "vitest";
 import { WebApp } from "../web/WebApp";
@@ -79,6 +79,31 @@ it("mostra projetos, conversas e a conversa aberta ao mesmo tempo", async () => 
   expect(await screen.findByText("Resposta anterior")).toBeInTheDocument();
   // O endereço guarda a conversa: atualizar a página volta para ela.
   expect(location.hash).toBe("#/c/c");
+});
+
+it("troca de projeto com conversa aberta, pesquisa globalmente e oferece voltar", async () => {
+  vi.stubGlobal("fetch", servidor([
+    conversa(),
+    conversa({ id: "c2", title: "Auditar pagamentos", project_id: "p2" }),
+  ]));
+  render(<WebApp />);
+
+  const primeira = await screen.findByRole("button", { name: /Abrir conversa Corrigir o login/ });
+  await act(async () => { await userEvent.click(primeira); });
+  expect(await screen.findByRole("button", { name: "Voltar para conversas" })).toBeInTheDocument();
+
+  const lateral = screen.getByRole("complementary", { name: "Projetos e conversas" });
+  await act(async () => { await userEvent.click(within(lateral).getByRole("button", { name: "Outro" })); });
+  expect(within(lateral).getByRole("button", { name: /Abrir conversa Auditar pagamentos/ })).toBeInTheDocument();
+  expect(within(lateral).queryByRole("button", { name: /Abrir conversa Corrigir o login/ })).not.toBeInTheDocument();
+
+  await act(async () => { await userEvent.type(within(lateral).getByLabelText("Pesquisar conversas"), "login"); });
+  expect(within(lateral).getByRole("button", { name: /Abrir conversa Corrigir o login/ })).toBeInTheDocument();
+  expect(within(lateral).queryByRole("button", { name: /Abrir conversa Auditar pagamentos/ })).not.toBeInTheDocument();
+
+  await act(async () => { await userEvent.click(screen.getByRole("button", { name: "Voltar para conversas" })); });
+  expect(location.hash).toBe("");
+  expect(await screen.findByText(/Escolha uma conversa/)).toBeInTheDocument();
 });
 
 it("alterna o modo do agente pelo botão, como o shift+tab faz no terminal", async () => {

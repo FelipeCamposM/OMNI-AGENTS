@@ -12,8 +12,12 @@ const engine = vi.hoisted(() => ({
   stopTerminal: vi.fn().mockResolvedValue(undefined),
   spawnTerminal: vi.fn(),
   attachTerminal: vi.fn().mockResolvedValue(undefined),
+  accountUsage: vi.fn(),
   beginConversation: vi.fn(),
   ensureAgentTrust: vi.fn().mockResolvedValue(undefined),
+  listAgentClis: vi.fn(),
+  listProfiles: vi.fn(),
+  planSwitch: vi.fn(),
 }));
 
 vi.mock("../features/terminal/terminalService", async (original) => ({
@@ -189,4 +193,77 @@ it("renomear a aba não derruba o terminal", async () => {
   // Remontar recomeçaria a sequência: a primeira leitura da montagem nova pede `since` 0.
   const desdeZero = engine.terminalSnapshot.mock.calls.slice(leiturasAntes).filter(([, since]) => since === 0);
   expect(desdeZero).toHaveLength(0);
+});
+
+describe("TerminalPane — failover automático de conta", () => {
+  it("continua a mesma conversa em outra conta quando o provider informa limite", async () => {
+    const resetAt = Math.floor(Date.now() / 1000) + 300;
+    engine.accountUsage.mockImplementation(async (profileId: string) => ({
+      status: "available",
+      observed_at_ms: Date.now(),
+      primary: { used_percent: profileId === "pessoal" ? 100 : 20, resets_at: resetAt, reset_label: null },
+      secondary: null,
+      reason: null,
+    }));
+    engine.listProfiles.mockResolvedValue([
+      {
+        id: "pessoal", provider: "claude", name: "Pessoal", config_dir: "C:/claude/pessoal",
+        builtin: true, created_at_ms: 0, last_used_at_ms: 1, authenticated: true,
+      },
+      {
+        id: "trabalho", provider: "claude", name: "Trabalho", config_dir: "C:/claude/trabalho",
+        builtin: false, created_at_ms: 1, last_used_at_ms: null, authenticated: true,
+      },
+    ]);
+    engine.listAgentClis.mockResolvedValue([
+      { id: "claude", label: "Claude", command: "claude", path: "C:/bin/claude.exe", available: true, authenticated: true },
+    ]);
+    engine.planSwitch.mockResolvedValue({
+      conversation_id: "conv-1",
+      title: "Conversa",
+      provider: "claude",
+      profile_id: "trabalho",
+      initial_command: "claude --resume native-1",
+      external_session_id: "native-1",
+      handoff: false,
+      handoff_path: null,
+      notice: null,
+    });
+    engine.spawnTerminal.mockResolvedValue({ id: "s2", name: "Conversa", state: "working" });
+    engine.terminalSnapshot
+      .mockResolvedValueOnce(snapshot(1, {
+        state: "answered",
+        notice: "usage_limit",
+        provider: "claude",
+        profile_id: "pessoal",
+        conversation_id: "conv-1",
+        external_session_id: "native-1",
+      }))
+      .mockResolvedValue(snapshot(2, {
+        provider: "claude",
+        profile_id: "trabalho",
+        conversation_id: "conv-1",
+        external_session_id: "native-1",
+      }));
+
+    renderPane();
+
+    await waitFor(() => expect(engine.planSwitch).toHaveBeenCalledWith({
+      conversationId: "conv-1",
+      targetProvider: "claude",
+      targetProfileId: "trabalho",
+      targetCommand: "claude",
+    }));
+    await waitFor(() => expect(engine.stopTerminal).toHaveBeenCalledWith("s1"));
+    await waitFor(() => expect(engine.spawnTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        initialCommand: expect.stringMatching(
+          /^claude --resume native-1 "Continue exatamente de onde a conta anterior parou\./
+        ),
+        profileId: "trabalho",
+        conversationId: "conv-1",
+      })
+    ));
+    expect(await screen.findByRole("status")).toHaveTextContent("conta: Trabalho");
+  });
 });

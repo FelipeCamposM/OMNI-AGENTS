@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../components/ui/Button";
+import { Input } from "../components/ui/Input";
 import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { Select } from "../components/ui/Select";
 import { AgentIcon } from "../components/ui/AgentIcon";
@@ -22,6 +23,30 @@ import { usePoll } from "./usePoll";
 
 const STATES: Record<string,string> = { working: "Trabalhando", answered: "Resposta disponível", approval_required: "Aprovação pendente", stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido" };
 const NOME_DO_AGENTE: Record<string, string> = { claude: "Claude", codex: "Codex", cursor: "Cursor" };
+
+/** Busca compartilhada pelo celular e pela web: todas as palavras precisam aparecer em algum dos
+ * campos visíveis da conversa, da conta ou do projeto. */
+export function filterConversations(
+  conversations: Conversation[],
+  query: string,
+  perfis: Projects["profiles"] = [],
+  projetos: Projects["projects"] = [],
+): Conversation[] {
+  const termos = query.toLocaleLowerCase("pt-BR").split(/\s+/).filter(Boolean);
+  if (termos.length === 0) return conversations;
+  const contas = new Map(perfis.map((perfil) => [perfil.id, perfil.name]));
+  const pastas = new Map(projetos.map((projeto) => [projeto.id, `${projeto.name} ${projeto.path}`]));
+  return conversations.filter((conversa) => {
+    const texto = [
+      conversa.title,
+      conversa.provider,
+      NOME_DO_AGENTE[conversa.provider ?? ""],
+      conversa.profile_id ? contas.get(conversa.profile_id) : null,
+      pastas.get(conversa.project_id),
+    ].filter(Boolean).join(" ").toLocaleLowerCase("pt-BR");
+    return termos.every((termo) => texto.includes(termo));
+  });
+}
 
 /** Cor do ponto de estado, na mesma linguagem do PC: trabalhando pulsa no acento, pronto é verde. */
 function tomDoEstado(state: string | null, approve: boolean): string {
@@ -119,14 +144,16 @@ export function ProjectList({ projects, conversations, abrir }: {
   })}</ul>;
 }
 
-export function ConversationList({ conversations, perfis, abrir, vazio }: {
-  conversations: Conversation[]; perfis: Projects["profiles"]; abrir: (id: string) => void; vazio: string;
+export function ConversationList({ conversations, perfis, projetos = [], mostrarProjeto = false, abrir, vazio }: {
+  conversations: Conversation[]; perfis: Projects["profiles"]; projetos?: Projects["projects"];
+  mostrarProjeto?: boolean; abrir: (id: string) => void; vazio: string;
 }) {
   if (conversations.length === 0) return <Vazio>{vazio}</Vazio>;
   return <ul className="m-lista">{conversations.map(c => {
     const aprovar = Boolean(c.capabilities?.approve);
     const conta = perfis.find(p => p.id === c.profile_id)?.name;
-    const detalhe = [STATES[c.state ?? ""] ?? "Sem sessão ativa", NOME_DO_AGENTE[c.provider ?? ""] ?? c.provider, conta]
+    const projeto = mostrarProjeto ? projetos.find(p => p.id === c.project_id)?.name : null;
+    const detalhe = [STATES[c.state ?? ""] ?? "Histórico", NOME_DO_AGENTE[c.provider ?? ""] ?? c.provider, conta, projeto]
       .filter(Boolean).join(" · ");
     return <li key={c.id}>
       <button type="button" className="m-card glass glass-hover" onClick={() => abrir(c.id)} aria-label={`Abrir conversa ${c.title}`}>
@@ -457,8 +484,6 @@ export function ConversationDetail({ conversation, refresh }: { conversation: Co
       </div>
     )}
 
-    <BarraDaConversa conversa={conversation} ocupado={busy} onModo={trocarModo} onRenomear={renomear} />
-
     {(falhaEnvio || error) && <p role="alert" className="m-alerta">{falhaEnvio ?? error}</p>}
     {anexoGrande && <p className="m-aviso">Tire o anexo acima de 25 MB para enviar.</p>}
     {/* O motivo genérico só aparece com o agente parado: trabalhando, o "ocupado" é esperado e o
@@ -467,7 +492,8 @@ export function ConversationDetail({ conversation, refresh }: { conversation: Co
 
     <Composer texto={text} onTexto={setText} anexos={anexos} onAdicionar={adicionar} onRemover={remover}
       onEnviar={() => void enviarPrompt()} podeEnviar={podeEnviar} ocupado={busy}
-      placeholder={!capability?.prompt ? (trabalhando ? "Agente trabalhando…" : "Sem sessão ativa") : "Mensagem para o agente…"} />
+      placeholder={!capability?.prompt ? (trabalhando ? "Agente trabalhando…" : "Sem sessão ativa") : "Mensagem para o agente…"}
+      toolbar={<BarraDaConversa conversa={conversation} ocupado={busy} onModo={trocarModo} onRenomear={renomear} />} />
   </section>;
 }
 
@@ -520,6 +546,7 @@ export function MobileApp() {
   const { rota, ir, voltar } = useRota();
   const { conversations, attention, catalog, carregado, error, semAcesso, refresh, atualizar, parear } = useDados();
   const [onlyAttention, setOnlyAttention] = useState(() => lerSessao(CHAVE_FILTRO) === "atencao");
+  const [query, setQuery] = useState("");
 
   useEffect(() => { gravarSessao(CHAVE_FILTRO, onlyAttention ? "atencao" : null); }, [onlyAttention]);
 
@@ -558,18 +585,21 @@ export function MobileApp() {
     }
   } else if (rota.tela === "projeto") {
     if (projeto) {
-      const daLista = (onlyAttention ? attention : conversations).filter(c => c.project_id === projeto.id);
+      const doProjeto = (onlyAttention ? attention : conversations).filter(c => c.project_id === projeto.id);
+      const daLista = filterConversations(doProjeto, query, perfis, catalog?.projects);
       const aguardando = attention.filter(c => c.project_id === projeto.id).length;
       titulo = projeto.name;
       subtitulo = <span className="truncate">{projeto.path}</span>;
       conteudo = <>
-        {catalog && <NovaSessao project={projeto} catalog={catalog} onCriada={refresh} />}
+        {catalog && projeto.path && <NovaSessao project={projeto} catalog={catalog} onCriada={refresh} />}
         <Secao titulo="Conversas">
           <SegmentedControl<"todas" | "atencao"> value={onlyAttention ? "atencao" : "todas"}
             onChange={valor => setOnlyAttention(valor === "atencao")}
             options={[{ value: "todas", label: "Todas" }, { value: "atencao", label: `Atenção (${aguardando})` }]} />
+          <Input type="search" value={query} onChange={event => setQuery(event.target.value)}
+            placeholder="Pesquisar conversas" aria-label="Pesquisar conversas" className="m-busca" />
           <ConversationList conversations={daLista} perfis={perfis} abrir={abrirConversa}
-            vazio={onlyAttention ? "Nada esperando por você neste projeto." : "Nenhuma conversa neste projeto ainda."} />
+            vazio={query ? "Nenhuma conversa encontrada neste projeto." : onlyAttention ? "Nada esperando por você neste projeto." : "Nenhuma conversa neste projeto ainda."} />
         </Secao>
       </>;
     } else {
@@ -577,12 +607,19 @@ export function MobileApp() {
       conteudo = <Vazio>{carregado ? "Esse projeto não está mais aberto no PC." : "Carregando projeto…"}</Vazio>;
     }
   } else {
+    const baseDaBusca = onlyAttention ? attention : conversations;
+    const resultadoDaBusca = filterConversations(baseDaBusca, query, perfis, catalog?.projects);
     conteudo = <>
       {aviso && <p className="m-aviso">{aviso}</p>}
       <SegmentedControl<"projetos" | "atencao"> value={onlyAttention ? "atencao" : "projetos"}
         onChange={valor => setOnlyAttention(valor === "atencao")}
         options={[{ value: "projetos", label: "Projetos" }, { value: "atencao", label: `Atenção (${attention.length})` }]} />
-      {onlyAttention
+      <Input type="search" value={query} onChange={event => setQuery(event.target.value)}
+        placeholder="Pesquisar conversas" aria-label="Pesquisar conversas" className="m-busca" />
+      {query
+        ? <ConversationList conversations={resultadoDaBusca} perfis={perfis} projetos={catalog?.projects}
+            mostrarProjeto abrir={abrirConversa} vazio="Nenhuma conversa encontrada." />
+        : onlyAttention
         ? <ConversationList conversations={attention} perfis={perfis} abrir={abrirConversa} vazio="Nada esperando por você agora." />
         : <ProjectList projects={catalog?.projects ?? []} conversations={conversations} abrir={id => ir({ tela: "projeto", projeto: id })} />}
     </>;

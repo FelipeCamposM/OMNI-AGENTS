@@ -2635,7 +2635,7 @@ dependencies = [
 
 [[package]]
 name = "omni-agents"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "omni-core",
  "omni-protocol",
@@ -2650,6 +2650,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-shell",
  "tauri-plugin-updater",
+ "tempfile",
  "tokio",
  "uuid",
 ]

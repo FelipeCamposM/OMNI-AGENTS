@@ -120,9 +120,77 @@ export async function deleteProfile(profileId: string) {
   await invoke("delete_profile", { profileId });
 }
 
+export interface AccountUsageWindow {
+  used_percent: number;
+  window_minutes?: number;
+  resets_at: number | null;
+  reset_label: string | null;
+}
+
+export interface AccountUsageSnapshot {
+  status: string;
+  observed_at_ms: number | null;
+  primary: AccountUsageWindow | null;
+  secondary: AccountUsageWindow | null;
+  reason: string | null;
+}
+
+export async function accountUsage(profileId: string, refresh = false) {
+  return invoke<AccountUsageSnapshot>("account_usage", { profileId, refresh });
+}
+
+/** Horário em que uma conta comprovadamente esgotada volta a poder ser usada. Se mais de uma
+ * janela chegou ao limite, vale o reset mais distante: liberar no reset de 5 h enquanto a cota
+ * semanal continua em 100% apenas criaria outro failover imediato. */
+export function exhaustedUntilMs(
+  usage: AccountUsageSnapshot | null,
+  nowMs = Date.now()
+): number | null {
+  const resets = [usage?.primary, usage?.secondary]
+    .filter((window): window is AccountUsageWindow => Boolean(
+      window && window.used_percent >= 100 && window.resets_at && window.resets_at * 1000 > nowMs
+    ))
+    .map((window) => window.resets_at! * 1000);
+  return resets.length > 0 ? Math.max(...resets) : null;
+}
+
+/** O evento textual de limite é a autoridade quando o cache ainda não chegou a 100%. Nesse caso,
+ * usa o reset futuro da janela mais consumida; sem nenhum horário legível, aplica a janela
+ * conservadora de 5 h para nunca deixar uma conta bloqueada para sempre. */
+export function usageLimitResetAtMs(
+  usage: AccountUsageSnapshot | null,
+  nowMs = Date.now()
+): number {
+  const confirmed = exhaustedUntilMs(usage, nowMs);
+  if (confirmed) return confirmed;
+  const future = [usage?.primary, usage?.secondary]
+    .filter((window): window is AccountUsageWindow => Boolean(
+      window && window.resets_at && window.resets_at * 1000 > nowMs
+    ))
+    .sort((left, right) => right.used_percent - left.used_percent)[0];
+  return future?.resets_at ? future.resets_at * 1000 : nowMs + 5 * 60 * 60 * 1000;
+}
+
 /** Providers que suportam mais de uma conta. Espelha `config_dir_var` em profiles.rs — os outros
  *  CLIs não leem env var de config dir, então só têm o perfil padrão. */
 export const MULTI_ACCOUNT_PROVIDERS: AgentCliId[] = ["claude", "codex"];
+
+/** Escolhe a próxima conta apta para failover. `excludedProfileIds` contém apenas bloqueios cujo
+ * reset ainda não chegou, impedindo A → B → A sem excluir uma conta para sempre. */
+export function selectFailoverProfile(
+  profiles: Profile[],
+  provider: AgentCliId,
+  currentProfileId: string,
+  excludedProfileIds: Iterable<string>
+): Profile | null {
+  const excluded = new Set(excludedProfileIds);
+  return profiles.find((profile) =>
+    profile.provider === provider &&
+    profile.authenticated &&
+    profile.id !== currentProfileId &&
+    !excluded.has(profile.id)
+  ) ?? null;
+}
 
 /** O que o launcher devolve: qual CLI abrir e em qual conta. */
 export interface AgentLaunch {

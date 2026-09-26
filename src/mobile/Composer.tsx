@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ClipboardEvent, type FormEvent } from "react";
+import { useEffect, useRef, type ClipboardEvent, type FormEvent, type ReactNode } from "react";
 import { Button } from "../components/ui/Button";
 import { AttachmentIcon, CloseIcon, LoaderIcon, SendIcon, WarningIcon } from "../components/ui/PixelIcon";
 import { iconForPath } from "../features/files/fileIcons";
@@ -14,6 +14,7 @@ interface ComposerProps {
   podeEnviar: boolean;
   ocupado: boolean;
   placeholder: string;
+  toolbar?: ReactNode;
 }
 
 const ALTURA_MAXIMA_PX = 160;
@@ -52,7 +53,7 @@ function ChipAnexo({ anexo, onRemover, travado }: { anexo: Anexo; onRemover: () 
  * é o único jeito que abre o seletor em todo navegador de celular, inclusive o Safari antigo, que
  * ignora clique programático em input escondido. Sem `accept`: qualquer tipo de arquivo vale.
  */
-export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnviar, podeEnviar, ocupado, placeholder }: ComposerProps) {
+export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnviar, podeEnviar, ocupado, placeholder, toolbar }: ComposerProps) {
   const campo = useRef<HTMLTextAreaElement>(null);
 
   // Cresce com o texto até um limite, como nos apps de mensagem.
@@ -80,6 +81,7 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
 
   return (
     <div className="composer-faixa">
+      {toolbar}
       <form onSubmit={enviar} className="composer glass">
         {anexos.length > 0 && (
           <ul className="anexos" aria-label="Anexos">

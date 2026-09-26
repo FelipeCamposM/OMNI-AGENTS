@@ -7,19 +7,28 @@ import type { WorkspaceTab } from "../../types/workspace";
 import { joinPath, writeBinaryFile } from "../files/filesService";
 import {
   attachTerminal,
+  accountUsage,
   beginConversation,
   ensureAgentTrust,
   ensureEngine,
+  exhaustedUntilMs,
+  listAgentClis,
+  listProfiles,
+  MULTI_ACCOUNT_PROVIDERS,
+  planSwitch,
   resizeTerminal,
   restartTerminal,
+  selectFailoverProfile,
   spawnTerminal,
   stopTerminal,
   terminalSnapshot,
   type AgentCliStatus,
+  type AgentCliId,
   type AgentLaunch,
   type LaunchPlan,
   type Profile,
   type TerminalState,
+  usageLimitResetAtMs,
   writeTerminal,
 } from "./terminalService";
 import { handleTerminalKey } from "./keyBindings";
@@ -50,6 +59,14 @@ const POLL_ATIVO_MS = 16;
 const POLL_OCIOSO_MS = 100;
 /** Quanto tempo depois da última atividade o ritmo rápido continua valendo. */
 const JANELA_ATIVA_MS = 700;
+const AUTO_FAILOVER_PROMPT =
+  "Continue exatamente de onde a conta anterior parou. Retome a tarefa pendente sem pedir confirmação nem repetir o que já foi concluído.";
+
+type FailoverStatus = {
+  tone: "working" | "success" | "warning";
+  text: string;
+  detail: string;
+};
 
 interface TerminalPaneProps {
   projectId: string;
@@ -70,7 +87,13 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   const [launch, setLaunch] = useState<AgentLaunch | null>(null);
   const [switching, setSwitching] = useState(false);
   const [inputLocked, setInputLocked] = useState(false);
+  const [failoverStatus, setFailoverStatus] = useState<FailoverStatus | null>(null);
   const conversationRef = useRef<string | null>(null);
+  /** Conta → instante exato em que volta ao rodízio. O mapa sobrevive à remontagem do efeito
+   * causada pela troca de perfil; o cache de uso em disco recompõe a informação após restart. */
+  const exhaustedProfilesRef = useRef(new Map<string, number>());
+  const availabilityTimersRef = useRef(new Map<string, number>());
+  const failoverConversationRef = useRef<string | null>(null);
   /** Título da aba num ref, **fora das dependências do efeito**: ele só é lido na hora de abrir a
    *  sessão, e tê-lo como dependência fazia renomear a aba derrubar o xterm e reproduzir o
    *  scrollback inteiro. Com o nome automático vindo do primeiro prompt, isso passou a acontecer em
@@ -89,6 +112,51 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   }>({});
   const agent = launch?.agent ?? null;
 
+  function clearAvailabilityTimers() {
+    for (const timer of availabilityTimersRef.current.values()) window.clearTimeout(timer);
+    availabilityTimersRef.current.clear();
+  }
+
+  function forgetExpiredProfiles(nowMs = Date.now()) {
+    for (const [profileId, resetAtMs] of exhaustedProfilesRef.current) {
+      if (resetAtMs > nowMs) continue;
+      exhaustedProfilesRef.current.delete(profileId);
+      const timer = availabilityTimersRef.current.get(profileId);
+      if (timer) window.clearTimeout(timer);
+      availabilityTimersRef.current.delete(profileId);
+    }
+  }
+
+  /** Agenda a liberação sem depender de novo output do terminal. O callback se reagenda caso o
+   * navegador limite timeouts muito longos ou o computador acorde antes do horário de reset. */
+  function markExhaustedUntil(profileId: string, profileName: string, resetAtMs: number) {
+    const previous = availabilityTimersRef.current.get(profileId);
+    if (previous) window.clearTimeout(previous);
+    exhaustedProfilesRef.current.set(profileId, resetAtMs);
+
+    const release = () => {
+      const remaining = resetAtMs - Date.now();
+      if (remaining > 0) {
+        const timer = window.setTimeout(release, Math.min(remaining, 2_147_483_647));
+        availabilityTimersRef.current.set(profileId, timer);
+        return;
+      }
+      if (exhaustedProfilesRef.current.get(profileId) === resetAtMs) {
+        exhaustedProfilesRef.current.delete(profileId);
+        setFailoverStatus({
+          tone: "success",
+          text: `${profileName} disponível`,
+          detail: `A cota de ${profileName} foi liberada no horário de reset e a conta voltou ao rodízio automático.`,
+        });
+      }
+      availabilityTimersRef.current.delete(profileId);
+    };
+    const timer = window.setTimeout(release, Math.min(Math.max(0, resetAtMs - Date.now()), 2_147_483_647));
+    availabilityTimersRef.current.set(profileId, timer);
+  }
+
+  useEffect(() => () => clearAvailabilityTimers(), []);
+
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -96,6 +164,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     let pollTimer: number | undefined;
     let firstPoll = true;
     let reviving = false;
+    let failoverInProgress = false;
     /** Última tecla digitada ou saída recebida — decide o ritmo da leitura. */
     let atividadeEm = Date.now();
     const terminal = new Terminal({
@@ -205,6 +274,102 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
       }
     }
 
+    /** Limite de uso é um evento do provider, não uma falha da PTY. Escolhe outra conta do mesmo
+     * provider, prepara a continuação e só então encerra a sessão limitada. */
+    async function autoFailover(input: {
+      sessionId: string;
+      conversationId: string;
+      provider: AgentCliId;
+      profileId: string;
+    }) {
+      if (failoverInProgress) return;
+      failoverInProgress = true;
+      setFailoverStatus({
+        tone: "working",
+        text: "trocando conta…",
+        detail: "Limite de uso atingido; procurando outra conta conectada.",
+      });
+
+      try {
+        const [profiles, agents] = await Promise.all([listProfiles(), listAgentClis(projectPath)]);
+        const providerProfiles = profiles.filter(
+          (profile) => profile.provider === input.provider && profile.authenticated
+        );
+        const usages = new Map(
+          await Promise.all(providerProfiles.map(async (profile) => {
+            const usage = await accountUsage(profile.id).catch(() => null);
+            return [profile.id, usage] as const;
+          }))
+        );
+        const nowMs = Date.now();
+        forgetExpiredProfiles(nowMs);
+        // Revalida todas as alternativas pelo cache local. Isso recompõe os bloqueios mesmo se o
+        // app reiniciou no meio da janela e evita tentar uma segunda conta que já está em 100%.
+        for (const profile of providerProfiles) {
+          if (profile.id === input.profileId) continue;
+          const resetAtMs = exhaustedUntilMs(usages.get(profile.id) ?? null, nowMs);
+          if (resetAtMs) markExhaustedUntil(profile.id, profile.name, resetAtMs);
+        }
+        const current = profiles.find((profile) => profile.id === input.profileId);
+        const currentResetAtMs = usageLimitResetAtMs(usages.get(input.profileId) ?? null, nowMs);
+        markExhaustedUntil(input.profileId, current?.name ?? input.profileId, currentResetAtMs);
+        const target = selectFailoverProfile(
+          profiles,
+          input.provider,
+          input.profileId,
+          exhaustedProfilesRef.current.keys()
+        );
+        if (!target) {
+          setFailoverStatus({
+            tone: "warning",
+            text: "sem outra conta",
+            detail: `O limite de ${current?.name ?? "esta conta"} foi atingido e não há outra conta conectada disponível. Ela volta ao rodízio em ${new Date(currentResetAtMs).toLocaleString("pt-BR")}.`,
+          });
+          return;
+        }
+
+        const nextAgent = agents.find((candidate) => candidate.id === input.provider && candidate.available);
+        if (!nextAgent) throw new Error(`CLI do ${input.provider} não encontrada no PATH`);
+        const plan = await planSwitch({
+          conversationId: input.conversationId,
+          targetProvider: input.provider,
+          targetProfileId: target.id,
+          targetCommand: nextAgent.command,
+        });
+        if (cancelled) return;
+
+        await stopTerminal(input.sessionId).catch(() => undefined);
+        sessionRef.current = undefined;
+        sequenceRef.current = 0;
+        conversationRef.current = plan.conversation_id;
+        setFailoverStatus({
+          tone: "success",
+          text: `conta: ${target.name}`,
+          detail: plan.notice
+            ? `${plan.notice} A sessão foi aberta automaticamente em ${target.name}. ${current?.name ?? "A conta anterior"} volta ao rodízio em ${new Date(currentResetAtMs).toLocaleString("pt-BR")}.`
+            : `Limite de ${current?.name ?? "outra conta"} atingido. A conversa continuou automaticamente em ${target.name}; ${current?.name ?? "a conta anterior"} volta ao rodízio em ${new Date(currentResetAtMs).toLocaleString("pt-BR")}.`,
+        });
+        // Claude e Codex aceitam um prompt posicional junto do comando de retomada. Sem ele a
+        // conversa abriria na conta nova, mas ficaria esperando o usuário digitar "continue".
+        const resumedCommand = plan.handoff
+          ? plan.initial_command
+          : `${plan.initial_command} "${AUTO_FAILOVER_PROMPT}"`;
+        setLaunch({
+          agent: { ...nextAgent, command: resumedCommand },
+          profile: target,
+          conversationId: plan.conversation_id,
+        });
+      } catch (reason) {
+        if (!cancelled) {
+          setFailoverStatus({
+            tone: "warning",
+            text: "troca automática falhou",
+            detail: reason instanceof Error ? reason.message : String(reason),
+          });
+        }
+      }
+    }
+
     async function poll() {
       if (cancelled || !sessionRef.current) return;
       try {
@@ -218,6 +383,14 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         if (snapshot.data) terminal.write(snapshot.data);
         setState(snapshot.session.state);
         setInputLocked(Boolean(snapshot.session.input_locked));
+        const conversationId = snapshot.session.conversation_id ?? conversationRef.current;
+        if (conversationId && failoverConversationRef.current !== conversationId) {
+          failoverConversationRef.current = conversationId;
+          clearAvailabilityTimers();
+          exhaustedProfilesRef.current.clear();
+          setFailoverStatus(null);
+        }
+        if (conversationId) conversationRef.current = conversationId;
         // Mantém o que já sabia quando o campo vier vazio: o engine só preenche `external_session_id`
         // depois que o provider grava a sessão dele.
         setSessao((anterior) => {
@@ -235,6 +408,22 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         });
         terminal.options.disableStdin = Boolean(snapshot.session.input_locked);
         sequenceRef.current = snapshot.next_seq;
+        const provider = snapshot.session.provider as AgentCliId | null | undefined;
+        const profileId = snapshot.session.profile_id;
+        if (
+          snapshot.session.notice === "usage_limit" &&
+          conversationId &&
+          provider &&
+          MULTI_ACCOUNT_PROVIDERS.includes(provider) &&
+          profileId
+        ) {
+          void autoFailover({
+            sessionId: snapshot.session.id,
+            conversationId,
+            provider,
+            profileId,
+          });
+        }
         // Voltou a responder: derruba um aviso que tenha sobrado. Atualização funcional porque
         // isto roda 10x por segundo — devolver o mesmo valor faz o React nem re-renderizar.
         falhasRef.current = 0;
@@ -335,6 +524,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     sessionRef.current = undefined;
     sequenceRef.current = 0;
     conversationRef.current = plan.conversation_id;
+    setFailoverStatus(null);
     if (plan.notice) setError(plan.notice);
     setLaunch({
       agent: { ...nextAgent, command: plan.initial_command },
@@ -359,6 +549,21 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
       />
       <div className="absolute right-3 top-2 z-10 flex items-center gap-2 bg-[#0e0e14]/90 px-2 py-1 text-[10px] uppercase text-text-muted">
         <span>{stateGlyph(state)} {state.replace(/_/g, " ")}</span>
+        {failoverStatus && (
+          <span
+            role="status"
+            title={failoverStatus.detail}
+            className={
+              failoverStatus.tone === "success"
+                ? "text-success"
+                : failoverStatus.tone === "warning"
+                  ? "text-warning"
+                  : "text-accent"
+            }
+          >
+            {failoverStatus.text}
+          </span>
+        )}
         {inputLocked && <span className="text-xs text-warning">Consultando /usage…</span>}
         {state === "working" && sessionRef.current && (
           <button

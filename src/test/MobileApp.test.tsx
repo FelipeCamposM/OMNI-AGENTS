@@ -35,6 +35,33 @@ async function abrirConversa() {
   await act(async () => { await userEvent.click(conversa); });
 }
 
+it("pesquisa conversas de todos os projetos e mantém Plano/Auto junto ao composer", async () => {
+  const catalogo = {
+    ...PROJETOS,
+    projects: [...PROJETOS.projects, { id: "p2", name: "Outro", path: "C:/outro" }],
+  };
+  const antiga = conversaPronta({ id: "antiga", title: "Auditar pagamentos antigos", project_id: "p2", mode: "auto" });
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(
+    url.includes("timeline")
+      ? { timeline: { messages: [{ id: "antiga:0", role: "assistant", text: "Histórico carregado", provider: "claude" }], next_cursor: null, prev_cursor: null, unavailable_segments: [] }, actions: [] }
+      : url === "/projetos" ? catalogo
+      : url === "/atencao" ? []
+      : [conversaPronta({ title: "Conversa atual" }), antiga]
+  ))));
+  render(<MobileApp />);
+
+  const busca = await screen.findByLabelText("Pesquisar conversas");
+  await act(async () => { await userEvent.type(busca, "pagamentos antigos"); });
+  expect(screen.getByRole("button", { name: /Abrir conversa Auditar pagamentos antigos/ })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /Abrir projeto/ })).not.toBeInTheDocument();
+
+  await act(async () => { await userEvent.click(screen.getByRole("button", { name: /Abrir conversa Auditar pagamentos antigos/ })); });
+  expect(await screen.findByText("Histórico carregado")).toBeInTheDocument();
+  const composer = screen.getByLabelText("Sua resposta").closest(".composer-faixa");
+  expect(within(composer as HTMLElement).getByRole("button", { name: "Plano" })).toBeInTheDocument();
+  expect(within(composer as HTMLElement).getByRole("button", { name: "Auto" })).toHaveAttribute("aria-pressed", "true");
+});
+
 it("conversa sem sessão mostra histórico mas não oferece aprovação nem envio", async () => {
   vi.stubGlobal("fetch",vi.fn(async (url: string) => new Response(JSON.stringify(
     url.includes("timeline") ? { timeline: { messages: [{ id:"c:0",role:"assistant",text:"Resposta anterior",provider:"claude" }], next_cursor:null,unavailable_segments:[] },actions:[] }

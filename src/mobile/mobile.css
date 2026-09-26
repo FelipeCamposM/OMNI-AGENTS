@@ -72,6 +72,7 @@ body { user-select: text; -webkit-user-select: text; -webkit-tap-highlight-color
 .m-aviso { font-size: .75rem; color: rgb(var(--c-warning)); border-left: 3px solid rgb(var(--c-warning)); padding-left: .625rem; }
 .m-alerta { font-size: .8125rem; color: rgb(var(--c-danger)); border-left: 3px solid rgb(var(--c-danger)); padding-left: .625rem; overflow-wrap: anywhere; }
 .m-paginar { align-self: center; }
+.m-busca { width: 100%; font-size: 16px; }
 
 /* ── Listas de projeto e conversa ────────────────────────────────────────── */
 .m-lista { display: flex; flex-direction: column; gap: .75rem; list-style: none; margin: 0; padding: 0 var(--pixel-shadow) var(--pixel-shadow) 0; }
@@ -224,6 +225,7 @@ body { user-select: text; -webkit-user-select: text; -webkit-tap-highlight-color
   background: rgb(var(--c-bg-primary));
   border-top: 2px solid rgb(var(--c-outline));
 }
+.composer-faixa > .m-barra-conversa { padding: .125rem .5rem .5rem; }
 .composer {
   display: flex;
   flex-direction: column;

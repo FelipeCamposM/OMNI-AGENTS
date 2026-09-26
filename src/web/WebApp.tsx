@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
 import { Button } from "../components/ui/Button";
-import { ReloadIcon } from "../components/ui/PixelIcon";
+import { Input } from "../components/ui/Input";
+import { ArrowLeftIcon, ReloadIcon } from "../components/ui/PixelIcon";
 import { PairingScreen } from "../mobile/Chat";
-import { ConversationDetail, ConversationList, NovaSessao } from "../mobile/MobileApp";
+import { ConversationDetail, ConversationList, filterConversations, NovaSessao } from "../mobile/MobileApp";
 import { useDados } from "../mobile/useDados";
 import type { Conversation } from "../mobile/api";
 
@@ -22,6 +23,7 @@ export function WebApp() {
   const { conversations, attention, catalog, carregado, error, semAcesso, refresh, atualizar, parear } = useDados();
   const [projetoId, setProjetoId] = useState<string | null>(null);
   const [conversaId, setConversaId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
 
   // Endereço guarda a conversa aberta: atualizar a página (ou deixar aberta o dia todo) volta para
   // onde estava, como no celular.
@@ -32,12 +34,28 @@ export function WebApp() {
     };
     ler();
     window.addEventListener("hashchange", ler);
-    return () => window.removeEventListener("hashchange", ler);
+    window.addEventListener("popstate", ler);
+    return () => {
+      window.removeEventListener("hashchange", ler);
+      window.removeEventListener("popstate", ler);
+    };
   }, []);
 
   function abrirConversa(id: string) {
-    history.pushState(null, "", `${location.pathname}#/c/${encodeURIComponent(id)}`);
+    const escolhida = conversations.find((item) => item.id === id);
+    if (escolhida) setProjetoId(escolhida.project_id);
+    history.pushState(null, "", `${location.pathname}${location.search}#/c/${encodeURIComponent(id)}`);
     setConversaId(id);
+  }
+
+  function fecharConversa() {
+    history.replaceState(null, "", `${location.pathname}${location.search}`);
+    setConversaId(null);
+  }
+
+  function selecionarProjeto(id: string) {
+    setProjetoId(id);
+    setQuery("");
   }
 
   if (semAcesso) {
@@ -49,14 +67,22 @@ export function WebApp() {
   }
 
   const conversa: Conversation | null = conversations.find((item) => item.id === conversaId) ?? null;
-  // Projeto em foco: o da conversa aberta, ou o escolhido na lista, ou o primeiro que existir.
+  // Uma escolha explícita na lateral vence a conversa aberta: assim é possível consultar outro
+  // projeto sem precisar fechar antes o chat que está no centro.
   const projetoAtivo =
-    catalog?.projects.find((item) => item.id === (conversa?.project_id ?? projetoId)) ?? catalog?.projects[0] ?? null;
-  const daLista = conversations.filter((item) => item.project_id === projetoAtivo?.id);
+    catalog?.projects.find((item) => item.id === projetoId)
+    ?? catalog?.projects.find((item) => item.id === conversa?.project_id)
+    ?? catalog?.projects[0]
+    ?? null;
+  const doProjeto = conversations.filter((item) => item.project_id === projetoAtivo?.id);
+  const daLista = filterConversations(query ? conversations : doProjeto, query, catalog?.profiles, catalog?.projects);
 
   return (
     <div className="w-tela">
       <header className="w-topo glass glass-strong">
+        {conversa && <button type="button" className="btn btn-ghost w-voltar" aria-label="Voltar para conversas" onClick={fecharConversa}>
+          <ArrowLeftIcon aria-hidden className="h-4 w-4" />
+        </button>}
         <OmniLogo className="neon-glow w-logo" />
         <span className="pixel-text w-marca">OMNI AGENTS</span>
         <span className="w-topo-espaco" />
@@ -68,42 +94,48 @@ export function WebApp() {
 
       <div className="w-colunas">
         <aside className="w-coluna w-lateral" aria-label="Projetos e conversas">
-          <h2 className="w-rotulo">Projetos</h2>
-          {catalog && catalog.projects.length === 0 && (
-            <p className="w-vazio">Nenhum projeto conhecido. Abra um projeto no OMNI do PC.</p>
-          )}
-          <ul className="w-projetos">
-            {catalog?.projects.map((project) => {
-              const doProjeto = conversations.filter((item) => item.project_id === project.id);
-              const aguardando = doProjeto.filter((item) => item.capabilities?.approve).length;
-              return (
-                <li key={project.id}>
-                  <button
-                    type="button"
-                    onClick={() => setProjetoId(project.id)}
-                    aria-current={project.id === projetoAtivo?.id ? "true" : undefined}
-                    className={`w-projeto${project.id === projetoAtivo?.id ? " w-projeto-ativo" : ""}`}
-                    title={project.path}
-                  >
-                    <span className="w-projeto-nome">{project.name}</span>
-                    {aguardando > 0 && <span className="m-badge m-badge-alerta">{aguardando}</span>}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="w-projetos-bloco">
+            <h2 className="w-rotulo">Projetos</h2>
+            {catalog && catalog.projects.length === 0 && (
+              <p className="w-vazio">Nenhum projeto conhecido. Abra um projeto no OMNI do PC.</p>
+            )}
+            <ul className="w-projetos">
+              {catalog?.projects.map((project) => {
+                const doProjeto = conversations.filter((item) => item.project_id === project.id);
+                const aguardando = doProjeto.filter((item) => item.capabilities?.approve).length;
+                return (
+                  <li key={project.id}>
+                    <button
+                      type="button"
+                      onClick={() => selecionarProjeto(project.id)}
+                      aria-current={project.id === projetoAtivo?.id ? "true" : undefined}
+                      className={`w-projeto${project.id === projetoAtivo?.id ? " w-projeto-ativo" : ""}`}
+                      title={project.path}
+                    >
+                      <span className="w-projeto-nome">{project.name}</span>
+                      {aguardando > 0 && <span className="m-badge m-badge-alerta">{aguardando}</span>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
 
           <h2 className="w-rotulo">Conversas</h2>
+          <Input type="search" size="sm" value={query} onChange={event => setQuery(event.target.value)}
+            placeholder="Pesquisar conversas" aria-label="Pesquisar conversas" className="w-busca" />
           <div className="w-conversas">
             <ConversationList
               conversations={daLista}
               perfis={catalog?.profiles ?? []}
+              projetos={catalog?.projects ?? []}
+              mostrarProjeto={Boolean(query)}
               abrir={abrirConversa}
-              vazio={carregado ? "Nenhuma conversa neste projeto ainda." : "Carregando…"}
+              vazio={carregado ? (query ? "Nenhuma conversa encontrada." : "Nenhuma conversa neste projeto ainda.") : "Carregando…"}
             />
           </div>
-          {projetoAtivo && catalog && (
-            <NovaSessao project={projetoAtivo} catalog={catalog} onCriada={refresh} />
+          {projetoAtivo?.path && catalog && (
+            <div className="w-nova-sessao"><NovaSessao project={projetoAtivo} catalog={catalog} onCriada={refresh} /></div>
           )}
         </aside>
 

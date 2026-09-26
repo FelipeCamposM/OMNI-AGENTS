@@ -53,7 +53,7 @@ export function startTabDrag(
       dragging = true;
       // Captura só depois do limiar: capturado desde o pointerdown, o click de um toque simples vai
       // para este wrapper e não para o botão da aba — trocar de aba parava de funcionar.
-      source.setPointerCapture(pointerId);
+      source.setPointerCapture?.(pointerId);
       ghost = document.createElement("div");
       ghost.textContent = tab.title;
       ghost.setAttribute("aria-hidden", "true");
@@ -73,7 +73,7 @@ export function startTabDrag(
     }
   }
   function cleanup() {
-    if (source.hasPointerCapture(pointerId)) source.releasePointerCapture(pointerId);
+    if (source.hasPointerCapture?.(pointerId)) source.releasePointerCapture?.(pointerId);
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", finish);
     window.removeEventListener("pointercancel", cleanup);

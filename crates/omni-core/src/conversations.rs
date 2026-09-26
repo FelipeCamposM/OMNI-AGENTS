@@ -55,10 +55,11 @@ pub fn auto_title(conversation: &Conversation) -> Option<String> {
                 continue;
             }
             // Mensagem de sistema do próprio CLI (comando local, lembrete) não é o assunto da conversa.
-            if text.trim_start().starts_with('<') || text.trim_start().starts_with("Caveat:") {
+            let text = text.trim_start();
+            if text.starts_with('<') || text.starts_with("# AGENTS.md") || text.starts_with("Caveat:") {
                 continue;
             }
-            if let Some(resumo) = resumir(&text) {
+            if let Some(resumo) = resumir(text) {
                 return Some(resumo);
             }
         }
@@ -155,7 +156,17 @@ pub(crate) fn timestamp(value: &Value) -> Option<u64> {
         .and_then(|d| u64::try_from(d.timestamp_millis()).ok())
 }
 
-fn resolve(segment: &Segment, conversation: &Conversation, profiles: &[crate::Profile]) -> Option<PathBuf> {
+/// Localiza e valida o transcript de um trecho dentro do diretório da conta a que ele pertence.
+///
+/// Para Claude o caminho normalmente já está no índice. Para Codex, que não aceita um id
+/// escolhido no spawn, encontra o rollout pelo id nativo ou pela combinação pasta + instante.
+/// Público porque a troca de conta precisa copiar exatamente esse mesmo arquivo; manter uma segunda
+/// heurística no desktop faria timeline e failover discordarem sobre qual sessão continuar.
+pub fn resolve_transcript(
+    segment: &Segment,
+    conversation: &Conversation,
+    profiles: &[crate::Profile],
+) -> Option<PathBuf> {
     let profile = profiles.iter().find(|p| Some(&p.id) == segment.profile_id.as_ref() && p.provider == segment.provider)?;
     let root = Path::new(&profile.config_dir).canonicalize().ok()?;
     if let Some(path) = &segment.transcript_path {
@@ -175,6 +186,50 @@ fn resolve(segment: &Segment, conversation: &Conversation, profiles: &[crate::Pr
             .is_some_and(|t| t.abs_diff(segment.started_at_ms) <= 30_000)
     }).collect();
     (candidates.len() == 1).then(|| candidates[0].clone())
+}
+
+fn codex_session_id(path: &Path) -> Option<String> {
+    let first = BufReader::new(File::open(path).ok()?).lines().next()?.ok()?;
+    let value: Value = serde_json::from_str(&first).ok()?;
+    (value["type"] == "session_meta")
+        .then(|| value["payload"]["id"].as_str())
+        .flatten()
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_owned)
+}
+
+/// Completa os ponteiros que o Codex não deixa escolher no spawn. Depois que o primeiro prompt
+/// cria o rollout, pasta + instante identificam a sessão; persistir caminho e id faz título,
+/// histórico, celular e troca de conta usarem a mesma conversa sem repetir a busca.
+pub fn discover_codex_transcripts(
+    conversations: &mut [Conversation],
+    profiles: &[crate::Profile],
+) -> bool {
+    let mut changed = false;
+    for conversation_index in 0..conversations.len() {
+        for segment_index in 0..conversations[conversation_index].segments.len() {
+            let should_discover = {
+                let segment = &conversations[conversation_index].segments[segment_index];
+                segment.provider == "codex" && segment.transcript_path.is_none()
+            };
+            if !should_discover {
+                continue;
+            }
+            let resolved = {
+                let conversation = &conversations[conversation_index];
+                resolve_transcript(&conversation.segments[segment_index], conversation, profiles)
+            };
+            let Some(path) = resolved else { continue };
+            let session_id = codex_session_id(&path);
+            let segment = &mut conversations[conversation_index].segments[segment_index];
+            segment.transcript_path = Some(path.to_string_lossy().into_owned());
+            if segment.external_session_id.is_none() {
+                segment.external_session_id = session_id;
+            }
+            changed = true;
+        }
+    }
+    changed
 }
 
 #[derive(Serialize)]
@@ -217,9 +272,9 @@ pub fn timeline(conversation: &Conversation, profiles: &[crate::Profile], cursor
         // O Claude só grava o `.jsonl` depois da primeira mensagem. Conversa recém-aberta tem o
         // caminho já fixado (`--session-id`) mas nenhum arquivo: isso é "vazia", não "indisponível".
         // Antes caía no aviso de histórico perdido logo na primeira abertura. Nada é lido aqui, então
-        // pular não abre brecha na checagem de caminho feita em `resolve`.
+        // pular não abre brecha na checagem de caminho feita em `resolve_transcript`.
         if segment.transcript_path.as_deref().is_some_and(|path| !Path::new(path).exists()) { continue }
-        let Some(path) = resolve(segment, conversation, profiles) else { result.unavailable_segments.push(segment_index); continue };
+        let Some(path) = resolve_transcript(segment, conversation, profiles) else { result.unavailable_segments.push(segment_index); continue };
         let Ok(file) = File::open(path) else { result.unavailable_segments.push(segment_index); continue };
         for line in BufReader::new(file).lines().map_while(Result::ok) {
             let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
@@ -298,6 +353,38 @@ segunda linha"}}),
 
         let vazia = conversa_com_transcript(dir.path(), &[]);
         assert_eq!(display_title(&vazia), "Conversa");
+    }
+
+    #[test]
+    fn codex_descobre_o_rollout_e_usa_o_primeiro_prompt_como_nome() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join("sessions").join("1970").join("01").join("01");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let distante = sessions.join("rollout-distante.jsonl");
+        let correto = sessions.join("rollout-correto.jsonl");
+        std::fs::write(&distante, [
+            json!({"type":"session_meta","payload":{"id":"distante","cwd":"C:/projeto","timestamp":"1970-01-01T00:00:50Z"}}),
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Prompt errado"}]}}),
+        ].iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+        std::fs::write(&correto, [
+            json!({"type":"session_meta","payload":{"id":"codex-1","cwd":"C:\\projeto","timestamp":"1970-01-01T00:00:10Z"}}),
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>injetado</environment_context>"}]}}),
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"# AGENTS.md instructions\ninjetado"}]}}),
+            json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Implementar busca por cliente\ncom filtros"}]}}),
+        ].iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+
+        let profile = crate::Profile { id:"codex-p".into(),provider:"codex".into(),name:"Codex".into(),
+            config_dir:dir.path().to_string_lossy().into_owned(),builtin:true,created_at_ms:0,last_used_at_ms:None,authenticated:false };
+        let mut conversations = vec![Conversation { id:"c".into(),project_id:"p".into(),cwd:"C:/projeto".into(),
+            title:"Projeto · novo agente".into(),title_source:TitleSource::Auto,created_at_ms:9_000,
+            segments:vec![Segment { provider:"codex".into(),profile_id:Some("codex-p".into()),external_session_id:None,
+                transcript_path:None,terminal_session_id:Some("t".into()),started_at_ms:9_000,ended_at_ms:None }] }];
+
+        assert!(discover_codex_transcripts(&mut conversations, &[profile]));
+        assert_eq!(conversations[0].segments[0].external_session_id.as_deref(), Some("codex-1"));
+        assert_eq!(Path::new(conversations[0].segments[0].transcript_path.as_deref().unwrap()), correto.canonicalize().unwrap());
+        assert_eq!(display_title(&conversations[0]), "Implementar busca por cliente");
+        assert!(!discover_codex_transcripts(&mut conversations, &[]), "ponteiro já conhecido não deve ser redescoberto");
     }
 
     /// Renomear trava o automático: o nome escrito à mão não pode ser trocado pelo primeiro prompt
