@@ -306,6 +306,64 @@ describe("TerminalPane — failover automático de conta", () => {
     expect(engine.engineApi.mock.calls.filter(([metodo]) => metodo === "POST")).toHaveLength(1);
   });
 
+  it("só abrir uma conversa parada nunca manda /compact, nem com a conta perto do limite", async () => {
+    engine.accountUsage.mockResolvedValue({
+      status: "available", observed_at_ms: Date.now(),
+      primary: { used_percent: 92, resets_at: Math.floor(Date.now() / 1000) + 3600, reset_label: null },
+      secondary: null, reason: null,
+    });
+    engine.terminalSnapshot.mockImplementation(async (_id: string, since: number) => snapshot(since, {
+      state: "answered", provider: "claude", profile_id: "pessoal", conversation_id: "conv-1", external_session_id: "native-1",
+    }));
+    engine.engineApi.mockImplementation(async (method: string, caminho: string) => method === "GET"
+      ? { status: 200, body: JSON.stringify(caminho.endsWith("/opcoes") ? { context_tokens: 80_000 } : { conversation: { capabilities: { prompt: true } } }) }
+      : { status: 202, body: "{}" });
+
+    renderPane();
+    await waitFor(() => expect(engine.terminalSnapshot.mock.calls.length).toBeGreaterThan(5));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(engine.engineApi.mock.calls.filter(([metodo]) => metodo === "POST")).toHaveLength(0);
+  });
+
+  it("conversa grande: depois da troca compacta antes do continue", async () => {
+    const resetAt = Math.floor(Date.now() / 1000) + 300;
+    engine.accountUsage.mockImplementation(async (profileId: string) => ({
+      status: "available", observed_at_ms: Date.now(),
+      primary: { used_percent: profileId === "pessoal" ? 100 : 20, resets_at: resetAt, reset_label: null },
+      secondary: null, reason: null,
+    }));
+    engine.listProfiles.mockResolvedValue([
+      { id: "pessoal", provider: "claude", name: "Pessoal", config_dir: "C:/a", builtin: true, created_at_ms: 0, last_used_at_ms: 1, authenticated: true },
+      { id: "trabalho", provider: "claude", name: "Trabalho", config_dir: "C:/b", builtin: false, created_at_ms: 1, last_used_at_ms: null, authenticated: true },
+    ]);
+    engine.listAgentClis.mockResolvedValue([
+      { id: "claude", label: "Claude", command: "claude", path: "C:/bin/claude.exe", available: true, authenticated: true },
+    ]);
+    engine.planSwitch.mockResolvedValue({
+      conversation_id: "conv-1", title: "Conversa", provider: "claude", profile_id: "trabalho",
+      initial_command: "claude --resume native-1", external_session_id: "native-1", handoff: false, handoff_path: null, notice: null,
+    });
+    engine.spawnTerminal.mockResolvedValue({ id: "s2", name: "Conversa", state: "working" });
+    const sessao = { provider: "claude", conversation_id: "conv-1", external_session_id: "native-1" };
+    engine.terminalSnapshot
+      .mockResolvedValueOnce(snapshot(1, { ...sessao, state: "working", profile_id: "pessoal" }))
+      .mockResolvedValueOnce(snapshot(2, { ...sessao, state: "answered", notice: "usage_limit", profile_id: "pessoal" }))
+      .mockResolvedValue(snapshot(3, { ...sessao, state: "answered", profile_id: "trabalho" }));
+    engine.engineApi.mockImplementation(async (method: string, caminho: string) => method === "GET"
+      ? { status: 200, body: JSON.stringify(caminho.endsWith("/opcoes")
+        ? { context_tokens: 420_000 }
+        : { conversation: { capabilities: { prompt: true } } }) }
+      : { status: 202, body: "{}" });
+
+    renderPane();
+
+    await waitFor(() => expect(engine.engineApi).toHaveBeenCalledWith(
+      "POST", "/conversas/conv-1/prompt", expect.stringContaining("/compact"), expect.anything(),
+    ), { timeout: 5_000 });
+    // O continue espera a compactação começar; nada sai junto com o /compact.
+    expect(engine.engineApi.mock.calls.filter(([metodo]) => metodo === "POST")).toHaveLength(1);
+  });
+
   it("tenta de novo depois de 'sem outra conta' e usa a conta conectada nesse meio-tempo", async () => {
     const realNow = Date.now.bind(Date);
     let deslocamento = 0;

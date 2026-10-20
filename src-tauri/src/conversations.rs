@@ -163,6 +163,7 @@ pub fn begin_conversation(
             terminal_session_id: None,
             started_at_ms: now_ms(),
             ended_at_ms: None,
+            historico_ate_ms: None,
         }],
     };
 
@@ -381,6 +382,7 @@ fn push_segment(
         terminal_session_id: None,
         started_at_ms: now_ms(),
         ended_at_ms: None,
+        historico_ate_ms: None,
     });
     save(store)
 }

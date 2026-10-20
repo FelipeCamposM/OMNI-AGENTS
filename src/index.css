@@ -200,6 +200,12 @@
     user-select: text;
     -webkit-user-select: text;
   }
+
+  /* Seleção de texto na cor da paleta escolhida, não no azul do sistema */
+  ::selection {
+    background: rgb(var(--c-selected) / 0.45);
+    color: inherit;
+  }
 }
 
 @layer components {
@@ -1077,6 +1083,16 @@
 .select-opcao.is-ativa::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: 2px; background: rgb(var(--c-accent)); }
 .select-opcao.is-marcada { color: rgb(var(--c-text-primary)); }
 .select-aberto { border-color: rgb(var(--c-accent) / .7); }
+.select-secao {
+  margin: .35rem .25rem .2rem;
+  padding: .45rem .375rem .15rem;
+  border-top: 1px solid rgb(var(--c-border-subtle));
+  font-size: .625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: rgb(var(--c-text-muted));
+}
 
 /* Trocar de conversa: a nova entra com um fade curto, sem o "pulo" seco de antes. */
 .chat-tela { animation: conversa-entra 200ms ease-out; }
@@ -1429,6 +1445,19 @@
 .ext-chave[aria-checked="true"] .ext-chave-bolinha { transform: translateX(1.25rem); background: rgb(var(--c-accent)); }
 
 /* Uso de todas as contas (rodapé): cartão por conta, agrupado por IA. */
+/* Arquivo citado na conversa (só no app do PC): o caminho vira link, sem mudar a cara do código. */
+.bubble-arquivo { display: inline; padding: 0; font: inherit; color: inherit; text-align: inherit; background: none; border: 0; cursor: pointer; }
+.bubble-arquivo > code, .bubble-arquivo { text-decoration: underline dotted rgb(var(--c-accent) / .6); text-underline-offset: 3px; }
+.bubble-arquivo:hover > code, a.bubble-arquivo:hover, button.bubble-arquivo:hover { color: rgb(var(--c-accent)); text-decoration-style: solid; }
+.bubble-arquivo:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: 1px; }
+
+/* Seletor de layouts prontos: miniatura + nome, em grade. */
+.layout-opcao { display: flex; flex-direction: column; align-items: center; gap: .3rem; width: 5.25rem; padding: .45rem .3rem .4rem; font-size: 10px; line-height: 1.15; text-align: center; color: rgb(var(--c-text-secondary)); border: 1px solid transparent; }
+.layout-opcao:hover { color: rgb(var(--c-text-primary)); background: rgb(var(--c-overlay) / .07); border-color: rgb(var(--c-border-subtle)); }
+.layout-opcao:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: -2px; }
+.layout-miniatura { fill: rgb(var(--c-accent) / .35); transition: fill .15s; }
+.layout-opcao:hover .layout-miniatura { fill: rgb(var(--c-accent) / .8); }
+@media (prefers-reduced-motion: reduce) { .layout-miniatura { transition: none; } }
 .uso-painel { animation: popover-entra 140ms cubic-bezier(.2, .8, .3, 1); transform-origin: bottom left; }
 .uso-conta { display: flex; flex-direction: column; gap: .45rem; padding: .55rem .65rem; border: 1px solid rgb(var(--c-border-subtle)); background: rgb(var(--c-overlay) / .03); transition: border-color .15s, background-color .15s; }
 .uso-conta:hover { border-color: rgb(var(--c-border)); }
@@ -1437,9 +1466,16 @@
 .uso-atualizar { flex-shrink: 0; display: grid; place-items: center; width: 1.6rem; height: 1.6rem; color: rgb(var(--c-text-secondary)); border: 1px solid transparent; }
 .uso-atualizar:hover:not(:disabled) { color: rgb(var(--c-accent)); border-color: rgb(var(--c-border-subtle)); }
 .uso-atualizar:disabled { opacity: .5; }
-.uso-janela { display: grid; grid-template-columns: 3rem 1fr 2.5rem 6rem; align-items: center; gap: .45rem; }
-.uso-barra { position: relative; display: block; height: .45rem; background: rgb(var(--c-overlay) / .14); overflow: hidden; }
-.uso-barra-cheia { position: absolute; inset: 0 auto 0 0; transition: width .4s ease; }
+.uso-agente { display: flex; align-items: center; gap: .4rem; padding: 0 .1rem; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: rgb(var(--c-text-secondary)); }
+.uso-janela { display: grid; grid-template-columns: 3.1rem 1fr 2.4rem 5.6rem; align-items: center; gap: .5rem; }
+.uso-rotulo { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: rgb(var(--c-text-secondary)); }
+/* Medidor em blocos de pixel: 20 de 5%, os acesos na cor da faixa. */
+.uso-blocos { display: grid; grid-template-columns: repeat(20, 1fr); gap: 2px; height: .55rem; }
+.uso-blocos > span:not([class]) { background: rgb(var(--c-overlay) / .12); }
+.uso-blocos > span { transition: background-color .3s; }
+.uso-pct { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.uso-reset { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: right; font-size: 10px; color: rgb(var(--c-text-muted)); }
+@media (prefers-reduced-motion: reduce) { .uso-blocos > span { transition: none; } }
 
 /* Estrela da conta principal (aba Extensões). */
 .ext-estrela { display: grid; place-items: center; width: 1.6rem; height: 1.6rem; flex-shrink: 0; color: rgb(var(--c-text-muted)); border: 1px solid transparent; transition: color .15s, border-color .15s, transform .15s; }
@@ -1632,6 +1668,7 @@ body.redimensionando-lateral .xterm, body.redimensionando-lateral iframe { point
 @media (max-width: 900px) { .agente-editor-grade { grid-template-columns: minmax(0, 1fr); } }
 
 /* Fluxos de agentes (FluxosView.tsx / NoDoFluxo.tsx): editor estilo n8n no visual do app. */
+.fx-caixa { height: 100%; container-type: inline-size; }
 .fx-tela { height: 100%; display: grid; grid-template-columns: 14rem minmax(0, 1fr) 21rem; min-height: 0; }
 .fx-lateral, .fx-painel { min-height: 0; overflow-y: auto; padding: .875rem .75rem; background: rgb(var(--c-bg-primary) / .82); border-right: 2px solid rgb(var(--c-border-subtle)); }
 .fx-painel { border-right: none; border-left: 2px solid rgb(var(--c-border-subtle)); }
@@ -1730,7 +1767,13 @@ body.redimensionando-lateral .xterm, body.redimensionando-lateral iframe { point
 .fx-dialogo-fundo { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgb(0 0 0 / .55); }
 .fx-dialogo { width: min(36rem, calc(100vw - 2rem)); display: flex; flex-direction: column; gap: .875rem; padding: 1.25rem; background: rgb(var(--c-bg-elevated)); border: 2px solid rgb(var(--c-outline)); box-shadow: 6px 6px 0 rgb(var(--c-outline)); }
 .fx-dialogo h3 { font-size: .875rem; color: rgb(var(--c-text-primary)); }
-@media (max-width: 1100px) { .fx-tela { grid-template-columns: 13rem minmax(0, 1fr) 18rem; } }
+@container (max-width: 1100px) { .fx-tela { grid-template-columns: 12rem minmax(0, 1fr) 16rem; } }
+/* Painel estreito (fluxo num split): as laterais viram faixas em cima e embaixo do canvas. */
+@container (max-width: 760px) {
+  .fx-tela { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(12rem, 1fr) auto; }
+  .fx-lateral { max-height: 13rem; border-right: none; border-bottom: 2px solid rgb(var(--c-border-subtle)); }
+  .fx-painel { max-height: 40%; border-left: none; border-top: 2px solid rgb(var(--c-border-subtle)); }
+}
 :root[data-motion="desligadas"] .fx-no, :root[data-motion="desligadas"] .fx-ponto { animation: none !important; }
 
 /* Fluxos: editor mais completo (cores por tipo, conexões, menu rápido, resumos) e o manual. */
@@ -1844,6 +1887,46 @@ button.fx-agora:hover { background: rgb(var(--c-success) / .14); }
 .fx-grade-2 > * { min-width: 0; }
 
 /* Manual de agentes e fluxos. */
+/* ── Rodapé do app: conta do git à esquerda, uso dos agentes e engine à direita ──────────────
+   Mesma linguagem dos painéis (borda de contorno, superfície elevada), texto legível em vez de
+   10px apagado, e cada grupo separado por filete em vez de espaços soltos. */
+.rodape-app {
+  display: flex; align-items: center; justify-content: space-between; gap: .75rem;
+  height: 2rem; flex-shrink: 0; padding: 0 .75rem;
+  overflow: hidden; white-space: nowrap;
+  font-size: .6875rem; color: rgb(var(--c-text-secondary));
+  background: rgb(var(--c-bg-elevated));
+  border-top: 2px solid rgb(var(--c-outline));
+}
+.rodape-grupo { display: flex; align-items: center; gap: .75rem; min-width: 0; overflow: hidden; }
+.rodape-sep { width: 1px; height: 1rem; flex-shrink: 0; background: rgb(var(--c-border)); }
+.rodape-conta { display: flex; align-items: center; gap: .45rem; min-width: 0; font-weight: 600; }
+.rodape-avatar {
+  position: relative; display: grid; place-items: center; flex-shrink: 0;
+  width: 1.25rem; height: 1.25rem;
+  font-size: .625rem; font-weight: 800; color: rgb(var(--c-accent));
+  background: rgb(var(--c-accent) / .14);
+  border: 1px solid rgb(var(--c-outline));
+}
+.rodape-avatar img { width: 100%; height: 100%; object-fit: cover; image-rendering: auto; }
+.rodape-avatar::after {
+  content: ""; position: absolute; right: -3px; bottom: -3px; width: 7px; height: 7px;
+  background: rgb(var(--c-success)); border: 1px solid rgb(var(--c-bg-elevated));
+}
+.rodape-avatar[data-problema="true"]::after { background: rgb(var(--c-warning)); }
+.rodape-engine {
+  display: flex; align-items: center; gap: .4rem; flex-shrink: 0; height: 1.375rem; padding: 0 .5rem;
+  font-size: .625rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  color: rgb(var(--c-success)); background: rgb(var(--c-success) / .1); border: 1px solid rgb(var(--c-success) / .4);
+}
+.rodape-engine[data-online="false"] { color: rgb(var(--c-warning)); background: rgb(var(--c-warning) / .1); border-color: rgb(var(--c-warning) / .4); }
+.rodape-ponto { width: 6px; height: 6px; background: currentColor; }
+.rodape-engine[data-online="false"] .rodape-ponto { animation: rodape-pisca 1s steps(2) infinite; }
+@keyframes rodape-pisca { 50% { opacity: .2; } }
+:root[data-motion="desligadas"] .rodape-ponto { animation: none !important; }
+
+.gg-modal { display: flex; flex-direction: column; width: min(72rem, 100%); height: min(46rem, calc(100vh - 2rem)); overflow: hidden; background: rgb(var(--c-bg-surface)); border: 2px solid rgb(var(--c-outline)); box-shadow: 8px 8px 0 rgb(var(--c-outline)); }
+.gg-modal .gg-lista { flex: 1; min-height: 0; overflow-y: auto; }
 .manual-fundo { position: fixed; inset: 0; z-index: 70; display: grid; place-items: center; padding: 1rem; background: rgb(0 0 0 / .6); animation: fx-surge .15s ease-out; }
 .manual { display: grid; grid-template-columns: 14rem minmax(0, 1fr); width: min(64rem, 100%); height: min(42rem, calc(100vh - 2rem)); background: rgb(var(--c-bg-elevated)); border: 2px solid rgb(var(--c-outline)); box-shadow: 8px 8px 0 rgb(var(--c-outline)); }
 .manual-indice { display: flex; flex-direction: column; gap: .15rem; padding: 1rem .6rem; overflow-y: auto; background: rgb(var(--c-bg-primary) / .7); border-right: 2px solid rgb(var(--c-border-subtle)); }

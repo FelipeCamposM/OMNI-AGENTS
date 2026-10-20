@@ -218,6 +218,13 @@ pub fn git_pull(project_path: String) -> Result<String, String> {
     run_git(&project_path, &["pull", "--ff-only"])
 }
 
+/// Traz as refs de todos os remotos sem mexer na branch local (o grafo passa a mostrar onde o
+/// remoto está). `--prune` tira do grafo as branches remotas que já foram apagadas lá.
+#[tauri::command(async)]
+pub fn git_fetch(project_path: String) -> Result<String, String> {
+    run_git(&project_path, &["fetch", "--all", "--prune"])
+}
+
 #[derive(Serialize)]
 pub struct GitBranch {
     name: String,

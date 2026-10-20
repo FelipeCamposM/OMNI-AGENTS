@@ -72,6 +72,8 @@ export interface Painel { conversations: Conversation[]; catalog: Projects }
 export const AGENTES_COM_CONVERSA = ["claude", "codex", "antigravity"];
 /** Agentes com uso de conta (5 h e semana) que o OMNI consegue ler. */
 export const AGENTES_COM_USO = ["claude", "codex", "antigravity"];
+/** Nome de cada agente para a tela, na ordem em que aparecem nas listas. */
+export const NOME_DO_AGENTE: Record<string, string> = { claude: "Claude", codex: "Codex", antigravity: "Antigravity", cursor: "Cursor" };
 export function temConversa(provider: string | null | undefined): boolean {
   return !provider || AGENTES_COM_CONVERSA.includes(provider);
 }
@@ -131,6 +133,35 @@ type Transporte = (path: string, init: RequestInit) => Promise<Response>;
 let transporte: Transporte = (path, init) => fetch(path, init);
 export function usarTransporte(novo: Transporte) {
   transporte = novo;
+}
+
+/** Um comando `/` do agente (`GET /conversas/{id}/comandos`). `origem`: `cli`, `seu`, `projeto`,
+ *  `skill` ou `plugin`. */
+export interface Comando { nome: string; descricao: string; origem: string }
+
+/** Quem abre um arquivo citado na conversa. Só o app do PC tem onde abrir (`usarAbrirArquivo` em
+ *  `src/main.tsx`); na web e no celular fica `null` e o caminho continua texto. */
+let abridor: ((caminho: string) => void) | null = null;
+export function usarAbrirArquivo(novo: ((caminho: string) => void) | null) {
+  abridor = novo;
+}
+export function abridorDeArquivo() {
+  return abridor;
+}
+
+/** Sem barra, só extensão conhecida: `console.log` e `i.e` não são arquivo. */
+const EXTENSOES = /\.(tsx?|jsx?|mjs|cjs|json|mdx?|css|scss|html?|rs|toml|ya?ml|py|go|java|kt|swift|cs|cpp|hpp|c|h|rb|php|sh|ps1|sql|txt|lock|xml|svg|vue|svelte|ini)$/i;
+
+/** O texto parece um arquivo (`src/App.tsx:42`, `Cargo.toml`, `D:\proj\a.rs`) e não uma URL. */
+export function pareceArquivo(texto: string): boolean {
+  const caminho = semLocal(texto.trim());
+  if (!caminho || /\s/.test(caminho) || caminho.includes("://") || !/^[\w@~.\\/:+-]+$/.test(caminho)) return false;
+  return /[\\/]/.test(caminho) ? /\.[A-Za-z]\w{0,9}$/.test(caminho) : EXTENSOES.test(caminho);
+}
+
+/** Tira a posição que o agente cola no caminho: `:42`, `:42:7`, `#L42`, `#L42-L50`. */
+export function semLocal(caminho: string): string {
+  return caminho.replace(/(?::\d+(?::\d+)?|#L\d+(?:-L?\d+)?)$/, "");
 }
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {

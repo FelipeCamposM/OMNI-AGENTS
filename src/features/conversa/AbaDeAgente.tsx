@@ -10,6 +10,7 @@ import { EVENTO_ANEXAR, EVENTO_ARRASTANDO, tipoPelaExtensao } from "../../mobile
 import { ConversationDetail } from "../../mobile/MobileApp";
 import { listTerminalSessions } from "../terminal/terminalService";
 import { useSessionProvider } from "../terminal/sessionProviders";
+import { GitBranchStatus } from "../git/GitBranchStatus";
 import { temConversa } from "../../mobile/api";
 import type { AgentView } from "../../types/settings";
 import "../../mobile/mobile.css";
@@ -125,12 +126,8 @@ function AbasDoAgente({ vendo, onTrocar }: { vendo: "conversa" | "terminal"; onT
   );
 }
 
-const ESTADO: Record<string, string> = {
-  working: "Trabalhando", answered: "Pronta para a próxima mensagem", approval_required: "Esperando sua aprovação",
-  stopped: "Sessão encerrada", orphan: "Sessão anterior", crashed: "A sessão caiu",
-};
-
-/** Título e estado da conversa, à direita das abas — o que a web mostra no topo. */
+/** Título e etiqueta de status da conversa, à direita das abas. Parada e pronta não mostra nada: só o
+ *  que pede olhar (trabalhando, aprovar, interrompido). O motivo de uma parada fica no tooltip. */
 function ResumoDaConversa({ conversa }: { conversa: Conversation }) {
   const status = statusDaConversa(
     { state: (conversa.capabilities?.approve ? "approval_required" : conversa.state) as TerminalSession["state"],
@@ -139,10 +136,9 @@ function ResumoDaConversa({ conversa }: { conversa: Conversation }) {
   );
   const aviso = conversa.notice === "usage_limit" ? "Parou no limite de uso" : conversa.notice === "api_error" ? "Parou num erro da API" : null;
   return (
-    <div className="aba-agente-resumo" title={conversa.title}>
+    <div className="aba-agente-resumo" title={aviso ? `${conversa.title} — ${aviso}` : conversa.title}>
       {conversa.provider && <AgentIcon provider={conversa.provider} size={14} className="shrink-0" />}
       <span className="aba-agente-titulo">{conversa.title}</span>
-      <span className="aba-agente-estado">{aviso ?? ESTADO[conversa.state ?? ""] ?? "Sem sessão aberta"}</span>
       <EtiquetaDoStatus status={status} />
     </div>
   );
@@ -203,6 +199,8 @@ function useSoltarArquivos(area: React.RefObject<HTMLDivElement | null>) {
 function ChatDaSessao({ sessionId, onVerTerminal }: { sessionId: string; onVerTerminal: () => void }) {
   const [conversa, setConversa] = useState<Conversation | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  /** Pasta da sessão (projeto ou worktree): é dela a branch mostrada no topo. */
+  const [pasta, setPasta] = useState<string | null>(null);
   const area = useRef<HTMLDivElement>(null);
   useSoltarArquivos(area);
   // O estado no topo acompanha o agente (a conversa acima é lida uma vez, para montar o chat).
@@ -217,6 +215,7 @@ function ChatDaSessao({ sessionId, onVerTerminal }: { sessionId: string; onVerTe
       if (tentativa > 0) await new Promise((resolve) => setTimeout(resolve, 800 * tentativa));
       try {
         const sessao = (await listTerminalSessions()).find((item) => item.id === sessionId);
+        if (sessao?.cwd) setPasta(sessao.cwd);
         if (!sessao?.conversation_id) {
           ultimoErro = "Esta aba ainda não tem uma conversa registrada. Mande a primeira mensagem pelo terminal.";
           continue;
@@ -245,6 +244,7 @@ function ChatDaSessao({ sessionId, onVerTerminal }: { sessionId: string; onVerTe
         <AbasDoAgente vendo="conversa" onTrocar={(aba) => { if (aba === "terminal") onVerTerminal(); }} />
         <span className="flex-1" />
         {(aoVivo ?? conversa) && <ResumoDaConversa conversa={(aoVivo ?? conversa)!} />}
+        {pasta && <GitBranchStatus projectPath={pasta} />}
       </div>
       {conversa ? (
         <div className="w-painel-central">

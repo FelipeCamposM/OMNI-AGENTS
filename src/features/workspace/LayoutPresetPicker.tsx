@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { LayoutPreset, WorkspaceAction } from "../../types/workspace";
-import { GlifoColunas, GlifoGrade, GlifoLinhas, GlifoPrincipalLateral } from "../../components/ui/PixelGlyph";
+import type { WorkspaceAction } from "../../types/workspace";
+import { GlifoGrade } from "../../components/ui/PixelGlyph";
+import { celulas, LAYOUT_PRESETS, type Molde } from "./layoutPresets";
 
-const PRESETS: { id: LayoutPreset; Glifo: () => JSX.Element; label: string }[] = [
-  { id: "columns-2", Glifo: GlifoColunas, label: "2 colunas" },
-  { id: "rows-2", Glifo: GlifoLinhas, label: "2 linhas" },
-  { id: "grid-2x2", Glifo: GlifoGrade, label: "Grade 2×2" },
-  { id: "main-plus-side", Glifo: GlifoPrincipalLateral, label: "Principal + lateral" },
-];
+/** Miniatura do layout: cada painel é um bloco, com o mesmo vão de pixel do resto do app. */
+function Miniatura({ molde }: { molde: Molde }) {
+  return (
+    <svg width={40} height={28} viewBox="0 0 40 28" shapeRendering="crispEdges" aria-hidden className="layout-miniatura">
+      {celulas(molde, { x: 0, y: 0, w: 40, h: 28 }, 2).map((c, i) => <rect key={i} x={c.x} y={c.y} width={c.w} height={c.h} />)}
+    </svg>
+  );
+}
 
 interface LayoutPresetPickerProps {
   dispatch: React.Dispatch<WorkspaceAction>;
@@ -69,21 +72,23 @@ export function LayoutPresetPicker({ dispatch }: LayoutPresetPickerProps) {
           ref={listaRef}
           role="dialog"
           aria-label="Layouts prontos"
-          style={{ position: "fixed", top: pos.top, right: pos.right, minWidth: 180 }}
-          className="popover z-50 p-1 space-y-0.5"
+          style={{ position: "fixed", top: pos.top, right: pos.right }}
+          className="popover z-50 grid grid-cols-4 gap-1 p-1.5"
         >
-          {PRESETS.map((preset) => (
+          {LAYOUT_PRESETS.map((preset) => (
             <button
               key={preset.id}
               type="button"
+              title={preset.label}
+              aria-label={preset.label}
               onClick={() => {
                 dispatch({ type: "APPLY_LAYOUT_PRESET", preset: preset.id });
                 setAberto(false);
               }}
-              className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-text-secondary hover:text-text-primary hover:bg-overlay/[0.07] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              className="layout-opcao"
             >
-              <span aria-hidden="true" className="text-accent"><preset.Glifo /></span>
-              {preset.label}
+              <Miniatura molde={preset.molde} />
+              <span>{preset.label}</span>
             </button>
           ))}
         </div>,

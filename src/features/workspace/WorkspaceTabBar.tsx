@@ -1,7 +1,7 @@
 import { GlifoFechar, GlifoMais } from "../../components/ui/PixelGlyph";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChatIcon, KanbanIcon, ListIcon, TerminalIcon, GitBranchIcon } from "../../components/ui/PixelIcon";
+import { ChatIcon, CircuitIcon, KanbanIcon, ListIcon, TerminalIcon, GitBranchIcon } from "../../components/ui/PixelIcon";
 import { AGENT_ICON } from "../../components/ui/AgentIcon";
 import { useSession, useSessionProvider } from "../terminal/sessionProviders";
 import { EditableLabel } from "../../components/ui/EditableLabel";
@@ -24,9 +24,10 @@ export function WorkspaceTabBar({ pane, dispatch, onCloseTab, dirtyTabIds }: Wor
       role="tablist"
       aria-label="Tabs do painel"
     >
-      {pane.tabs.map((item) => (
+      {pane.tabs.map((item, index) => (
         <div
           key={item.id}
+          data-tab-index={index}
           onPointerDown={(event) => {
             if ((event.target as HTMLElement).closest("button[aria-label]")) return;
             startTabDrag(event, { paneId: pane.id, tabId: item.id, title: item.title }, dispatch);
@@ -69,6 +70,7 @@ export function WorkspaceTabBar({ pane, dispatch, onCloseTab, dirtyTabIds }: Wor
 export const NEW_TAB_OPTIONS: { kind: PaneKind; title: string; hint: string }[] = [
   { kind: "agent", title: "Novo agente", hint: "Abre o seletor de CLI (Claude, Codex, Cursor…)" },
   { kind: "terminal", title: "Novo terminal", hint: "Shell do sistema, sem agente" },
+  { kind: "fluxos", title: "Fluxos de agentes", hint: "Editor e execuções dos fluxos, como um painel" },
 ];
 
 /** O "+" abre um menu em vez de criar agente direto — terminal puro e agente são as duas coisas
@@ -224,6 +226,7 @@ const ICONE_POR_KIND: Partial<Record<PaneNode["tabs"][number]["kind"], React.Com
   terminal: TerminalIcon,
   command: ListIcon,
   kanban: KanbanIcon,
+  fluxos: CircuitIcon,
   "git-graph": GitBranchIcon,
   "git-diff": GitBranchIcon,
 };

@@ -132,16 +132,44 @@ Verificação atual:
 3. Ações explícitas de clear/copy/paste no terminal.
 4. Command palette e persistência SQLite (continuam adiadas, retomar depois do item 1).
 
-### Ideia aprovada, não iniciada: prompt por voz (2026-10-18)
-Pedido do usuário: "inserir prompt falando". Desenho combinado (estilo OpenWhispr), **nada implementado ainda**:
-- [ ] **Modelo opcional**: Whisper local (whisper.cpp, ~75–150 MB) baixado só se a pessoa quiser, em
-  Configurações. **Sem o modelo baixado, a funcionalidade não aparece em lugar nenhum** (nem botão de microfone).
-- [ ] Gravação no app (PC, web do PC e celular); o áudio vai para o engine, que transcreve no PC — nada sai da máquina.
-  Celular/web: o navegador só libera microfone em HTTPS (o acesso hoje é `http://100.x` do Tailscale) — resolver antes.
-- [ ] Vocabulário do projeto como dica ao Whisper (`initial_prompt`: nomes de arquivos, "Tauri", "Claude"…) para errar menos termo técnico.
-- [ ] Correção da transcrição crua com IA (pontuação, hesitações, palavras trocadas, sem mudar o sentido).
-- [ ] O texto corrigido cai **no campo para revisar**; nunca envia sozinho.
-- Enquanto isso, no celular o microfone do próprio teclado (Gboard/iOS) já dita no campo.
+### Prompt por voz (implementado 2026-10-19, ainda não publicado)
+Pedido do usuário: "inserir prompt falando", estilo OpenWhispr. Desenho aprovado em 2026-10-18 e entregue:
+- [x] **Modelo opcional**: `ggml-small-q5_1.bin` (~190 MB, multilíngue) baixado só em Configurações → Geral → Voz
+  (`VozCard` em `src/components/SettingsView.tsx`). **Sem o modelo, o microfone não aparece em lugar nenhum.**
+  Download pelo `curl` do sistema para `<dados do engine>/voz/`, conferido por tamanho + SHA-256 antes de virar o
+  modelo (`.part` até lá). Dá para remover (libera disco e a RAM do modelo).
+- [x] **Transcrição no PC** com whisper.cpp via `whisper-rs 0.16` dentro do engine (`crates/omni-engine/src/voz.rs`).
+  Rotas: `GET /voz`, `POST /voz/baixar|remover|ajustes`, `POST /conversas/{id}/voz` (PCM 16 bits 16 kHz mono, até 5 min).
+  O navegador captura PCM cru (`AudioContext` + `ScriptProcessor`) e reamostra para 16 kHz (`src/mobile/voz.ts`):
+  o engine não precisa de decodificador.
+- [x] **Transcrição ao vivo por trechos** (pedido 2026-10-19, "no OpenWhispr vai transcrevendo enquanto falo"):
+  `criarCortador` corta a fala nas pausas (≥0,6 s de silêncio com trecho ≥2 s, ou 20 s seguidos; silêncio puro nunca
+  vira trecho — o whisper alucina "Obrigado."). Cada trecho vai em fila para `POST /conversas/{id}/voz` e o texto entra
+  no campo enquanto a pessoa fala; a correção por IA roda uma vez no fim (`POST /conversas/{id}/voz/corrigir`) e só
+  troca o fim do campo se ainda for a fala crua. No engine, `set_audio_ctx` do tamanho do trecho (piso 768 = 15 s) —
+  sem isso o whisper codifica sempre 30 s e um trecho de 4 s custava ~7 s — e threads = núcleos físicos (8 threads
+  num 6c/12t era instável, 3–10 s). Medido (Ryzen 5 3600, fala de 10 s com uma pausa): 1ª frase aparece ~3 s depois
+  de dita, texto pronto **~2,8 s depois de parar** (antes: ~5–7 s, tudo só no fim). Janela cheia (1500) dava ~7 s por
+  trecho — inviável ao vivo. Custo: a janela reduzida às vezes repete palavra (1 em 6 execuções: "Boi-boi-boi").
+- [x] **Vocabulário do projeto** como `initial_prompt` (nome do projeto + entradas da raiz, sem ocultos/node_modules/target).
+- [x] **Correção com IA opcional** (desligada por padrão): `claude -p --model haiku` com `--tools "" --strict-mcp-config
+  --no-session-persistence --system-prompt` — ~6 s a mais (sem esses flags eram ~20 s) e não suja o histórico do Claude.
+  Instrução mantém palavras/conjugação/tom. Falhou → volta a transcrição crua.
+- [x] Texto **cai no campo para revisar**, nunca envia sozinho (`BotaoDeVoz` em `src/mobile/Composer.tsx`). Botão só com
+  `transcrever` + página segura (`isSecureContext`) + `getUserMedia`; gravando: vermelho pulsando + tempo.
+- [x] Build: `scripts/build-engine.mjs` passa `GGML_NATIVE=OFF` + piso AVX2/FMA/F16C/BMI2 em x86_64 (senão o binário do
+  CI levaria as instruções da CPU do runner e travaria em outros PCs) e, no MSVC, `CMAKE_<LANG>_FLAGS_RELEASE` com `-O2`
+  (o crate `cmake` tirava a otimização: **52 s → 5 s**). O engine confere a CPU (`cpu_suporta`) antes de oferecer a voz.
+  No Windows precisa de LLVM (`winget install LLVM.LLVM`, para o bindgen) e CMake (pego do VS Build Tools automaticamente).
+- [x] macOS: `src-tauri/Info.plist` com `NSMicrophoneUsageDescription` (sem ela o macOS mata o app no 1º acesso ao microfone).
+- Testes: `voz::tests` (4, Rust) e `src/test/Voz.test.tsx` (6, incluindo o cortador). Ponta a ponta na web do engine de teste com microfone
+  falso do Chromium tocando fala pt-BR sintetizada → texto certo no campo.
+- **Pendente / limites conhecidos**:
+  - Celular/web pelo `http://100.x` do Tailscale: o navegador não libera microfone → botão escondido (usar o ditado do
+    teclado). Resolver com HTTPS (`tailscale serve`) se quiser voz no celular.
+  - Não testado em Mac nem Linux reais; no Linux o WebKitGTK costuma não ter `getUserMedia` → botão some.
+  - Limiar de silêncio fixo (RMS 0,01): ambiente muito barulhento nunca "pausa" e cai no corte de 20 s.
+  - CI ainda não rodou com o whisper (precisa de libclang/cmake nos runners — devem ter; conferir no próximo push).
 
 ## Múltiplos workspaces + painel de arquivos (entregue 2026-08-27)
 
@@ -2785,6 +2813,25 @@ Deixar claro nas Configurações que o acesso remoto serve para celular **e** ou
 - Engine: 82. Front: 366.
 - Artefato do teste da CLI: fork `95b3b3c0-…` da "Teste visual 2" em `~/.claude`, projeto domus.
 
+### Fork vazio (corrigido 2026-10-19, sem release)
+Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo histórico". Duas causas:
+- [x] **Terminal parado para sempre.** O ConPTY manda `ESC[6n` ao criar a PTY e espera a resposta. Só o
+  xterm respondia (o engine só em sessão "headless", do celular). O fork abre na visão Conversa, sem
+  xterm; ao trocar para Terminal, o xterm reproduz o `ESC[6n` como histórico e não responde. O bash
+  ficava vivo, sem filho, e o `claude` nunca rodava (confirmado no app instalado: saída inteira = `ESC[6n`).
+  Conserto: o **engine responde sempre** (`answer_terminal_queries`, posição pelo `vt100`) e
+  `write_terminal` descarta respostas de cursor vindas do cliente (`sem_respostas_de_cursor`), que
+  chegariam em dobro. Saiu o `headless` de `LiveSession`/`SessionOrigin`. Limite: Shift+F3 (`ESC[1;2R`)
+  também some.
+- [x] **Conversa vazia até a 1ª mensagem.** O Claude só grava o `.jsonl` do fork na primeira mensagem.
+  `bifurcar` agora põe antes do segmento novo os segmentos da original com `historico_ate_ms` = hora do
+  fork (`Segment` em `omni-core/src/conversations.rs`); a timeline e `feed::imagem` ignoram o que a
+  original ganhar depois (`feed::ate`). As mensagens copiadas têm o mesmo uuid (conferido: 422 de 437)
+  e não duplicam.
+- Ponta a ponta no engine de teste, sem responder `ESC[6n`: fork de uma conversa de 1 MB → Claude aberto
+  com o histórico em ~6 s e timeline do fork com 21 mensagens antes de qualquer mensagem nova.
+  Esta conversa (275 MB) bifurca em 16 s pelo `-p` (cópia de 2 MB). Testes: core 73 (+1), engine 105.
+
 ## Anexar arrastando e colando, qualquer tipo (2026-10-14, sem release)
 
 - [x] Qualquer tipo de arquivo sempre foi aceito (sem `accept`); o que faltava era o caminho de
@@ -3322,3 +3369,84 @@ Deixar claro nas Configurações que o acesso remoto serve para celular **e** ou
   familia_e_esforco, modelo_da_sessao}`; engine guarda o `agy models` por 1 dia (`modelos-antigravity.txt`),
   `/opcoes` lista famílias com seus esforços e o modelo atual; `comando_de_retomada` monta
   `agy --model … --effort … --conversation <id>` e o reinício preserva. Conta: só a nativa (seletor some).
+
+### 2026-10-19 — Troca de modelo do Antigravity logo após a 1ª mensagem + reordenar abas
+
+- [x] Antigravity: a faixa de modelo travava em "Mande a primeira mensagem antes de trocar". O id da
+      conversa do agy só nasce na 1ª mensagem e o índice só o recebe na descoberta seguinte; a faixa
+      lia as opções uma vez. `id_externo` (`crates/omni-engine/src/mobile.rs`) lê o id do log da
+      sessão quando falta no índice (usado em `/opcoes` e no "Aplicar"); `AjustesDaConversa.tsx`
+      relê as opções a cada fim de turno. Verificado num engine isolado: trocar logo após a 1ª
+      resposta reabre a mesma conversa em Gemini 3.8 Flash · low.
+- [x] Reordenar abas no mesmo painel: soltar uma aba sobre outra (metade esquerda = antes, direita =
+      depois). `MOVE_TAB` ganhou `index` (`workspaceReducer.ts`, `tabPointerDrag.ts`,
+      `WorkspaceTabBar.tsx` com `data-tab-index`); teste em `workspaceReducer.test.ts`.
+- [x] CLI órfã ao fechar/parar/reiniciar aba (Windows): o `kill` da PTY só derrubava o shell.
+      `matar_arvore` (`crates/omni-engine/src/main.rs`, `taskkill /T`) em `close_session`,
+      `stop_session` e `restart_session`. Verificado num engine isolado: `ping` filho some ao fechar.
+      macOS/Linux ficam no SIGHUP da PTY (ponytail anotado).
+- [x] Menu do Claude só de setas, sem números ("We recommend compacting earlier", rodapé
+      "↑/↓ choose · enter confirm · esc not now"): travava o campo e a conversa dizia "entrada não
+      reconhecida". `escolha_por_setas` (`interaction.rs`, teste `escolha_de_setas_sem_numero`) vira
+      cartão de pergunta; resposta anda com ↑/↓ da opção marcada (`mobile.rs`).
+- [x] Selecionar e copiar (Ctrl+C) texto das mensagens na Conversa do desktop: o `body` barra
+      seleção; a bolha ganhou `selectable` (`src/mobile/Chat.tsx`). Realce da seleção na cor da
+      paleta (`::selection` com `--c-selected` em `src/index.css`), não no azul do sistema.
+- [x] "Mais modelos" do Claude no seletor da conversa: `MODELOS_CLAUDE` (`mobile.rs`) ganhou dica e
+      seção, com as versões fixas que o `/model` da CLI 2.1.304 lista (Fable 5, Opus 5, Sonnet 5,
+      Haiku 4.5, Opus 4.8/4.7/4.6, Sonnet 4.6); `Select` aceita `section` (cabeçalho de grupo) e os
+      menus dos chips foram redesenhados (`mobile.css`, `.select-secao` em `index.css`). Codex e
+      Antigravity já listam tudo o que a conta enxerga. Pendente: conferir na tela.
+- [x] Gasto de tokens na troca de conta (diagnóstico 19/10: conversas de 400–550k relidas a cada
+      passo; o cache não passa entre contas; órfãos de failover em "continuing automatically at 1am"
+      e o "continue" desistindo em 2 min). Feito:
+      - Compactação configurável (Configurações → Agentes → `CompactacaoCard`, engine
+        `compactacao.json` + `GET/POST /compactacao`): janela 400k/1M via
+        `CLAUDE_CODE_AUTO_COMPACT_WINDOW` no ambiente de toda sessão (`ambiente_do_terminal`) e
+        `autoCompactEnabled: true` no settings.json da conta antes de abrir (`garantir_autocompact`,
+        edita o texto sem reordenar).
+      - Opção 1, antes do limite: agente parado + uso ≥ limiar → `/compact` na conta atual
+        (`talvezCompactarAntes` em `TerminalPane.tsx`, uma vez por conversa/janela).
+      - Opção 2, depois da troca: conversa ≥ 60k → fila `/compact` e só depois "continue"
+        (`continuarRef.mensagens`); espera da conta nova 2 → 10 min.
+      - Chip "Contexto 132k / 400k" na caixa de texto (`context_tokens`/`context_window` no
+        `/opcoes`, lido do `usage` da última resposta em `runtime.rs`).
+      Pendente: testar ao vivo o `/compact` pela rota de prompt e a troca real de conta.
+      Correção (20/10): abrir uma conversa parada de 80k mandou `/compact` sozinho. Agora a opção 1
+      exige o agente ter trabalhado nesta aba nos últimos 3 min (`ACABOU_DE_TRABALHAR_MS`) e a
+      opção 2 só compacta quando a troca pegou uma tarefa no meio. Teste de regressão no
+      `TerminalPane.test.tsx`.
+- [x] Git no topo da conversa: branch (destacada, cor da paleta), Pull e "Ver grafo" saíram do
+      rodapé (que ficou só com a conta do git) para o topo da Conversa (`GitBranchStatus` em
+      `AbaDeAgente.tsx`, pasta = `cwd` da sessão; popover agora abre para baixo). Grafo em modal
+      (`GitGraphModal`) com "Fetch from remote" (`git_fetch` = `fetch --all --prune` em
+      `src-tauri/src/git_client.rs`). Topo sem o texto "Pronta para a próxima mensagem": só a
+      etiqueta de status, motivo da parada no tooltip. Composer: anexo e microfone junto do enviar.
+      Atalho de nova branch agora vive no topo da conversa (sem aba de agente aberta, não abre).
+- [x] Rodapé repaginado (`.rodape-app` em `index.css`, `RodapeDoProjeto`): avatar do GitHub
+      (`github.com/<login>.png`, inicial como reserva; ponto verde/amarelo = estado do git), filete
+      entre grupos e selo "Engine online". CSP `img-src` liberou `github.com` e
+      `avatars.githubusercontent.com`. Anexo e microfone com a mesma altura/borda do Parar/Enviar,
+      colados como grupo (`.composer-direita .composer-botao`). Pendente: conferir na tela.
+
+## Pedido 2026-10-19: splits, /comandos, fluxos em painel, arquivo clicável, uso de todas as IAs (sem release)
+- [x] **Uso de todas as IAs**: painel do rodapé (`UsoDeTodasAsContas.tsx`) lista Claude, Codex, Antigravity e Cursor (antes só Claude/Codex). Medidor em 20 blocos de pixel (`.uso-blocos`). Cursor aparece sem medidor: a CLI só informa o plano (`agent about`), não o consumo. Rodapé mostra "sem medidor de uso" para Cursor. `NOME_DO_AGENTE` único em `mobile/api.ts` (chat mostrava "antigravity" cru).
+- [x] **Mais layouts**: 12 moldes em `features/workspace/layoutPresets.ts` (3/4 colunas, 3 linhas, grade 3×2, lateral+principal, principal+3, principal em cima/embaixo…). O molde monta a árvore e desenha a miniatura do seletor (grade 4×3).
+- [x] **Fluxos como painel**: `PaneKind` "fluxos"; "Fluxos de agentes" na lateral abre aba no painel ativo (sem projeto: tela cheia). Editor responsivo por `@container` (laterais empilham em painel estreito).
+- [x] **Arquivo citado clicável (só app do PC)**: `código` com cara de arquivo, link relativo `[x](src/a.ts#L1)` e ações Leu/Editou/Escreveu abrem o arquivo (`usarAbrirArquivo` em `main.tsx` → evento `omni:abrir-arquivo` → `App`). Web/celular: texto. Teste `src/test/ArquivoCitado.test.tsx`.
+- [x] **`/` no chat**: a rota `prompt` não recusa mais `/comando` (só caractere de controle). Conferido
+  no Claude 2.1.304 que `/context` colado (bracketed paste, como o engine manda) + Enter executa como
+  comando. `omni-core/src/comandos.rs` lista por agente — Claude: embutidos (inclui as skills da CLI:
+  code-review, simplify, loop…), `commands/**.md` da conta e do projeto (subpasta = `ns:nome`),
+  `skills/*/SKILL.md` da conta e do projeto, plugins **ligados** (`installed_plugins.json` +
+  `enabledPlugins`; escopo projeto só na pasta dele; `_*.md` ignorado). Codex: embutidos +
+  `prompts/*.md` → `prompts:nome`. Sai só nome/descrição. Rota `GET /conversas/{id}/comandos` (conta do
+  último segmento). Composer: menu ao digitar `/` no começo; Tab completa, Enter completa ou envia se
+  já é o comando exato. Na conta real: 98 itens (26 embutidos, 12 skills, 60 de plugins).
+  Testes: `comandos::tests` (2), `src/test/ComandosBarra.test.tsx` (3).
+  Limite: Antigravity e Cursor sem lista (o `/` ainda envia).
+- Suíte do front: 68 arquivos passam com 4 threads; com o paralelismo padrão, 2 testes de tempo
+  (diferentes a cada rodada) falham com o `npm run dev` rodando junto — isolados, passam.
+- Faltou: print ponta a ponta do clique em arquivo no app.
+- Artefato de teste: uma conversa "C:/Program Files/Git/context" no histórico do OMNI-AGENTS (o Git Bash
+  converteu o argumento `/context` do meu script; virou prompt e bateu no limite da conta).

@@ -27,9 +27,9 @@ beforeEach(() => {
 describe("GitBranchStatus", () => {
   it("mostra a branch e puxa no clique", async () => {
     render(<GitBranchStatus projectPath="/dev/projeto" />);
-    expect(await screen.findByText("⎇ main")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "main" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "pull" }));
+    await userEvent.click(screen.getByRole("button", { name: "Pull" }));
     await waitFor(() => expect(gitPull).toHaveBeenCalledWith("/dev/projeto"));
     expect(await screen.findByText("Already up to date.")).toBeInTheDocument();
   });
@@ -37,7 +37,7 @@ describe("GitBranchStatus", () => {
   it("pull recusado mostra o motivo do git", async () => {
     gitPull.mockRejectedValueOnce(new Error("fatal: Not possible to fast-forward, aborting."));
     render(<GitBranchStatus projectPath="/dev/projeto" />);
-    await userEvent.click(await screen.findByRole("button", { name: "pull" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Pull" }));
     expect(await screen.findByText(/Not possible to fast-forward/)).toBeInTheDocument();
   });
 
@@ -50,14 +50,14 @@ describe("GitBranchStatus", () => {
 
   it("clicar na branch abre a lista e troca para outra", async () => {
     render(<GitBranchStatus projectPath="/dev/projeto" />);
-    await userEvent.click(await screen.findByRole("button", { name: /⎇ main/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "main" }));
     await userEvent.click(await screen.findByRole("button", { name: /feat\/logo/ }));
     await waitFor(() => expect(gitCheckoutBranch).toHaveBeenCalledWith("/dev/projeto", "feat/logo", false));
   });
 
   it("nome que não existe vira branch nova a partir da atual", async () => {
     render(<GitBranchStatus projectPath="/dev/projeto" />);
-    await userEvent.click(await screen.findByRole("button", { name: /⎇ main/ }));
+    await userEvent.click(await screen.findByRole("button", { name: "main" }));
     await userEvent.type(await screen.findByLabelText(/nome da branch nova/i), "fix/rodape");
     await userEvent.click(screen.getByRole("button", { name: /Criar .fix\/rodape. a partir de main/ }));
     await waitFor(() => expect(gitCheckoutBranch).toHaveBeenCalledWith("/dev/projeto", "fix/rodape", true));
@@ -65,14 +65,22 @@ describe("GitBranchStatus", () => {
 
   it("o atalho abre direto o campo de nome", async () => {
     render(<GitBranchStatus projectPath="/dev/projeto" />);
-    await screen.findByRole("button", { name: /⎇ main/ });
+    await screen.findByRole("button", { name: "main" });
     window.dispatchEvent(new KeyboardEvent("keydown", { key: "B", code: "KeyB", ctrlKey: true, shiftKey: true, bubbles: true }));
     expect(await screen.findByLabelText(/nome da branch nova/i)).toBeInTheDocument();
   });
 
-  it("o popover é fixo — o rodapé tem overflow-hidden e recortaria um absolute", async () => {
+  it("Ver grafo abre o grafo num modal e Esc fecha", async () => {
     render(<GitBranchStatus projectPath="/dev/projeto" />);
-    await userEvent.click(await screen.findByRole("button", { name: /⎇ main/ }));
+    await userEvent.click(await screen.findByRole("button", { name: /Ver grafo/ }));
+    expect(await screen.findByRole("dialog", { name: "Git Graph" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Git Graph" })).not.toBeInTheDocument());
+  });
+
+  it("o popover é fixo — o topo da conversa recortaria um absolute", async () => {
+    render(<GitBranchStatus projectPath="/dev/projeto" />);
+    await userEvent.click(await screen.findByRole("button", { name: "main" }));
     const dialogo = await screen.findByRole("dialog", { name: "Branches" });
     expect(dialogo.className).toContain("fixed");
     expect(dialogo.className).not.toContain("absolute");

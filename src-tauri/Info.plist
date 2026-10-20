@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- O Tauri mescla este arquivo no Info.plist do app no macOS. Sem a descrição do microfone, o macOS
+     encerra o app no primeiro acesso ao microfone (prompt por voz, Composer → BotaoDeVoz). -->
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>O OMNI AGENTS usa o microfone para transformar sua fala em texto no prompt. O áudio é transcrito no próprio computador.</string>
+</dict>
+</plist>

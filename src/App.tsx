@@ -1,10 +1,12 @@
 import { TitleBar } from "./components/TitleBar";
 import { LayoutPresetPicker } from "./features/workspace/LayoutPresetPicker";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppBackground } from "./components/backgrounds/AppBackground";
 import { SettingsView } from "./components/SettingsView";
 import { Sidebar } from "./components/Sidebar";
-import { fileKind } from "./features/files/filesService";
+import { fileKind, joinPath } from "./features/files/filesService";
+import { semLocal } from "./mobile/api";
+import { EVENTO_ABRIR_ARQUIVO } from "./mobile/anexos";
 import { QuickOpen } from "./features/files/QuickOpen";
 import { useWorkspace } from "./features/workspace/useWorkspace";
 import { collectResourceIds, findPane } from "./features/workspace/workspaceReducer";
@@ -156,6 +158,22 @@ export function App() {
     setView("workspace");
   }
 
+  // Arquivo citado na conversa (`src/App.tsx:42`): relativo é do projeto, absoluto vale como está.
+  // Fora do projeto o painel recusa ler, como em qualquer arquivo aberto.
+  const abrirCitado = useRef(openFile);
+  abrirCitado.current = openFile;
+  const projetoDaCitacao = activeProject?.path ?? null;
+  useEffect(() => {
+    if (!projetoDaCitacao) return;
+    const abrir = (evento: Event) => {
+      const caminho = semLocal((evento as CustomEvent<string>).detail).replace(/^\.[\\/]/, "");
+      const absoluto = /^([A-Za-z]:)?[\\/]/.test(caminho) ? caminho : joinPath(projetoDaCitacao, caminho);
+      abrirCitado.current(absoluto, fileKind(absoluto));
+    };
+    window.addEventListener(EVENTO_ABRIR_ARQUIVO, abrir);
+    return () => window.removeEventListener(EVENTO_ABRIR_ARQUIVO, abrir);
+  }, [projetoDaCitacao]);
+
   /** Reabre uma conversa do Histórico num terminal do projeto dela — adicionando o projeto ao
    *  workspace ativo se ele ainda não estiver aberto em nenhum. */
   async function resumeHistory(entry: HistoryEntry, profileId: string = entry.profile_id) {
@@ -257,7 +275,13 @@ export function App() {
         showSettings={view === "settings"}
         showHistory={view === "history"}
         showFluxos={view === "fluxos"}
-        onOpenFluxos={() => setView("fluxos")}
+        onOpenFluxos={() => {
+          // Com projeto aberto, o fluxo é uma aba como as outras (divide, arrasta, fica ao lado do
+          // agente). Sem projeto, só existem os fluxos globais: tela cheia.
+          if (!activeProject) { setView("fluxos"); return; }
+          dispatch({ type: "CREATE_TAB", paneId: activeProject.activePaneId, kind: "fluxos", title: "Fluxos de agentes" });
+          setView("workspace");
+        }}
         onOpenHistory={openHistory}
         onHome={() => setView("workspace")}
         onAddProject={(path) => {

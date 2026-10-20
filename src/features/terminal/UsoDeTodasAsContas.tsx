@@ -7,32 +7,43 @@ import { resetShort, usageTone } from "../../lib/uso";
 import type { Usage, UsageWindow } from "./AccountUsage";
 import { listProfiles, type Profile } from "./terminalService";
 import { timeAgo } from "./AgentUsageStatus";
-import { AGENTES_COM_USO } from "../../mobile/api";
+import { AGENTES_COM_USO, NOME_DO_AGENTE } from "../../mobile/api";
 
-const AGENTE: Record<string, string> = { claude: "Claude", codex: "Codex" };
+/** Blocos do medidor: 5% cada, no passo do pixel do resto do app. */
+const BLOCOS = 20;
 
-function Janela({ rotulo, janela }: { rotulo: string; janela: UsageWindow | null }) {
+/** Medidor em blocos: quantos estão acesos diz o consumo, a cor diz a faixa (verde/amarelo/vermelho). */
+export function Medidor({ rotulo, janela }: { rotulo: string; janela: UsageWindow | null }) {
   const usado = janela ? Math.min(100, Math.max(0, janela.used_percent)) : 0;
   const tom = janela ? usageTone(janela.used_percent) : null;
+  const acesos = janela ? Math.ceil(usado / (100 / BLOCOS)) : 0;
   const reset = resetShort(janela);
   return (
     <span className="uso-janela" title={reset ? `${rotulo}: reseta ${reset}` : undefined}>
-      <span className="text-text-secondary">{rotulo}</span>
+      <span className="uso-rotulo">{rotulo}</span>
       <span role="progressbar" aria-label={`${rotulo} consumido`} aria-valuenow={Math.round(usado)} aria-valuemin={0} aria-valuemax={100}
-        className="uso-barra">
-        {tom && <span className={`uso-barra-cheia ${tom.bar}`} style={{ width: `${usado}%` }} />}
+        className="uso-blocos">
+        {Array.from({ length: BLOCOS }, (_, i) => <span key={i} className={i < acesos ? tom?.bar : undefined} />)}
       </span>
-      <span className={`text-right font-bold tabular-nums ${tom?.text ?? "text-text-muted"}`}>
-        {janela ? `${janela.used_percent.toLocaleString("pt-BR")}%` : "—"}
+      <span className={`uso-pct ${tom?.text ?? "text-text-muted"}`}>
+        {janela ? `${Math.round(janela.used_percent)}%` : "—"}
       </span>
-      <span className="truncate text-right text-[10px] text-text-muted">{reset ? `↻ ${reset}` : ""}</span>
+      <span className="uso-reset">{reset ? `↻ ${reset}` : ""}</span>
     </span>
   );
 }
 
+/** Agentes na ordem fixa das listas; um provider desconhecido entra no fim. */
+function ordenar(contas: Profile[]): string[] {
+  const conhecidos = Object.keys(NOME_DO_AGENTE);
+  const presentes = new Set<string>(contas.map((conta) => conta.provider));
+  return [...conhecidos.filter((p) => presentes.has(p)), ...[...presentes].filter((p) => !conhecidos.includes(p))];
+}
+
 /**
  * Botão do rodapé, à esquerda do agente em foco, que abre (para cima) o uso de todas as contas de
- * Claude e Codex. Abrir só lê o cache do engine; o botão de cada conta é que consulta o `/usage`.
+ * todas as IAs. Abrir só lê o cache do engine; o botão de cada conta é que consulta o `/usage`.
+ * O Cursor entra na lista, mas a CLI dele não informa consumo — a conta aparece sem medidor.
  */
 export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline: boolean; contaAtiva: string | null }) {
   const [aberto, setAberto] = useState(false);
@@ -43,6 +54,7 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
   const [posicao, setPosicao] = useState<{ left: number; bottom: number } | null>(null);
   const botao = useRef<HTMLButtonElement>(null);
   const painel = useRef<HTMLDivElement>(null);
+  const mensuraveis = contas.filter((conta) => AGENTES_COM_USO.includes(conta.provider));
 
   // Cada abertura relê a lista e o cache: conta nova ou um /usage feito em outro lugar já aparecem.
   useEffect(() => {
@@ -50,9 +62,8 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
     let cancelado = false;
     void listProfiles().then((lista) => {
       if (cancelado) return;
-      const comUso = lista.filter((conta) => AGENTES_COM_USO.includes(conta.provider));
-      setContas(comUso);
-      for (const conta of comUso) {
+      setContas(lista);
+      for (const conta of lista.filter((c) => AGENTES_COM_USO.includes(c.provider))) {
         invoke<Usage>("account_usage", { profileId: conta.id, refresh: false })
           .then((uso) => { if (!cancelado) setUsos((atual) => ({ ...atual, [conta.id]: uso })); })
           .catch(() => undefined);
@@ -67,7 +78,7 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
     const ancorar = () => {
       const caixa = botao.current?.getBoundingClientRect();
       if (!caixa) return;
-      const largura = 384;
+      const largura = 416;
       setPosicao({
         left: Math.max(8, Math.min(caixa.left, window.innerWidth - largura - 8)),
         bottom: window.innerHeight - caixa.top + 6,
@@ -91,7 +102,7 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
   }, [aberto]);
 
   async function atualizarTodas() {
-    await Promise.all(contas.map((conta) => atualizar(conta.id)));
+    await Promise.all(mensuraveis.map((conta) => atualizar(conta.id)));
   }
 
   async function atualizar(id: string) {
@@ -110,32 +121,33 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
   return (
     <>
       <button ref={botao} type="button" aria-label="Uso de todas as contas" aria-expanded={aberto} aria-haspopup="dialog"
-        title="Uso de todas as contas" disabled={!engineOnline} onClick={() => setAberto((atual) => !atual)}
+        title="Uso de todas as IAs" disabled={!engineOnline} onClick={() => setAberto((atual) => !atual)}
         className={`shrink-0 disabled:opacity-50 ${aberto ? "text-accent" : "text-text-secondary hover:text-accent"}`}>
         <ChartIcon aria-hidden className="h-3.5 w-3.5" />
       </button>
       {aberto && posicao && createPortal(
         <div ref={painel} role="dialog" aria-label="Uso das contas" style={{ left: posicao.left, bottom: posicao.bottom }}
-          className="uso-painel fixed z-[200] flex max-h-[72vh] w-96 flex-col border-2 border-border-subtle bg-bg-elevated text-[11px] text-text-primary shadow-[0_12px_28px_rgb(0_0_0/0.35)]">
-          <div className="flex items-center gap-2 border-b border-border-subtle px-3 py-2">
+          className="uso-painel fixed z-[200] flex max-h-[72vh] w-[26rem] flex-col border-2 border-border-subtle bg-bg-elevated text-[11px] text-text-primary shadow-[0_12px_28px_rgb(0_0_0/0.35)]">
+          <div className="flex items-center gap-2 border-b-2 border-border-subtle px-3 py-2">
             <ChartIcon aria-hidden className="h-3.5 w-3.5 text-accent" />
-            <p className="flex-1 text-[10px] font-bold uppercase tracking-wider text-text-secondary">Uso das contas</p>
-            <button type="button" onClick={() => void atualizarTodas()} disabled={contas.length === 0 || atualizando.size > 0}
+            <p className="flex-1 text-[10px] font-bold uppercase tracking-wider text-text-secondary">Uso das IAs</p>
+            <button type="button" onClick={() => void atualizarTodas()} disabled={mensuraveis.length === 0 || atualizando.size > 0}
               title="Consultar o uso de todas as contas agora"
               className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-text-secondary hover:text-accent disabled:opacity-50">
               <ReloadIcon aria-hidden className={`h-3 w-3${atualizando.size > 0 ? " animate-spin" : ""}`} />Atualizar todas
             </button>
           </div>
           <div className="flex flex-col gap-3 overflow-y-auto p-2.5">
-            {contas.length === 0 && <p className="px-1 py-2 text-text-secondary">Nenhuma conta de Claude ou Codex.</p>}
-            {(["claude", "codex"] as const).map((provider) => {
+            {contas.length === 0 && <p className="px-1 py-2 text-text-secondary">Nenhuma conta de IA cadastrada.</p>}
+            {ordenar(contas).map((provider) => {
               const doAgente = contas.filter((conta) => conta.provider === provider);
-              if (doAgente.length === 0) return null;
+              const nome = NOME_DO_AGENTE[provider] ?? provider;
+              const mede = AGENTES_COM_USO.includes(provider);
               return (
-                <section key={provider} aria-label={AGENTE[provider]} className="flex flex-col gap-1.5">
-                  <p className="flex items-center gap-1.5 px-0.5 text-[10px] font-bold uppercase tracking-wider text-text-muted">
-                    <AgentIcon provider={provider} size={11} className="shrink-0" />
-                    {AGENTE[provider]}
+                <section key={provider} aria-label={nome} className="flex flex-col gap-1.5">
+                  <p className="uso-agente">
+                    <AgentIcon provider={provider} size={12} className="shrink-0" />
+                    {nome}
                     <span className="h-px flex-1 bg-border-subtle" />
                     <span className="font-normal normal-case tracking-normal">{doAgente.length} {doAgente.length === 1 ? "conta" : "contas"}</span>
                   </p>
@@ -155,19 +167,23 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
                               </span>
                               {conta.email && <span className="block truncate text-[10px] text-text-muted">{conta.email}</span>}
                             </span>
-                            <button type="button" aria-label={`Atualizar uso de ${conta.name} (${AGENTE[conta.provider]})`} title="Consultar o uso agora"
-                              disabled={girando} onClick={() => void atualizar(conta.id)} className="uso-atualizar">
-                              <ReloadIcon aria-hidden className={`h-3.5 w-3.5${girando ? " animate-spin" : ""}`} />
-                            </button>
+                            {uso?.observed_at_ms ? <span className="shrink-0 text-[10px] text-text-muted">{timeAgo(uso.observed_at_ms, Date.now())}</span> : null}
+                            {mede && (
+                              <button type="button" aria-label={`Atualizar uso de ${conta.name} (${nome})`} title="Consultar o uso agora"
+                                disabled={girando} onClick={() => void atualizar(conta.id)} className="uso-atualizar">
+                                <ReloadIcon aria-hidden className={`h-3.5 w-3.5${girando ? " animate-spin" : ""}`} />
+                              </button>
+                            )}
                           </span>
-                          {uso && uso.status !== "unavailable" ? (
+                          {!mede ? (
+                            <span className="text-text-muted">A CLI do {nome} não informa o consumo do plano.</span>
+                          ) : uso && uso.status !== "unavailable" ? (
                             <span className="flex flex-col gap-1">
-                              <Janela rotulo="5H" janela={uso.primary} />
-                              <Janela rotulo="Semana" janela={uso.secondary} />
+                              <Medidor rotulo="5H" janela={uso.primary} />
+                              <Medidor rotulo="Semana" janela={uso.secondary} />
                             </span>
                           ) : !motivo && <span className="text-text-muted">{uso ? "Sem leitura de uso ainda" : "Lendo…"}</span>}
                           {motivo && <span role="alert" className="text-warning">{motivo}</span>}
-                          {uso?.observed_at_ms ? <span className="text-[10px] text-text-muted">consultado {timeAgo(uso.observed_at_ms, Date.now())}</span> : null}
                         </li>
                       );
                     })}

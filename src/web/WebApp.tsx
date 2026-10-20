@@ -9,13 +9,12 @@ import { PairingScreen } from "../mobile/Chat";
 import { ConversationDetail, ConversasPorEstado, filterConversations, haQuanto, NovaSessao, Ocultas } from "../mobile/MobileApp";
 import { useDados } from "../mobile/useDados";
 import { usePoll } from "../mobile/usePoll";
-import { request, temConversa, type Conversation } from "../mobile/api";
+import { NOME_DO_AGENTE, request, temConversa, type Conversation } from "../mobile/api";
 import { UsoDasContas } from "./UsoDasContas";
 
 /** O xterm só baixa quando alguém abre a aba Terminal: quem só conversa não paga por ele. */
 const TerminalEspelho = lazy(() => import("./TerminalEspelho"));
 
-const NOME_DO_AGENTE: Record<string, string> = { claude: "Claude", codex: "Codex", cursor: "Cursor" };
 const ESTADO: Record<string, string> = {
   working: "Trabalhando", answered: "Esperando você", approval_required: "Aprovação pendente",
   stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido",

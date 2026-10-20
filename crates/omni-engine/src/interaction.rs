@@ -54,6 +54,10 @@ pub struct Escolha {
     /// Pergunta com prévia ("n to add notes"): ali o número só move a seleção, e é o Enter que escolhe.
     #[serde(skip)]
     pub previa: bool,
+    /// Menu sem números, só de setas ("❯ Autocompact at 400k" / "Keep auto"): qual opção está marcada
+    /// agora. A resposta anda com ↑/↓ dela até a pedida e confirma com Enter.
+    #[serde(skip)]
+    pub setas: Option<u8>,
 }
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Opcao {
@@ -81,6 +85,39 @@ pub fn linha_a_linha(screen: &vt100::Screen) -> String {
 /// sequência a partir de 1. Pedido de permissão ("Do you want to…") fica de fora: é o `approval`,
 /// que só aceita as escolhas de uso único — a conversa nunca manda "não perguntar de novo".
 pub fn escolha(text: &str) -> Option<Escolha> {
+    escolha_numerada(text).or_else(|| escolha_por_setas(text))
+}
+
+/// Menu de setas sem números do Claude Code (ex.: "We recommend compacting earlier", rodapé
+/// "↑/↓ choose · ←/→ change size · enter confirm · esc not now"). Sem reconhecer, o campo ficava
+/// travado e a conversa dizia "entrada não reconhecida". As opções são o bloco de linhas em volta
+/// da marcada com `❯`; a pergunta, o texto entre a borda de cima e esse bloco.
+fn escolha_por_setas(text: &str) -> Option<Escolha> {
+    let linhas: Vec<&str> = text.lines().collect();
+    let borda = |linha: &str| { let linha = linha.trim(); linha.chars().count() >= 10 && linha.chars().all(|c| c == '─') };
+    let rodape = linhas.iter().rposition(|linha| {
+        let linha = linha.to_lowercase();
+        linha.contains('↑') && linha.contains("enter") && linha.contains("esc")
+    })?;
+    let marcada = linhas[..rodape].iter().rposition(|l| l.trim_start().starts_with('❯'))?;
+    let parte_do_bloco = |l: &str| !l.trim().is_empty() && !borda(l);
+    let inicio = linhas[..marcada].iter().rposition(|l| !parte_do_bloco(l)).map_or(0, |i| i + 1);
+    let fim = linhas[marcada..rodape].iter().position(|l| !parte_do_bloco(l)).map_or(rodape, |i| marcada + i);
+    let opcoes: Vec<Opcao> = linhas[inicio..fim].iter().enumerate().map(|(i, l)| Opcao {
+        numero: i as u8 + 1, rotulo: l.trim().trim_start_matches('❯').trim().to_owned(), descricao: None, marcada: None,
+    }).collect();
+    // Menu numerado já é do `escolha_numerada`; `❯ 1. …` aqui seria um dele que não bateu.
+    if opcoes.len() < 2 || opcoes.len() > 9 || opcoes.iter().any(|o| o.rotulo.split_once(". ").is_some_and(|(n, _)| n.parse::<u8>().is_ok())) { return None; }
+    let topo = linhas[..inicio].iter().rposition(|l| borda(l)).map_or(0, |i| i + 1);
+    let texto: Vec<&str> = linhas[topo..inicio].iter().map(|l| l.trim()).filter(|l| !l.is_empty()).collect();
+    if texto.iter().any(|l| l.contains("Do you want to")) { return None; }
+    let (pergunta, detalhe) = texto.split_first()?;
+    let detalhe = detalhe.join("\n");
+    Some(Escolha { pergunta: (*pergunta).to_owned(), detalhe: (!detalhe.is_empty()).then_some(detalhe), opcoes,
+        multipla: false, etapas: Vec::new(), previa: false, setas: Some((marcada - inicio) as u8 + 1) })
+}
+
+fn escolha_numerada(text: &str) -> Option<Escolha> {
     // Linha da largura do terminal quebra sem `\n` no texto da tela e cola na de baixo: a borda
     // gruda na barra de abas ("────… ☐ Cor") e, depois de um turno, também no prompt destacado de
     // cima ("❯ manda de novo…   ────… ☐ Cor"). Cada sequência longa de `─` vira linha própria.
@@ -179,7 +216,7 @@ pub fn escolha(text: &str) -> Option<Escolha> {
         .map_or(pergunta, |(_, texto)| texto).to_owned();
     let detalhe = textos.collect::<Vec<_>>().join("\n");
     let previa = linhas[um..].iter().take(rodape + 1 - um).any(|l| l.contains("to add notes"));
-    Some(Escolha { pergunta, detalhe: (!detalhe.is_empty()).then_some(detalhe), opcoes, multipla, etapas, previa })
+    Some(Escolha { pergunta, detalhe: (!detalhe.is_empty()).then_some(detalhe), opcoes, multipla, etapas, previa, setas: None })
 }
 
 /// Require provider chrome plus an empty composer at the actual terminal cursor.
@@ -479,7 +516,7 @@ pub fn account_usage(state: &Arc<EngineState>, profile_id: &str, refresh: bool) 
     let id = state.next_id();
     let hidden = spawn_terminal_inner(state, id.clone(), String::new(), "Claude · consulta de uso".into(),
         dir.to_string_lossy().into_owned(), None, Some("claude".into()), 40, 120, now_ms(),
-        SessionOrigin { headless: true, env: omni_core::env_for(&profile), provider: Some("claude".into()),
+        SessionOrigin { env: omni_core::env_for(&profile), provider: Some("claude".into()),
             profile_id: Some(profile_id.into()), conversation_id: None, external_session_id: None });
     let result = hidden.and_then(|_| {
         let session = match state.sessions.lock().map_err(|_|anyhow!("sessions poisoned"))?.get(&id) {
@@ -530,7 +567,7 @@ fn uso_antigravity(state: &Arc<EngineState>, dir: &Path, perfil: &omni_core::Pro
             let id = state.next_id();
             let oculto = spawn_terminal_inner(state, id.clone(), String::new(), "Antigravity · consulta de uso".into(),
                 pasta, None, Some("agy".into()), 40, 120, now_ms(),
-                SessionOrigin { headless: true, env: omni_core::env_for(perfil), provider: Some("antigravity".into()),
+                SessionOrigin { env: omni_core::env_for(perfil), provider: Some("antigravity".into()),
                     profile_id: Some(perfil.id.clone()), conversation_id: None, external_session_id: None });
             let resultado = oculto.and_then(|_| {
                 let session = match state.sessions.lock().map_err(|_|anyhow!("sessions poisoned"))?.get(&id) {
@@ -838,6 +875,17 @@ mod tests {
         assert_eq!(menu.pergunta, "O que você gostaria de fazer agora?");
         assert_eq!(menu.opcoes.iter().map(|o| o.numero).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
         assert_eq!(menu.opcoes[0].rotulo, "(Recommended) Criar um novo projeto do zero");
+    }
+    /// Sugestão de compactar do Claude Code, copiada da tela real: menu só de setas, sem números.
+    #[test] fn escolha_de_setas_sem_numero() {
+        let tela = "● resposta anterior\n\n────────────────────────────────────────\n   We recommend compacting earlier\n\n   Each message re-sends the whole conversation, so long conversations use up your plan's usage limits faster.\n\n   Want to autocompact at 400k tokens instead? Your model doesn't change.\n\n   ❯ Autocompact at ‹ 400k › tokens\n     Keep auto (1m tokens)\n\n   ↑/↓ choose · ←/→ change size · enter confirm · esc not now\n";
+        let menu = escolha(tela).expect("menu de setas");
+        assert_eq!(menu.pergunta, "We recommend compacting earlier");
+        assert_eq!(menu.opcoes.iter().map(|o| o.rotulo.as_str()).collect::<Vec<_>>(), vec!["Autocompact at ‹ 400k › tokens", "Keep auto (1m tokens)"]);
+        assert_eq!(menu.setas, Some(1));
+        assert!(menu.detalhe.unwrap().contains("Want to autocompact"));
+        // O campo do Claude (`❯` entre bordas) não é menu.
+        assert_eq!(escolha("────────────\n❯ oi\n────────────\n  ? for shortcuts · ↑ history · enter send · esc\n"), None);
     }
     #[test] fn shell_com_filho_vivo_conta_como_ocupado() {
         let mut filho = if cfg!(windows) {

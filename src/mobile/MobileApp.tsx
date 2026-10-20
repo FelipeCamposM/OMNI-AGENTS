@@ -8,7 +8,7 @@ import { Select } from "../components/ui/Select";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
 import { ArchiveIcon, ArrowLeftIcon, AttachmentIcon, ChatIcon, EditIcon, FolderIcon, GitBranchIcon, NotesIcon, PlayIcon, ReloadIcon, WarningIcon } from "../components/ui/PixelIcon";
-import { request, requestSeMudou, esquecerVersao, enviarTeclas, actionKey, ApiError, type Conversation, type Mensagem, type Projects, type Timeline } from "./api";
+import { NOME_DO_AGENTE, request, requestSeMudou, esquecerVersao, enviarTeclas, actionKey, ApiError, type Comando, type Conversation, type Mensagem, type Projects, type Timeline } from "./api";
 import { AgentWorking, BlocoDeAcoes, LinhaDeAviso, LinhaDeComando, MessageBubble, PairingScreen } from "./Chat";
 import { Composer } from "./Composer";
 import { CartaoDePergunta } from "./CartaoDePergunta";
@@ -23,9 +23,9 @@ import {
 import { useRota, type Rota } from "./rota";
 import { useDados } from "./useDados";
 import { usePoll } from "./usePoll";
+import { corrigir, transcrever, useVozInstalada } from "./voz";
 
 const STATES: Record<string,string> = { working: "Trabalhando", answered: "Resposta disponível", approval_required: "Aprovação pendente", stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido" };
-const NOME_DO_AGENTE: Record<string, string> = { claude: "Claude", codex: "Codex", cursor: "Cursor" };
 
 /** Busca compartilhada pelo celular e pela web: todas as palavras precisam aparecer em algum dos
  * campos visíveis da conversa, da conta ou do projeto. */
@@ -402,6 +402,7 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
   const [editandoNome, setEditandoNome] = useState(false);
   const [parando, setParando] = useState(false);
   const [bifurcando, setBifurcando] = useState(false);
+  const vozInstalada = useVozInstalada();
   // Páginas antigas buscadas por quem rola para cima. Ficam acima das recentes, na mesma rolagem:
   // antes "Mensagens anteriores" trocava a tela por outra página e era preciso paginar de volta.
   const [antigas, setAntigas] = useState<Mensagem[]>([]);
@@ -762,6 +763,10 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
     return Array.isArray(resposta?.arquivos) ? resposta.arquivos : [];
   }, [conversation.id]);
 
+  const listarComandos = useCallback(
+    () => request<Comando[]>(`/conversas/${encodeURIComponent(conversation.id)}/comandos`),
+    [conversation.id]);
+
   /** O Esc do terminal: para o agente no meio do turno, como no PC. */
   async function interromper() {
     setError(null);
@@ -981,7 +986,9 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
       direita={conversation.capabilities && <ModoDoAgente modo={conversation.mode} pronto={Boolean(conversation.capabilities?.prompt) && !busy} onModo={trocarModo} />}
       onParar={trabalhando && conversation.live ? () => { setParando(true); void interromper().finally(() => setParando(false)); } : undefined}
       parando={parando}
-      buscarArquivos={buscarArquivos} />
+      buscarArquivos={buscarArquivos}
+      comandos={listarComandos}
+      voz={vozInstalada ? { transcrever: (audio) => transcrever(conversation.id, audio), corrigir: (texto) => corrigir(conversation.id, texto) } : undefined} />
   </section>;
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { workspaceReducer } from "../features/workspace/workspaceReducer";
+import { LAYOUT_PRESETS, quantosPaineis } from "../features/workspace/layoutPresets";
 import { emptyWorkspace, loadWorkspace, WORKSPACE_STORAGE_KEY } from "../services/workspaceService";
 import type { LayoutNode } from "../types/workspace";
 
@@ -212,6 +213,25 @@ describe("workspaceReducer", () => {
     expect(state.projects[0].activePaneId).toBe(targetPaneId);
   });
 
+  it("reordena tabs no mesmo painel (soltar sobre outra aba)", () => {
+    let state = workspaceReducer(emptyWorkspace(), { type: "ADD_PROJECT", path: "C:\\dev\\omni" });
+    const paneId = state.projects[0].activePaneId;
+    state = workspaceReducer(state, { type: "CREATE_TAB", paneId, kind: "terminal", title: "B" });
+    state = workspaceReducer(state, { type: "CREATE_TAB", paneId, kind: "terminal", title: "C" });
+    const ids = () => findPane(state.projects[0].layout, paneId)!.tabs.map((tab) => tab.title);
+    const [a, , c] = findPane(state.projects[0].layout, paneId)!.tabs;
+    expect(ids()).toHaveLength(3);
+    const [primeiro] = ids();
+
+    // Terceira para antes da segunda.
+    state = workspaceReducer(state, { type: "MOVE_TAB", sourcePaneId: paneId, targetPaneId: paneId, tabId: c.id, index: 1 });
+    expect(ids()).toEqual([primeiro, "C", "B"]);
+    // Primeira para depois da última (índice contado com ela ainda no lugar).
+    state = workspaceReducer(state, { type: "MOVE_TAB", sourcePaneId: paneId, targetPaneId: paneId, tabId: a.id, index: 3 });
+    expect(ids()).toEqual(["C", "B", primeiro]);
+    expect(findPane(state.projects[0].layout, paneId)!.activeTabId).toBe(a.id);
+  });
+
   it("arrasta uma tab para criar um split sem duplicá-la", () => {
     let state = workspaceReducer(emptyWorkspace(), { type: "ADD_PROJECT", path: "C:\\dev\\omni" });
     const paneId = state.projects[0].activePaneId;
@@ -316,6 +336,24 @@ describe("workspaceReducer", () => {
     expect(layout.second).toMatchObject({ type: "split", direction: "vertical" });
     expect(paneIds(layout)).toHaveLength(4);
     expect(paneIds(layout)).toContain(originalPane);
+  });
+
+  it("aba de fluxos de agentes sobrevive ao recarregar o app", () => {
+    let state = workspaceReducer(emptyWorkspace(), { type: "ADD_PROJECT", path: "C:\\dev\\omni" });
+    const paneId = state.projects[0].activePaneId;
+    state = workspaceReducer(state, { type: "CREATE_TAB", paneId, kind: "fluxos", title: "Fluxos de agentes" });
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, JSON.stringify(state));
+    expect(findPane(loadWorkspace().projects[0].layout, paneId)?.tabs.map((tab) => tab.kind)).toContain("fluxos");
+  });
+
+  it("todo layout pronto monta o número de painéis do molde, mantendo os que já existiam", () => {
+    for (const preset of LAYOUT_PRESETS) {
+      let state = workspaceReducer(emptyWorkspace(), { type: "ADD_PROJECT", path: "C:\\dev\\omni" });
+      const original = state.projects[0].activePaneId;
+      state = workspaceReducer(state, { type: "APPLY_LAYOUT_PRESET", preset: preset.id });
+      expect(paneIds(state.projects[0].layout), preset.id).toHaveLength(quantosPaineis(preset.molde));
+      expect(paneIds(state.projects[0].layout)[0], preset.id).toBe(original);
+    }
   });
 
   it("APPLY_LAYOUT_PRESET columns-2 a partir de 1 pane cria a segunda vazia", () => {

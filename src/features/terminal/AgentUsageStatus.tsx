@@ -10,7 +10,7 @@ export { resetShort, usageTone };
 import { useSession } from "./sessionProviders";
 import { listProfiles, type Profile } from "./terminalService";
 import { UsoDeTodasAsContas } from "./UsoDeTodasAsContas";
-import { AGENTES_COM_USO } from "../../mobile/api";
+import { AGENTES_COM_USO, NOME_DO_AGENTE } from "../../mobile/api";
 
 export function timeAgo(ms: number, now: number) {
   const seconds = Math.max(0, Math.round((now - ms) / 1000));
@@ -51,8 +51,6 @@ function Window({ label, window }: { label: string; window: UsageWindow | null }
     {reset && <span className="hidden xl:inline text-text-secondary font-normal"> · reseta {reset}</span>}
   </span>;
 }
-
-const PROVIDER_LABEL: Record<string, string> = { claude: "CLAUDE", codex: "CODEX", cursor: "CURSOR" };
 
 interface AgentUsageStatusProps {
   engineOnline: boolean;
@@ -185,7 +183,9 @@ export function AgentUsageStatus({ engineOnline, activeSessionId }: AgentUsageSt
   }
 
   if (!provider) return null;
-  const rotulo = PROVIDER_LABEL[provider] ?? provider.toUpperCase();
+  const rotulo = (NOME_DO_AGENTE[provider] ?? provider).toUpperCase();
+  // Cursor: a CLI não informa consumo — sem barras vazias e sem um "consultar" que só falharia.
+  const mede = AGENTES_COM_USO.includes(provider);
   const reason = error ?? usage?.reason;
   const checkedAt = usage?.observed_at_ms ?? attemptedAt;
   const checked = checkedAt ? `consultado ${timeAgo(checkedAt, now)}` : "sem consulta";
@@ -217,11 +217,13 @@ export function AgentUsageStatus({ engineOnline, activeSessionId }: AgentUsageSt
           {modelo}{esforco ? ` · ${esforco}` : ""}
         </span>
       )}
-      <Window label="5H" window={usage?.primary ?? null} />
-      <Window label="SEMANA" window={usage?.secondary ?? null} />
-      <span className="hidden lg:inline whitespace-nowrap text-text-secondary font-normal">{checked}</span>
-      {reason && <span className="text-warning">!</span>}
-      <button
+      {mede ? <>
+        <Window label="5H" window={usage?.primary ?? null} />
+        <Window label="SEMANA" window={usage?.secondary ?? null} />
+        <span className="hidden lg:inline whitespace-nowrap text-text-secondary font-normal">{checked}</span>
+        {reason && <span className="text-warning">!</span>}
+      </> : <span className="whitespace-nowrap font-normal text-text-muted">sem medidor de uso</span>}
+      {mede && <button
         type="button"
         aria-label={`Consultar uso do ${rotulo}`}
         title="Consultar /usage"
@@ -230,7 +232,7 @@ export function AgentUsageStatus({ engineOnline, activeSessionId }: AgentUsageSt
         className="shrink-0 text-text-secondary hover:text-accent disabled:opacity-50"
       >
         <ReloadIcon aria-hidden="true" className={`w-3.5 h-3.5${busy ? " animate-spin" : ""}`} />
-      </button>
+      </button>}
     </span>
   );
 }

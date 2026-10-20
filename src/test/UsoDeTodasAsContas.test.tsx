@@ -24,7 +24,10 @@ it("botão do rodapé abre o uso de todas as contas e atualiza uma por vez", asy
   await waitFor(() => expect(within(painel).getByText("12%")).toBeInTheDocument());
   expect(within(painel).getByText("30%")).toBeInTheDocument();
   expect(within(painel).getByText("Pessoal")).toBeInTheDocument();
-  expect(within(painel).queryByText("Cursor")).not.toBeInTheDocument();
+  // Todas as IAs aparecem; o Cursor sem medidor (a CLI não informa consumo) e sem consulta.
+  expect(within(painel).getByRole("region", { name: "Cursor" })).toHaveTextContent("não informa o consumo");
+  expect(invoke).not.toHaveBeenCalledWith("account_usage", expect.objectContaining({ profileId: "c" }));
+  expect(within(painel).queryByRole("button", { name: /Atualizar uso de Cursor/ })).not.toBeInTheDocument();
   expect(invoke).not.toHaveBeenCalledWith("account_usage", expect.objectContaining({ refresh: true }));
 
   await userEvent.click(within(painel).getByRole("button", { name: "Atualizar uso de Trabalho (Codex)" }));

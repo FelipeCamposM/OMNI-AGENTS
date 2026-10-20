@@ -3,6 +3,7 @@ import { AgentIcon } from "../components/ui/AgentIcon";
 import { ChartIcon, LoaderIcon, PlayIcon, ReloadIcon, SparkleIcon } from "../components/ui/PixelIcon";
 import { Select } from "../components/ui/Select";
 import { ApiError, request } from "./api";
+import { tokensCurtos } from "../features/compactacao/compactacao";
 
 /** `GET /conversas/{id}/opcoes`: o que dá para escolher nesta conversa e o que está valendo agora. */
 export interface Opcoes {
@@ -12,9 +13,14 @@ export interface Opcoes {
   model: string | null;
   effort: string | null;
   profiles: { id: string; name: string }[];
-  models: { id: string; label: string; efforts: string[] }[];
+  /** `section` agrupa no menu (o "Mais modelos" do Claude); `hint` é a linha de baixo. */
+  models: { id: string; label: string; efforts: string[]; hint?: string; section?: string }[];
   /** Sem id de sessão ainda (nenhuma mensagem), não há o que retomar com outros ajustes. */
   can_resume: boolean;
+  /** Tokens que a última resposta leu (o tamanho da conversa agora); `null` logo após compactar. */
+  context_tokens?: number | null;
+  /** Onde o Claude compacta sozinho (Configurações → Compactação). Só Claude; engine antigo não manda. */
+  context_window?: number | null;
 }
 export interface Ajustes { profile_id: string | null; model: string | null; effort: string | null }
 
@@ -67,7 +73,9 @@ export function AjustesDaConversa({ conversaId, pronto, onAplicar, onRetomar }: 
       setEngineAntigo(motivo instanceof ApiError && motivo.status === 404);
     }
   }, [conversaId]);
-  useEffect(() => { void carregar(); }, [carregar]);
+  // Relida a cada fim de turno: a primeira mensagem é que dá à conversa um id para retomar (o
+  // Antigravity só cria a conversa nela), e o modelo em uso pode ter mudado pelo terminal.
+  useEffect(() => { void carregar(); }, [carregar, pronto]);
 
   if (engineAntigo) {
     return <span className="m-chip-aviso" title="O engine em execução é anterior a esta tela">Reinicie o OMNI para trocar conta e modelo</span>;
@@ -100,6 +108,7 @@ export function AjustesDaConversa({ conversaId, pronto, onAplicar, onRetomar }: 
 
   return (
     <>
+      {opcoes.context_window ? <ChipDeContexto usados={opcoes.context_tokens ?? null} janela={opcoes.context_window} /> : null}
       {opcoes.profiles.length > 1 && (
         <span className="m-chip" title={motivo ?? "Conta usada nesta conversa"}>
           <Select size="sm" value={conta} disabled={bloqueado} onChange={setConta} placeholder="Conta"
@@ -110,7 +119,7 @@ export function AjustesDaConversa({ conversaId, pronto, onAplicar, onRetomar }: 
         <span className="m-chip" title={motivo ?? "Modelo"}>
           <Select size="sm" value={modelo} disabled={bloqueado} onChange={setModelo}
             options={[{ value: "", label: "Modelo padrão", icon: iconeModelo },
-              ...opcoes.models.map((m) => ({ value: m.id, label: m.label, icon: iconeModelo }))]} />
+              ...opcoes.models.map((m) => ({ value: m.id, label: m.label, hint: m.hint || undefined, section: m.section || undefined, icon: iconeModelo }))]} />
         </span>
       )}
       {esforcos.length > 0 && (
@@ -134,5 +143,21 @@ export function AjustesDaConversa({ conversaId, pronto, onAplicar, onRetomar }: 
         </button>
       )}
     </>
+  );
+}
+
+/** Quanto da conversa já foi usado até a compactação automática. Atualiza a cada fim de turno. */
+function ChipDeContexto({ usados, janela }: { usados: number | null; janela: number }) {
+  const fracao = usados === null ? 0 : Math.min(1, usados / janela);
+  const nivel = fracao >= 0.85 ? "alto" : fracao >= 0.6 ? "medio" : "baixo";
+  const texto = usados === null ? "Contexto compactado" : `Contexto ${tokensCurtos(usados)} / ${tokensCurtos(janela)}`;
+  return (
+    <span className="m-chip m-contexto" data-nivel={nivel}
+      title={usados === null
+        ? `A conversa acabou de ser resumida; o tamanho novo aparece na próxima resposta. Compacta sozinha perto de ${tokensCurtos(janela)} tokens.`
+        : `${usados.toLocaleString("pt-BR")} tokens nesta conversa. Cada passo do agente relê tudo isso; perto de ${tokensCurtos(janela)} o Claude resume a conversa sozinho.`}>
+      <span className="m-contexto-texto">{texto}</span>
+      <span className="m-contexto-barra" aria-hidden><span style={{ width: `${fracao * 100}%` }} /></span>
+    </span>
   );
 }

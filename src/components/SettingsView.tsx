@@ -7,6 +7,7 @@ import { PALETAS } from "../lib/palettes";
 import { CHANGELOG } from "../lib/changelog";
 import { Button, Card, Field, Input, SegmentedControl, Slider } from "./ui";
 import { AgentConnections } from "../features/terminal/AgentConnections";
+import { CompactacaoCard } from "../features/compactacao/CompactacaoCard";
 import { SkillsManager } from "../features/skills/SkillsManager";
 import { ExtensoesSettings } from "../features/extensoes/ExtensoesSettings";
 import { MobileSettings } from "../features/mobile/MobileSettings";
@@ -14,6 +15,8 @@ import { testarAviso } from "../features/terminal/useAttentionNotifier";
 import { BlocksIcon, BookIcon, BrushIcon, ChartIcon, CloseIcon, SparkleIcon, GearIcon, GlobeIcon, KeyboardIcon, RobotIcon, SlidersIcon, StarIcon } from "./ui/PixelIcon";
 import { RelatoriosIa } from "../features/relatorios/RelatoriosIa";
 import { ModelosDeAgentes } from "../features/agentes/ModelosDeAgentes";
+import { request } from "../mobile/api";
+import type { EstadoDaVoz } from "../mobile/voz";
 import { SHORTCUTS, comboFromEvent, setRecordingShortcut, shortcutFor, type ShortcutId } from "../lib/shortcuts";
 
 type SectionId = "geral" | "aparencia" | "agentes" | "modelos" | "extensoes" | "skills" | "mobile" | "relatorios" | "atalhos" | "sobre";
@@ -140,7 +143,7 @@ export function SettingsView({ settings, onChange, onReset, initialSection, proj
           </div>
           {section === "geral" && <GeralSection settings={settings} onChange={onChange} />}
           {section === "aparencia" && <AparenciaSection settings={settings} onChange={onChange} />}
-          {section === "agentes" && <AgentConnections />}
+          {section === "agentes" && <><AgentConnections /><CompactacaoCard /></>}
           {section === "modelos" && <ModelosDeAgentes projectPath={projectPath} />}
           {section === "extensoes" && <ExtensoesSettings projectPath={projectPath} />}
           {section === "skills" && <SkillsManager projectPath={projectPath} />}
@@ -381,7 +384,81 @@ function GeralSection({ settings, onChange }: SectionProps) {
         <TesteDeAviso />
       </Card>
 
+      <VozCard />
+
     </div>
+  );
+}
+
+/** Prompt por voz. Opcional de propósito: o modelo (~190 MB) só é baixado aqui, e sem ele o microfone
+ *  não aparece em conversa nenhuma — nem no PC, nem no celular. */
+function VozCard() {
+  const [voz, setVoz] = useState<EstadoDaVoz | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    let vivo = true;
+    const ler = () => request<EstadoDaVoz>("/voz").then((e) => { if (vivo) setVoz(e); }).catch(() => undefined);
+    void ler();
+    // Só acompanha de perto enquanto baixa: é a barra de progresso.
+    const relogio = voz?.baixando ? window.setInterval(ler, 700) : undefined;
+    return () => { vivo = false; window.clearInterval(relogio); };
+  }, [voz?.baixando]);
+
+  async function agir(caminho: string, corpo?: object) {
+    setErro(null);
+    try {
+      setVoz(await request<EstadoDaVoz>(caminho, { method: "POST", body: JSON.stringify(corpo ?? {}), headers: { "Content-Type": "application/json" } }));
+    } catch (motivo) {
+      setErro(motivo instanceof Error ? motivo.message : "Falhou");
+    }
+  }
+
+  const mb = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`;
+  return (
+    <Card title="Voz" className="settings-largo">
+      <p className="text-xs text-text-secondary">
+        Fale o prompt em vez de digitar: um microfone aparece ao lado do anexo, na conversa do PC e do celular. A fala vira texto
+        aqui no PC (nada sai da máquina) e cai no campo para você revisar antes de enviar.
+      </p>
+      {!voz ? (
+        <p className="text-xs text-text-muted">Lendo…</p>
+      ) : voz.instalado ? (
+        <>
+          <Segmented
+            label="Corrigir o texto com IA"
+            description="Depois de transcrever, o Claude (modelo Haiku, na sua conta) arruma pontuação, acentos e palavras trocadas, sem mudar o sentido. Leva alguns segundos a mais; sem o Claude instalado, vem o texto como saiu."
+            options={[
+              { value: "nao", label: "Não" },
+              { value: "sim", label: "Corrigir" },
+            ]}
+            value={voz.corrigir ? "sim" : "nao"}
+            onChange={(v) => void agir("/voz/ajustes", { corrigir: v === "sim" })}
+          />
+          <Button size="sm" variant="ghost" onClick={() => void agir("/voz/remover")}>
+            Remover o modelo de voz ({mb(voz.total)})
+          </Button>
+        </>
+      ) : voz.baixando ? (
+        <div role="status" className="space-y-2">
+          <p className="text-xs text-text-secondary">Baixando o modelo… {mb(voz.baixado)} de {mb(voz.total)}</p>
+          <div className="h-1.5 w-full bg-overlay/10">
+            <div className="h-full bg-accent transition-[width]" style={{ width: `${Math.min(100, (voz.baixado / voz.total) * 100)}%` }} />
+          </div>
+        </div>
+      ) : (
+        <Button size="sm" onClick={() => void agir("/voz/baixar")}>
+          Baixar o modelo de voz ({mb(voz.total)})
+        </Button>
+      )}
+      <p className="text-[11px] text-text-muted">
+        No celular, o navegador só libera o microfone em endereço seguro (https). Pelo endereço http do acesso remoto, use o
+        microfone do próprio teclado do celular.
+      </p>
+      {(erro ?? voz?.erro) && (
+        <p role="alert" className="border-l-2 border-danger pl-3 text-xs text-danger">{erro ?? voz?.erro}</p>
+      )}
+    </Card>
   );
 }
 

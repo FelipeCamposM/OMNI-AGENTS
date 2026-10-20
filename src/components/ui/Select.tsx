@@ -1,5 +1,5 @@
 import { CheckIcon as Check, ChevronDownIcon as ChevronDown, SearchIcon as Search } from "./PixelIcon";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { FieldSize } from "./Input";
 
@@ -11,6 +11,8 @@ export interface SelectOption<T extends string | number> {
   /** Marca à esquerda do rótulo (logo do provider). Some da busca — é só visual. */
   icon?: ReactNode;
   disabled?: boolean;
+  /** Título de grupo: abre um cabeçalho antes da primeira opção que muda de seção. */
+  section?: string;
 }
 
 export interface SelectProps<T extends string | number> {
@@ -126,8 +128,8 @@ export function Select<T extends string | number>({
   // aqui derruba o componente inteiro por causa de um detalhe cosmético.
   useEffect(() => {
     if (!aberto) return;
-    listaRef.current?.children[ativo]?.scrollIntoView?.({ block: "nearest" });
-  }, [aberto, ativo]);
+    document.getElementById(`${listaId}-${ativo}`)?.scrollIntoView?.({ block: "nearest" });
+  }, [aberto, ativo, listaId]);
 
   function proximoHabilitado(de: number, passo: number) {
     if (visiveis.length === 0) return de;
@@ -263,9 +265,11 @@ export function Select<T extends string | number>({
           >
             {visiveis.map((o, i) => {
             const marcado = o.value === value;
+            const secao = o.section && o.section !== visiveis[i - 1]?.section ? o.section : null;
             return (
+              <Fragment key={String(o.value)}>
+              {secao && <li role="presentation" className="select-secao">{secao}</li>}
               <li
-                key={String(o.value)}
                 id={`${listaId}-${i}`}
                 role="option"
                 aria-selected={marcado}
@@ -296,6 +300,7 @@ export function Select<T extends string | number>({
                   )}
                   </span>
                 </li>
+              </Fragment>
               );
             })}
           </ul>

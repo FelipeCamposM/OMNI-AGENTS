@@ -84,6 +84,11 @@ export async function gitPull(projectPath: string): Promise<string> {
   return invoke<string>("git_pull", { projectPath });
 }
 
+/** `git fetch --all --prune`: atualiza as refs remotas sem tocar na branch local. */
+export async function gitFetch(projectPath: string): Promise<string> {
+  return invoke<string>("git_fetch", { projectPath });
+}
+
 export async function gitBranches(projectPath: string): Promise<GitBranch[]> {
   const result = await invoke<GitBranch[]>("git_branches", { projectPath });
   return Array.isArray(result) ? result : [];

@@ -37,6 +37,7 @@ import { handleTerminalKey } from "./keyBindings";
 import { AgentLauncher } from "./AgentLauncher";
 import { AgentSwitcher } from "./AgentSwitcher";
 import { AgentRuntimeBadge } from "./AgentRuntimeBadge";
+import { PISO_DEPOIS_DA_TROCA, lerCompactacao, pisoAntesDoLimite, tokensCurtos } from "../compactacao/compactacao";
 
 /** Colar imagem numa CLI de agente: ESC v (meta+v) — o que o Alt+V já mandava e funcionava.
  *  Se alguma CLI passar a escutar ^V (0x16) em vez disso, é aqui que muda. */
@@ -67,8 +68,19 @@ const JANELA_ATIVA_MS = 700;
 const FAILOVER_RETRY_MS = 30_000;
 /** Limite que chega até isso depois do agente ter sido visto trabalhando = caiu no meio de uma tarefa. */
 const MEIO_DA_TAREFA_MS = 120_000;
-/** Quanto esperar a conta nova ficar pronta para receber o "continue" antes de desistir. */
-const CONTINUAR_ATE_MS = 120_000;
+/** Quanto esperar a conta nova ficar pronta para receber o "continue" antes de desistir. Retomar
+ *  uma conversa de centenas de milhares de tokens (e compactá-la) passa fácil de 2 minutos. */
+const CONTINUAR_ATE_MS = 600_000;
+/** Depois de mandar uma mensagem da fila, espera isso antes de olhar a tela de novo: a CLI leva um
+ *  instante para mostrar que começou (o `/compact`), e o campo ainda parece livre nesse meio-tempo. */
+const ENTRE_MENSAGENS_MS = 10_000;
+/** Com o agente parado, de quanto em quanto tempo olha se a conta está perto do limite. */
+const COMPACTAR_ANTES_RITMO_MS = 60_000;
+const COMANDO_DE_COMPACTAR = "/compact";
+/** Compactar antes do limite só numa conversa em uso: o agente terminou um turno há pouco, com a aba
+ *  aberta. Abrir uma conversa parada nunca dispara nada — o resumo gastaria cota numa conversa que
+ *  talvez nem continue. */
+const ACABOU_DE_TRABALHAR_MS = 180_000;
 /** Entre uma consulta e outra da tela da conta nova, enquanto espera para mandar o "continue". */
 const CONTINUAR_RITMO_MS = 1_500;
 /** Mensagem que o OMNI manda sozinho depois de trocar de conta no meio de uma tarefa. Diz que é
@@ -115,9 +127,12 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
    *  limite da conta anterior, e o engine (que lê a tela) o reporta como se fosse desta — sem este
    *  filtro a aba tentava trocar de novo na hora. Vale até o aviso sair da tela uma vez. */
   const staleLimitProfileRef = useRef<string | null>(null);
-  /** Troca feita no meio de uma tarefa: falta mandar o "continue" quando a conta nova ficar pronta.
-   *  Ref porque a troca remonta o efeito (nova conta) e o pedido tem de sobreviver a isso. */
-  const continuarRef = useRef<{ conversationId: string; ate: number; consultaEm: number } | null>(null);
+  /** Mensagens que o OMNI manda sozinho, uma por vez, quando o campo da CLI fica pronto: o
+   *  `/compact` (antes do limite ou logo depois da troca) e o "continue" da troca no meio de uma
+   *  tarefa. Ref porque a troca remonta o efeito (nova conta) e o pedido tem de sobreviver a isso. */
+  const continuarRef = useRef<{ conversationId: string; mensagens: string[]; ate: number; consultaEm: number } | null>(null);
+  /** Conversa + janela de uso já compactadas antes do limite: uma vez por janela, não a cada minuto. */
+  const compactadasRef = useRef(new Set<string>());
   /** Última vez que o agente desta aba foi visto trabalhando. */
   const trabalhouEmRef = useRef(0);
   /** Título da aba num ref, **fora das dependências do efeito**: ele só é lido na hora de abrir a
@@ -199,6 +214,7 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
     const reatando = Boolean(sessionRef.current) && sequenceRef.current === 0;
     let reviving = false;
     let failoverInProgress = false;
+    let compactarAntesEm = 0;
     /** Antes disso não tenta de novo; 0 = nenhuma tentativa frustrada ainda. */
     let failoverRetryAt = 0;
     /** Última tecla digitada ou saída recebida — decide o ritmo da leitura. */
@@ -387,6 +403,13 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
 
         const nextAgent = agents.find((candidate) => candidate.id === input.provider && candidate.available);
         if (!nextAgent) throw new Error(`CLI do ${input.provider} não encontrada no PATH`);
+        // Lido antes da troca, do transcript da conta que sai: o cache não passa de uma conta para
+        // outra, então conversa grande compacta logo na chegada em vez de ser relida a cada passo.
+        const ajuste = await lerCompactacao();
+        const contexto = input.provider === "claude" ? await contextoDaConversa(input.conversationId) : null;
+        // Só quando a troca pegou uma tarefa no meio (o "continue" vai rodar de qualquer jeito).
+        // Conversa parada fica como está: compactar ali seria gasto sem ninguém pedir nada.
+        const compactar = input.meioDaTarefa && ajuste.depois_da_troca && (contexto ?? 0) >= PISO_DEPOIS_DA_TROCA;
         const plan = await planSwitch({
           conversationId: input.conversationId,
           targetProvider: input.provider,
@@ -409,8 +432,9 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         // com um simples "oi" sem resposta, ele saiu rodando comandos. Quem continua é o usuário.
         const resumedCommand = plan.initial_command;
         staleLimitProfileRef.current = target.id;
-        if (input.meioDaTarefa) {
-          continuarRef.current = { conversationId: plan.conversation_id, ate: Date.now() + CONTINUAR_ATE_MS, consultaEm: 0 };
+        const mensagens = [...(compactar ? [COMANDO_DE_COMPACTAR] : []), ...(input.meioDaTarefa ? [MENSAGEM_DE_CONTINUAR] : [])];
+        if (mensagens.length > 0) {
+          continuarRef.current = { conversationId: plan.conversation_id, mensagens, ate: Date.now() + CONTINUAR_ATE_MS, consultaEm: 0 };
         }
         setLaunch({
           agent: { ...nextAgent, command: resumedCommand },
@@ -443,14 +467,66 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         const leitura = await engineApi("GET", `${caminho}/timeline`, null);
         const capacidades = JSON.parse(leitura.body || "{}")?.conversation?.capabilities;
         if (!capacidades?.prompt || continuarRef.current !== pedido) return;
-        continuarRef.current = null;
-        const envio = await engineApi("POST", `${caminho}/prompt`, JSON.stringify({ texto: MENSAGEM_DE_CONTINUAR, fila: true }), {
-          headers: [["Content-Type", "application/json"], ["Idempotency-Key", `continuar-${pedido.conversationId}-${pedido.ate}`]],
+        const texto = pedido.mensagens[0];
+        const envio = await engineApi("POST", `${caminho}/prompt`, JSON.stringify({ texto, fila: true }), {
+          headers: [["Content-Type", "application/json"], ["Idempotency-Key", `continuar-${pedido.conversationId}-${pedido.ate}-${pedido.mensagens.length}`]],
         });
         if (envio.status >= 400) throw new Error(JSON.parse(envio.body || "{}")?.error ?? `HTTP ${envio.status}`);
-        setFailoverStatus((atual) => atual && { ...atual, text: `${atual.text} · continuando`, detail: `${atual.detail} O OMNI mandou "continue" sozinho, porque a troca aconteceu no meio de uma tarefa.` });
+        pedido.mensagens.shift();
+        pedido.consultaEm = Date.now() + ENTRE_MENSAGENS_MS;
+        if (pedido.mensagens.length === 0 && continuarRef.current === pedido) continuarRef.current = null;
+        const compactou = texto === COMANDO_DE_COMPACTAR;
+        setFailoverStatus((atual) => atual && {
+          ...atual,
+          text: `${atual.text} · ${compactou ? "compactando" : "continuando"}`,
+          detail: compactou
+            ? `${atual.detail} O OMNI mandou /compact: a conversa vira um resumo e cada passo seguinte gasta bem menos.`
+            : `${atual.detail} O OMNI mandou "continue" sozinho, porque a troca aconteceu no meio de uma tarefa.`,
+        });
       } catch (reason) {
-        if (!cancelled) setFailoverStatus((atual) => atual && { ...atual, tone: "warning", detail: `${atual.detail} Não consegui mandar o "continue" sozinho (${reason instanceof Error ? reason.message : String(reason)}); mande a próxima mensagem.` });
+        if (continuarRef.current === pedido) continuarRef.current = null;
+        if (!cancelled) setFailoverStatus((atual) => atual && { ...atual, tone: "warning", detail: `${atual.detail} Não consegui mandar a mensagem automática (${reason instanceof Error ? reason.message : String(reason)}); mande a próxima mensagem.` });
+      }
+    }
+
+    /** Tamanho da conversa agora (o que a última resposta leu), pelo `/opcoes`. */
+    async function contextoDaConversa(conversationId: string): Promise<number | null> {
+      try {
+        const leitura = await engineApi("GET", `/conversas/${encodeURIComponent(conversationId)}/opcoes`, null);
+        const tokens = JSON.parse(leitura.body || "{}")?.context_tokens;
+        return typeof tokens === "number" ? tokens : null;
+      } catch { return null; }
+    }
+
+    /** Opção "antes de acabar a cota": agente parado, conta passando do limiar → `/compact` ainda
+     *  nesta conta, que tem a conversa em cache (resumir sai barato). Na troca, a conta nova recebe
+     *  só o resumo. Uma vez por conversa e janela de uso. */
+    async function talvezCompactarAntes(info: { conversationId: string; provider: string; profileId: string; parado: boolean }) {
+      const agora = Date.now();
+      if (agora < compactarAntesEm || continuarRef.current || info.provider !== "claude" || !info.parado) return;
+      if (agora - trabalhouEmRef.current > ACABOU_DE_TRABALHAR_MS) return;
+      compactarAntesEm = agora + COMPACTAR_ANTES_RITMO_MS;
+      try {
+        const ajuste = await lerCompactacao();
+        if (!ajuste.antes_do_limite) return;
+        const uso = await accountUsage(info.profileId).catch(() => null);
+        const janela = [uso?.primary, uso?.secondary]
+          .filter((j): j is NonNullable<typeof j> => Boolean(j && j.used_percent < 100))
+          .sort((a, b) => b.used_percent - a.used_percent)[0];
+        if (!janela || janela.used_percent < ajuste.limiar) return;
+        const chave = `${info.conversationId}:${janela.resets_at ?? "?"}`;
+        if (compactadasRef.current.has(chave)) return;
+        const contexto = await contextoDaConversa(info.conversationId);
+        if (cancelled || contexto === null || contexto < pisoAntesDoLimite(ajuste)) return;
+        compactadasRef.current.add(chave);
+        continuarRef.current = { conversationId: info.conversationId, mensagens: [COMANDO_DE_COMPACTAR], ate: agora + CONTINUAR_ATE_MS, consultaEm: 0 };
+        setFailoverStatus({
+          tone: "working",
+          text: "compactando antes do limite",
+          detail: `A conta está em ${Math.round(janela.used_percent)}% do uso e a conversa tem ${tokensCurtos(contexto)} tokens. O OMNI compacta agora, nesta conta, para que uma troca de conta leve só o resumo.`,
+        });
+      } catch {
+        // Sem leitura de uso agora: tenta de novo no próximo ciclo.
       }
     }
 
@@ -506,6 +582,12 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         const limitOnScreen = snapshot.session.notice === "usage_limit";
         if (snapshot.session.state === "working" && !limitOnScreen) trabalhouEmRef.current = Date.now();
         void talvezContinuar();
+        if (conversationId && provider && profileId) {
+          void talvezCompactarAntes({
+            conversationId, provider, profileId,
+            parado: snapshot.session.state === "answered" && !limitOnScreen,
+          });
+        }
         if (profileId && profileId === staleLimitProfileRef.current && !limitOnScreen) {
           staleLimitProfileRef.current = null;
         }

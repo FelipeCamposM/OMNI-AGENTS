@@ -12,6 +12,7 @@ import { MarkdownPane } from "../files/MarkdownPane";
 import { GitDiffPane } from "../git/GitDiffPane";
 import { GitGraphPane } from "../git/GitGraphPane";
 import { KanbanBoard } from "../kanban/KanbanBoard";
+import { FluxosView } from "../fluxos/FluxosView";
 import { TerminalPane } from "../terminal/TerminalPane";
 import { AbaDeAgente } from "../conversa/AbaDeAgente";
 import { closeTerminal } from "../terminal/terminalService";
@@ -195,6 +196,10 @@ export function PaneView({
           <GitGraphPane projectPath={projectPath} />
         ) : tab?.kind === "kanban" ? (
           <KanbanBoard projectId={projectId} kanban={kanban} dispatch={kanbanDispatch} />
+        ) : tab?.kind === "fluxos" ? (
+          <FluxosView projectId={projectId} projectPath={projectPath}
+            onAbrirSessao={(sessionId, title) => dispatch({ type: "ATTACH_TERMINAL", sessionId, title })}
+            onClose={() => dispatch({ type: "CLOSE_TAB", paneId: pane.id, tabId: tab.id })} />
         ) : (
           <div className="h-full p-4 font-mono text-xs overflow-auto">
             <div className="text-text-muted mb-4">{tab?.kind ?? "painel"}://{pane.id}</div>

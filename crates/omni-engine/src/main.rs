@@ -1,6 +1,7 @@
 mod fluxos;
 mod interaction;
 mod mobile;
+mod voz;
 use anyhow::{anyhow, Context, Result};
 use omni_core::targets;
 use omni_protocol::{
@@ -9,6 +10,7 @@ use omni_protocol::{
 };
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     env,
@@ -37,12 +39,6 @@ struct OutputBuffer {
 struct LiveSession {
     interaction: Mutex<interaction::Interaction>,
     reserved: std::sync::atomic::AtomicBool,
-    /// Ninguém está exibindo esta PTY num terminal de verdade — foi aberta pelo celular. Enquanto for
-    /// `true` o engine responde sozinho as perguntas que um terminal responderia (ver
-    /// `answer_terminal_queries`). Vira `false` no primeiro `snapshot`, quando o xterm do desktop
-    /// passa a exibir a sessão e assume essas respostas — os dois respondendo em dobro vazaria
-    /// `ESC[1;1R` como texto digitado dentro do CLI.
-    headless: std::sync::atomic::AtomicBool,
     meta: Mutex<TerminalSession>,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
@@ -271,7 +267,7 @@ fn handle_request(request: EngineRequest, state: &Arc<EngineState>) -> EngineRes
             initial_command,
             rows,
             cols,
-            SessionOrigin { headless: false, env, provider, profile_id, conversation_id, external_session_id },
+            SessionOrigin { env, provider, profile_id, conversation_id, external_session_id },
         ),
         EngineRequest::WriteTerminal { session_id, data, .. } => write_terminal(state, &session_id, &data),
         EngineRequest::ResizeTerminal { session_id, rows, cols, .. } => {
@@ -359,6 +355,66 @@ fn herdou_sessao_do_claude(ambiente: impl Fn(&str) -> bool) -> bool {
 
 fn ambiente_do_terminal(command: &mut CommandBuilder, env: &[(String, String)]) {
     ambiente_do_terminal_com(command, env, herdou_sessao_do_claude(|nome| env::var_os(nome).is_some()));
+    // Autocompactação sempre ligada, no tamanho escolhido em Configurações. A janela vai por env
+    // (vale só para quem o OMNI abre); o `autoCompactEnabled` fica no settings da conta.
+    command.env_remove("DISABLE_AUTO_COMPACT");
+    command.env_remove("DISABLE_COMPACT");
+    let janela = engine_dir().map(|dir| Compactacao::ler(&dir).janela).unwrap_or(JANELA_PADRAO);
+    command.env("CLAUDE_CODE_AUTO_COMPACT_WINDOW", janela.to_string());
+}
+
+const JANELA_PADRAO: u32 = 400_000;
+
+/// Configurações → Compactação (`compactacao.json`). No engine porque é ele quem sobe a CLI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub(crate) struct Compactacao {
+    /// Tamanho do contexto em que o Claude compacta sozinho: 400 mil ou 1 milhão de tokens.
+    pub janela: u32,
+    /// Compacta na conta atual, com o agente parado, quando o uso das 5 h passa de `limiar` %:
+    /// a conta seguinte recebe o resumo, não a conversa inteira.
+    pub antes_do_limite: bool,
+    pub limiar: u8,
+    /// Depois da troca de conta, compacta antes de continuar (o cache não passa de uma conta
+    /// para outra, então a conversa grande seria lida inteira de novo a cada passo).
+    pub depois_da_troca: bool,
+}
+
+impl Default for Compactacao {
+    fn default() -> Self { Self { janela: JANELA_PADRAO, antes_do_limite: true, limiar: 85, depois_da_troca: true } }
+}
+
+impl Compactacao {
+    pub(crate) fn ler(dir: &Path) -> Self {
+        fs::read(dir.join("compactacao.json")).ok()
+            .and_then(|bytes| serde_json::from_slice::<Self>(&bytes).ok())
+            .filter(Self::valida).unwrap_or_default()
+    }
+    pub(crate) fn valida(&self) -> bool {
+        matches!(self.janela, 400_000 | 1_000_000) && (50..=99).contains(&self.limiar)
+    }
+}
+
+/// `"autoCompactEnabled": true` no settings.json da conta. Edita o texto, não regrava o JSON: o
+/// serde reordenaria as chaves do arquivo do usuário.
+fn garantir_autocompact(config_dir: &Path) {
+    let caminho = config_dir.join("settings.json");
+    let texto = fs::read_to_string(&caminho).unwrap_or_default();
+    let novo = match texto.find("\"autoCompactEnabled\"") {
+        Some(inicio) => {
+            let resto = &texto[inicio..];
+            let Some(fim) = resto.find([',', '}', '\n']) else { return };
+            if resto[..fim].contains("true") { return; }
+            format!("{}\"autoCompactEnabled\": true{}", &texto[..inicio], &resto[fim..])
+        }
+        None => match texto.trim().strip_prefix('{') {
+            Some(corpo) if corpo.trim() == "}" => "{\n  \"autoCompactEnabled\": true\n}\n".to_string(),
+            Some(_) => texto.replacen('{', "{\n  \"autoCompactEnabled\": true,", 1),
+            None if texto.trim().is_empty() => "{\n  \"autoCompactEnabled\": true\n}\n".to_string(),
+            None => return, // arquivo estranho: não mexe
+        },
+    };
+    let _ = fs::write(&caminho, novo);
 }
 
 fn ambiente_do_terminal_com(command: &mut CommandBuilder, env: &[(String, String)], dentro_do_claude: bool) {
@@ -593,7 +649,6 @@ fn spawn_reader_thread(state: Arc<EngineState>, session: Arc<LiveSession>, mut r
 /// `spawn_terminal_inner` já estava no limite de argumentos.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct SessionOrigin {
-    pub headless: bool,
     pub env: Vec<(String, String)>,
     pub provider: Option<String>,
     pub profile_id: Option<String>,
@@ -606,7 +661,6 @@ impl SessionOrigin {
     /// precisam manter a mesma conta.
     fn of(session: &TerminalSession) -> Self {
         Self {
-            headless: false,
             env: session.env.clone(),
             provider: session.provider.clone(),
             profile_id: session.profile_id.clone(),
@@ -622,6 +676,12 @@ impl SessionOrigin {
 fn compartilhar_extensoes(state: &Arc<EngineState>, provider: Option<&str>, profile_id: Option<&str>) {
     let (Some(provider), Some(profile_id), Some(dir)) = (provider, profile_id, state.state_file.parent()) else { return };
     omni_core::compartilhar::antes_de_abrir(dir, provider, profile_id);
+    // Mesmo momento (a conta vai abrir): autocompactação ligada nela.
+    if provider == "claude" {
+        if let Some(perfil) = omni_core::profiles(dir).into_iter().find(|perfil| perfil.id == profile_id) {
+            garantir_autocompact(Path::new(&perfil.config_dir));
+        }
+    }
 }
 
 pub(crate) fn spawn_terminal_inner(
@@ -638,7 +698,6 @@ pub(crate) fn spawn_terminal_inner(
     origin: SessionOrigin,
 ) -> Result<TerminalSession> {
     let shell = shell.unwrap_or_else(default_shell);
-    let headless = origin.headless;
     let initial_command = if origin.provider.as_deref() == Some("antigravity") {
         initial_command.map(|comando| com_log_do_antigravity(&comando, &id))
     } else { initial_command };
@@ -671,7 +730,6 @@ pub(crate) fn spawn_terminal_inner(
     let session = Arc::new(LiveSession {
         interaction: Mutex::new(interaction::Interaction::new(rows.max(1), cols.max(1))),
         reserved: std::sync::atomic::AtomicBool::new(false),
-        headless: std::sync::atomic::AtomicBool::new(headless),
         meta: Mutex::new(metadata.clone()),
         writer: Mutex::new(writer),
         master: Mutex::new(master),
@@ -721,7 +779,7 @@ fn duplicate_session(state: &Arc<EngineState>, session_id: &str) -> Result<Engin
     // Sessão de agente: "duplicar" é **bifurcar** a conversa — uma conversa nova com todo o histórico
     // da original, que segue independente dela. Shell continua virando outro shell igual.
     if let Some(provider) = source.provider.clone().filter(|p| p == "claude" || p == "codex") {
-        return bifurcar(state, source, &provider, false);
+        return bifurcar(state, source, &provider);
     }
     let id = state.next_id();
     // Duplicate is "a new terminal just like this one", not "clone the agent's work in
@@ -751,8 +809,7 @@ fn duplicate_session(state: &Arc<EngineState>, session_id: &str) -> Result<Engin
 /// na 2.1.296: o arquivo nasce com ele), então a timeline sabe onde ler desde o primeiro instante.
 /// Codex: `codex fork <id>` escolhe o id sozinho; a descoberta de rollouts acha o arquivo depois.
 /// Sem mensagem ainda (nada a bifurcar), abre uma conversa nova do mesmo agente e conta.
-/// `headless`: bifurcação pedida pela web/celular — ninguém exibe a PTY até o desktop abrir a aba.
-fn bifurcar(state: &Arc<EngineState>, source: TerminalSession, provider: &str, headless: bool) -> Result<EngineResponse> {
+fn bifurcar(state: &Arc<EngineState>, source: TerminalSession, provider: &str) -> Result<EngineResponse> {
     let dir = state.state_file.parent().ok_or_else(|| anyhow!("engine dir unavailable"))?.to_path_buf();
     let mut indice = omni_core::conversations::read_index(&dir);
     let original = source.conversation_id.as_deref().and_then(|id| indice.iter().find(|c| c.id == id)).cloned();
@@ -785,7 +842,6 @@ fn bifurcar(state: &Arc<EngineState>, source: TerminalSession, provider: &str, h
         source.cols,
         agora,
         SessionOrigin {
-            headless,
             env: source.env.clone(),
             provider: Some(provider.to_string()),
             profile_id: source.profile_id.clone(),
@@ -793,6 +849,27 @@ fn bifurcar(state: &Arc<EngineState>, source: TerminalSession, provider: &str, h
             external_session_id: externo.clone(),
         },
     )?;
+    // O histórico da original aparece no fork desde já: o Claude só grava o arquivo da cópia na
+    // primeira mensagem, e até lá a Conversa ficava vazia. Depois, as mensagens copiadas têm o mesmo
+    // uuid das originais e não duplicam; o que a original ganhar depois do fork fica de fora.
+    let mut segments: Vec<_> = original.iter().flat_map(|c| c.segments.iter())
+        .filter(|segmento| segmento.transcript_path.is_some())
+        .map(|segmento| omni_core::conversations::Segment {
+            terminal_session_id: None,
+            ended_at_ms: Some(segmento.ended_at_ms.unwrap_or(agora)),
+            historico_ate_ms: Some(agora),
+            ..segmento.clone()
+        })
+        .collect();
+    segments.push(omni_core::conversations::Segment {
+            provider: provider.to_string(),
+            profile_id: source.profile_id,
+            external_session_id: externo,
+            transcript_path: transcript,
+            terminal_session_id: Some(metadata.id.clone()),
+            started_at_ms: agora,
+            ended_at_ms: None, historico_ate_ms: None,
+    });
     indice.push(omni_core::conversations::Conversation {
         id: conversation_id,
         project_id: source.project_id,
@@ -801,15 +878,7 @@ fn bifurcar(state: &Arc<EngineState>, source: TerminalSession, provider: &str, h
         // O "(fork)" é o que separa as duas na lista: o nome automático não pode apagá-lo.
         title_source: omni_core::conversations::TitleSource::Manual,
         created_at_ms: agora,
-        segments: vec![omni_core::conversations::Segment {
-            provider: provider.to_string(),
-            profile_id: source.profile_id,
-            external_session_id: externo,
-            transcript_path: transcript,
-            terminal_session_id: Some(metadata.id.clone()),
-            started_at_ms: agora,
-            ended_at_ms: None,
-        }],
+        segments,
     });
     omni_core::conversations::write_index(&dir, &indice)?;
     Ok(EngineResponse::Session { session: metadata })
@@ -918,6 +987,7 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
             let mut context = session.interaction.lock().map_err(|_| anyhow!("screen poisoned"))?;
             if session.reserved.load(Ordering::SeqCst) { return Err(anyhow!("Consulta de uso em andamento")); }
             if let Ok(mut child) = session.child.lock() {
+                matar_arvore(child.process_id());
                 let _ = child.kill();
             }
             let meta = session.meta.lock().map_err(|_| anyhow!("session metadata poisoned"))?.clone();
@@ -1068,9 +1138,7 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
         meta.provider.clone().filter(|provider| screen_tracked(Some(provider)))
     };
     interaction.parser.process(bytes);
-    if session.headless.load(Ordering::SeqCst) {
-        answer_terminal_queries(session, &data, interaction.parser.screen());
-    }
+    answer_terminal_queries(session, &data, interaction.parser.screen());
     let screen_text = interaction.parser.screen().contents();
     let approval_requested = match &tracked_provider {
         // O diálogo real, reconhecido estrito — não "do you want to" solto numa resposta do agente.
@@ -1141,15 +1209,15 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
     }
 }
 
-/// Responde as perguntas que um terminal de verdade responderia, para PTYs que ninguém está exibindo.
+/// Responde as perguntas que um terminal de verdade responderia. **Sempre o engine**, nunca o xterm.
 ///
-/// **Sem isto, sessão aberta pelo celular nunca iniciava.** O ConPTY do Windows manda `ESC[6n`
-/// ("onde está o cursor?") ao criar a PTY e **para** até receber `ESC[linha;colunaR`. No desktop
-/// quem responde é o xterm.js; headless, ninguém respondia: a saída ficava só no `ESC[6n`, o bash
-/// não terminava de subir, o `claude` injetado nunca rodava, e o celular dizia "entrada do CLI não
-/// reconhecida". Confirmado respondendo `ESC[1;1R` à mão numa sessão travada: ela destravou na hora.
-///
-/// A posição vem do `vt100` que o engine já mantém, já com o chunk aplicado.
+/// O ConPTY do Windows manda `ESC[6n` ("onde está o cursor?") ao criar a PTY e **para** até receber
+/// `ESC[linha;colunaR`: sem resposta, o bash não termina de subir e o agente injetado nunca roda.
+/// Antes só o xterm do desktop respondia, e o engine só quando ninguém exibia a PTY (celular). Uma
+/// aba que abria na visão Conversa — o fork — não tinha xterm nenhum; ao trocar para Terminal, o
+/// xterm reproduzia o `ESC[6n` como histórico, sem responder: o fork ficava vazio para sempre.
+/// O engine vê o pedido primeiro e sabe a posição (`vt100`, já com o chunk aplicado); a resposta
+/// do xterm, em dobro, é descartada em `write_terminal` — senão vazaria como texto digitado.
 fn answer_terminal_queries(session: &LiveSession, data: &str, screen: &vt100::Screen) {
     if let Some(resposta) = cursor_report(data, screen.cursor_position()) {
         if let Ok(mut writer) = session.writer.lock() {
@@ -1165,7 +1233,32 @@ fn cursor_report(data: &str, (row, col): (u16, u16)) -> Option<String> {
     (pedidos > 0).then(|| format!("[{};{}R", row + 1, col + 1).repeat(pedidos))
 }
 
+/// Tira da entrada as respostas de posição do cursor (`ESC[linha;colunaR`): quem responde o `ESC[6n`
+/// é o engine (`answer_terminal_queries`), a do xterm chegaria em dobro.
+// ponytail: Shift+F3 no xterm gera a mesma sequência (`ESC[1;2R`) e também some; contar os pedidos
+// respondidos se algum agente precisar dessa tecla.
+fn sem_respostas_de_cursor(data: &str) -> std::borrow::Cow<'_, str> {
+    if !data.contains("\x1b[") { return data.into(); }
+    let mut saida = String::with_capacity(data.len());
+    let mut resto = data;
+    while let Some(i) = resto.find("\x1b[") {
+        saida.push_str(&resto[..i]);
+        let depois = &resto[i + 2..];
+        let fim = depois.find(|c: char| !(c.is_ascii_digit() || c == ';')).unwrap_or(depois.len());
+        if depois[fim..].starts_with('R') && depois[..fim].contains(';') {
+            resto = &depois[fim + 1..];
+        } else {
+            saida.push_str("\x1b[");
+            resto = depois;
+        }
+    }
+    saida.push_str(resto);
+    saida.into()
+}
+
 fn write_terminal(state: &EngineState, session_id: &str, data: &str) -> Result<EngineResponse> {
+    let data = sem_respostas_de_cursor(data);
+    if data.is_empty() { return Ok(EngineResponse::Ok); }
     let sessions = state.sessions.lock().map_err(|_| anyhow!("sessions lock poisoned"))?;
     let SessionEntry::Live(session) = sessions.get(session_id).ok_or_else(|| anyhow!("session not found"))? else {
         return Err(anyhow!("session is not running"));
@@ -1204,7 +1297,11 @@ fn stop_session(state: &EngineState, session_id: &str) -> Result<EngineResponse>
     let SessionEntry::Live(session) = sessions.get(session_id).ok_or_else(|| anyhow!("session not found"))? else {
         return Ok(EngineResponse::Ok);
     };
-    session.child.lock().map_err(|_| anyhow!("terminal child poisoned"))?.kill()?;
+    {
+        let mut child = session.child.lock().map_err(|_| anyhow!("terminal child poisoned"))?;
+        matar_arvore(child.process_id());
+        child.kill()?;
+    }
     let mut meta = session.meta.lock().map_err(|_| anyhow!("session metadata poisoned"))?;
     meta.state = SessionState::Stopped;
     meta.pid = None;
@@ -1221,14 +1318,27 @@ fn close_session(state: &EngineState, session_id: &str) -> Result<EngineResponse
         .map_err(|_| anyhow!("sessions lock poisoned"))?
         .remove(session_id);
     if let Some(SessionEntry::Live(session)) = entry {
-        let _ = session
-            .child
-            .lock()
-            .map_err(|_| anyhow!("terminal child poisoned"))?
-            .kill();
+        let mut child = session.child.lock().map_err(|_| anyhow!("terminal child poisoned"))?;
+        matar_arvore(child.process_id());
+        let _ = child.kill();
     }
     state.persist()?;
     Ok(EngineResponse::Ok)
+}
+
+/// No Windows o `kill` da PTY só derruba o shell: a CLI aberta nele (agy, claude, node) ficava viva,
+/// órfã, a cada aba fechada ou reiniciada. `taskkill /T` leva a árvore inteira.
+/// ponytail: no macOS/Linux o fim da PTY manda SIGHUP e a CLI sai; matar o grupo se aparecer órfão lá.
+fn matar_arvore(pid: Option<u32>) {
+    #[cfg(windows)]
+    if let Some(pid) = pid {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()])
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .creation_flags(0x0800_0000).status();
+    }
+    #[cfg(not(windows))]
+    let _ = pid;
 }
 
 fn snapshot(state: &EngineState, session_id: &str, since: u64) -> Result<EngineResponse> {
@@ -1238,9 +1348,6 @@ fn snapshot(state: &EngineState, session_id: &str, since: u64) -> Result<EngineR
     let SessionEntry::Live(session) = entry else {
         return Ok(EngineResponse::Snapshot { session: session_meta, from_seq: since, next_seq: since, data: String::new() });
     };
-    // Snapshot só vem de quem renderiza a PTY num terminal (o xterm do desktop). A partir daqui é ele
-    // quem responde as perguntas do terminal.
-    session.headless.store(false, Ordering::SeqCst);
     let output = session.output.lock().map_err(|_| anyhow!("terminal output poisoned"))?;
     let from_seq = output.chunks.front().map(|(seq, _)| (*seq).max(since)).unwrap_or(since);
     let data = output
@@ -1350,7 +1457,7 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
 
-    fn test_state() -> Arc<EngineState> {
+    pub(crate) fn test_state() -> Arc<EngineState> {
         let dir = env::temp_dir().join(format!("omni-engine-test-{}-{:x}", now_ms(), rand::random::<u64>()));
         fs::create_dir_all(&dir).expect("create temp state dir");
         Arc::new(EngineState {
@@ -1637,12 +1744,17 @@ mod tests {
     fn cursor_report_responde_cada_pergunta_em_1_based() {
         assert_eq!(cursor_report("\x1b[6n", (0, 0)).as_deref(), Some("\x1b[1;1R"));
         assert_eq!(cursor_report("abc\x1b[6nxyz\x1b[6n", (9, 2)).as_deref(), Some("\x1b[10;3R\x1b[10;3R"));
+        // A resposta do xterm some; tecla de verdade (setas, texto, ESC solto, colagem) passa.
+        assert_eq!(sem_respostas_de_cursor("\x1b[12;40R"), "");
+        assert_eq!(sem_respostas_de_cursor("ls\x1b[1;1R\r"), "ls\r");
+        assert_eq!(sem_respostas_de_cursor("\x1b[A\x1b[B\x1b"), "\x1b[A\x1b[B\x1b");
+        assert_eq!(sem_respostas_de_cursor("\x1b[200~colado\x1b[201~"), "\x1b[200~colado\x1b[201~");
         assert_eq!(cursor_report("sem pergunta", (0, 0)), None);
     }
 
-    /// Reproduz o travamento real: PTY aberta sem terminal exibindo. O ConPTY manda `ESC[6n` e para
-    /// até ter resposta; antes, o comando injetado nunca rodava. Com `headless`, o engine responde e
-    /// o shell segue.
+    /// Reproduz o travamento real: PTY aberta sem terminal exibindo (celular, ou aba na visão Conversa).
+    /// O ConPTY manda `ESC[6n` e para até ter resposta; antes, o comando injetado nunca rodava. O
+    /// engine responde e o shell segue.
     #[cfg(windows)]
     #[test]
     fn sessao_sem_terminal_exibindo_nao_trava_no_pedido_de_cursor() {
@@ -1660,7 +1772,7 @@ mod tests {
             24,
             80,
             now_ms(),
-            SessionOrigin { headless: true, ..SessionOrigin::default() },
+            SessionOrigin { ..SessionOrigin::default() },
         )
         .expect("spawn should succeed");
 
@@ -1703,6 +1815,26 @@ mod tests {
         assert!(looks_like_approval_prompt("Do You Want To continue? (y/n)"));
         assert!(looks_like_approval_prompt("Allow?"));
         assert!(!looks_like_approval_prompt("just some regular output"));
+    }
+
+    /// Liga sem reescrever o resto do arquivo do usuário; desligado vira ligado; ausente é criado.
+    #[test]
+    fn autocompact_fica_ligado_no_settings_da_conta() {
+        let dir = tempfile::tempdir().unwrap();
+        let arquivo = dir.path().join("settings.json");
+        let ler = || fs::read_to_string(&arquivo).unwrap();
+        garantir_autocompact(dir.path());
+        assert!(serde_json::from_str::<serde_json::Value>(&ler()).unwrap()["autoCompactEnabled"] == true);
+
+        fs::write(&arquivo, "{\n  \"model\": \"opus\",\n  \"autoCompactEnabled\": false,\n  \"z\": 1\n}").unwrap();
+        garantir_autocompact(dir.path());
+        assert_eq!(ler(), "{\n  \"model\": \"opus\",\n  \"autoCompactEnabled\": true,\n  \"z\": 1\n}");
+
+        fs::write(&arquivo, "{\"model\":\"opus\"}").unwrap();
+        garantir_autocompact(dir.path());
+        let valor: serde_json::Value = serde_json::from_str(&ler()).unwrap();
+        assert!(valor["autoCompactEnabled"] == true && valor["model"] == "opus");
+        assert!(Compactacao::default().valida() && !Compactacao { janela: 500_000, ..Default::default() }.valida());
     }
 
     #[test]

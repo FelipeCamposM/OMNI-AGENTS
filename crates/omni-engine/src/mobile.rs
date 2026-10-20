@@ -581,11 +581,13 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/conversas/{id}/retomar",post(retomar_rota))
         .route("/contas",get(contas))
         .route("/contas/{id}/uso",post(atualizar_uso))
+        .route("/compactacao",get(compactacao_ler).post(compactacao_salvar))
         .route("/historico/levar",post(levar_do_historico))
         .route("/extensoes",get(extensoes))
         .route("/extensoes/compartilhar",post(compartilhar_extensoes))
         .route("/extensoes/principal",post(definir_principal))
         .route("/conversas/{id}/arquivos",get(arquivos_da_conversa))
+        .route("/conversas/{id}/comandos",get(comandos_da_conversa))
         .route("/terminais",get(listar_terminais).post(abrir_terminal))
         .route("/terminais/{id}/saida",get(saida_do_terminal))
         .route("/terminais/{id}/teclas",post(teclas_do_terminal))
@@ -593,6 +595,12 @@ fn rotas() -> Router<Arc<EngineState>> {
         // O limite global (32 KB) é para JSON. Anexo tem o dele, aplicado **só** nesta rota: por
         // dentro da camada global, e o extrator lê o limite mais interno.
         .route("/conversas/{id}/anexos",post(anexar).layer(DefaultBodyLimit::max(ANEXO_MAX_BYTES)))
+        .route("/conversas/{id}/voz",post(transcrever_voz).layer(DefaultBodyLimit::max(crate::voz::AUDIO_MAX_BYTES)))
+        .route("/conversas/{id}/voz/corrigir",post(corrigir_voz))
+        .route("/voz",get(voz_estado))
+        .route("/voz/baixar",post(voz_baixar))
+        .route("/voz/remover",post(voz_remover))
+        .route("/voz/ajustes",post(voz_ajustes))
         .route("/atencao",get(attention))
         .route("/sessoes",post(create_session))
         .route("/parear",post(parear))
@@ -965,7 +973,7 @@ async fn bifurcar_rota(State(state): State<Arc<EngineState>>, RoutePath(id): Rou
             .filter(|entry| matches!(entry,SessionEntry::Live(_))).count() >= MAX_SESSOES {
             return Err(error(StatusCode::TOO_MANY_REQUESTS,"Muitas sessões abertas neste PC; feche alguma antes"));
         }
-        let resposta = bifurcar(&state, fonte, &provider, true).map_err(|erro|error(StatusCode::INTERNAL_SERVER_ERROR,&erro.to_string()))?;
+        let resposta = bifurcar(&state, fonte, &provider).map_err(|erro|error(StatusCode::INTERNAL_SERVER_ERROR,&erro.to_string()))?;
         let EngineResponse::Session { session } = resposta else { return Err(error(StatusCode::INTERNAL_SERVER_ERROR,"Resposta inesperada")); };
         Ok((StatusCode::CREATED,Json(json!({"id":session.conversation_id,"title":session.name}))))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao bifurcar"))?
@@ -1097,7 +1105,7 @@ async fn imagem_da_mensagem(State(state): State<Arc<EngineState>>, RoutePath((id
                     .ok_or_else(||error(StatusCode::NOT_FOUND,"Conversa não encontrada"))?;
                 let caminho = omni_core::history::validated(Path::new(&entry.path),&entry.provider,&profiles)
                     .ok_or_else(||error(StatusCode::NOT_FOUND,"Histórico não encontrado"))?;
-                vec![(caminho, entry.provider)]
+                vec![(caminho, entry.provider, None)]
             }
         };
         let mut feeds = state.mobile.feeds.lock().expect("feeds poisoned");
@@ -1113,9 +1121,8 @@ const TERMINAL_INICIAL_BYTES: usize = 512 * 1024;
 
 /// O terminal da conversa como o PC desenha: a saída bruta da PTY a partir de `desde`.
 ///
-/// Só leitura de propósito — **não** marca a sessão como exibida (`headless`): quem responde às
-/// perguntas do terminal continua sendo o xterm do desktop ou o próprio engine. Se a página também
-/// respondesse, a resposta chegaria em dobro e vazaria como texto digitado dentro da CLI.
+/// Só leitura de propósito: quem responde às perguntas do terminal é o engine
+/// (`answer_terminal_queries`). Se a página também respondesse, a resposta chegaria em dobro.
 async fn terminal(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, Query(desde): Query<Desde>) -> Result<Json<Value>, ApiError> {
     tokio::task::spawn_blocking(move || {
         let (_, sessao) = current(&state,&id)?;
@@ -1211,7 +1218,7 @@ async fn abrir_terminal(State(state): State<Arc<EngineState>>, Json(body): Json<
         }
         // Headless: ninguém exibe esta PTY num terminal de verdade até o desktop abrir a aba.
         let resposta = spawn_terminal(&state, projeto.id, "Terminal".into(), projeto.path, None, None, 32, 120,
-            SessionOrigin { headless: true, ..SessionOrigin::default() })
+            SessionOrigin { ..SessionOrigin::default() })
             .map_err(|erro|error(StatusCode::INTERNAL_SERVER_ERROR,&erro.to_string()))?;
         let EngineResponse::Session { session } = resposta else { return Err(error(StatusCode::INTERNAL_SERVER_ERROR,"Resposta inesperada")); };
         Ok((StatusCode::CREATED,Json(json!({"id":session.id,"name":session.name,"project_id":session.project_id}))))
@@ -1299,6 +1306,44 @@ async fn anexar(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<
     }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao gravar o anexo"))?
 }
 
+async fn voz_estado(State(state): State<Arc<EngineState>>) -> Json<crate::voz::Estado> { Json(crate::voz::estado(&state)) }
+
+async fn voz_baixar(State(state): State<Arc<EngineState>>) -> Json<crate::voz::Estado> {
+    crate::voz::baixar(&state);
+    Json(crate::voz::estado(&state))
+}
+
+async fn voz_remover(State(state): State<Arc<EngineState>>) -> Result<Json<crate::voz::Estado>,ApiError> {
+    crate::voz::remover(&state).map_err(|e| error(StatusCode::CONFLICT,&e.to_string()))?;
+    Ok(Json(crate::voz::estado(&state)))
+}
+
+#[derive(Deserialize)] #[serde(deny_unknown_fields)] struct VozAjustes { corrigir: bool }
+async fn voz_ajustes(State(state): State<Arc<EngineState>>, Json(body): Json<VozAjustes>) -> Result<Json<crate::voz::Estado>,ApiError> {
+    crate::voz::definir_correcao(&state,body.corrigir).map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Não foi possível salvar"))?;
+    Ok(Json(crate::voz::estado(&state)))
+}
+
+/// Um trecho da fala (PCM 16 bits, 16 kHz, mono, cortado nas pausas pelo navegador) → texto cru. Volta para o campo, nunca é
+/// enviado sozinho: a pessoa revisa antes. A conversa só serve para a dica de vocabulário do projeto.
+async fn transcrever_voz(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, corpo: axum::body::Bytes) -> Result<Json<Value>,ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let (conversation,_) = current(&state,&id)?;
+        let dica = crate::voz::vocabulario(std::path::Path::new(&conversation.cwd));
+        let texto = crate::voz::transcrever(&state,&corpo,&dica).map_err(|e| error(StatusCode::CONFLICT,&e.to_string()))?;
+        Ok(Json(json!({"texto":texto})))
+    }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao transcrever"))?
+}
+
+#[derive(Deserialize)] #[serde(deny_unknown_fields)] struct VozTexto { texto: String }
+async fn corrigir_voz(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, Json(body): Json<VozTexto>) -> Result<Json<Value>,ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let (conversation,_) = current(&state,&id)?;
+        let dica = crate::voz::vocabulario(std::path::Path::new(&conversation.cwd));
+        Ok(Json(json!({"texto":crate::voz::corrigir(&state,&body.texto,&dica)})))
+    }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao corrigir"))?
+}
+
 /// `X-Omni-Nome` chega com `encodeURIComponent` (cabeçalho HTTP não carrega acento). Sequência
 /// inválida vira o próprio texto: o nome ainda passa pelo `nome_seguro` depois.
 fn percent_decode(valor: &str) -> String {
@@ -1320,8 +1365,11 @@ fn percent_decode(valor: &str) -> String {
 #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct PromptBody { texto: String, #[serde(default)] fila: bool }
 #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct ApprovalBody { permitir: bool }
 async fn prompt(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, headers: HeaderMap, Json(body): Json<PromptBody>) -> Result<(StatusCode,Json<Value>),ApiError> {
-    if body.texto.trim().is_empty() || body.texto.len() > 16_000 || body.texto.chars().any(|c|c.is_control() && c != '\n' && c != '\t') || body.texto.trim_start().starts_with('/') {
-        return Err(error(StatusCode::BAD_REQUEST,"Envie texto de até 16000 bytes, sem comandos slash ou caracteres de controle"));
+    // `/comando` passa: colado na CLI e confirmado com Enter, ela executa como se fosse digitado
+    // (conferido com `/context` no Claude 2.1.304). Caractere de controle continua barrado — é ele
+    // que viraria tecla (Esc, Ctrl+C) dentro do terminal.
+    if body.texto.trim().is_empty() || body.texto.len() > 16_000 || body.texto.chars().any(|c|c.is_control() && c != '\n' && c != '\t') {
+        return Err(error(StatusCode::BAD_REQUEST,"Envie texto de até 16000 bytes, sem caracteres de controle"));
     }
     let kind = if body.fila { ActionKind::Fila(body.texto) } else { ActionKind::Prompt(body.texto) };
     enqueue_async(state,id,headers,kind).await
@@ -1496,7 +1544,23 @@ fn execute(state:&Arc<EngineState>, action:&Action) -> Result<()> {
    esforço na linha de comando; trocar por comando interno (`/model`) muda de versão para versão.
    Trocar de conta leva o transcript junto para o config dir da conta nova, como o failover. */
 
-const MODELOS_CLAUDE: [(&str, &str); 4] = [("fable","Fable"),("opus","Opus"),("sonnet","Sonnet"),("haiku","Haiku")];
+/// (id, rótulo, dica, seção). Os apelidos seguem a versão mais nova; "Mais modelos" é a lista do
+/// `/model` da CLI (2.1.304), por id fixo.
+// ponytail: lista copiada da CLI, revisar quando o `/model` ganhar ou perder versões.
+const MODELOS_CLAUDE: [(&str, &str, &str, &str); 12] = [
+    ("opus","Opus","Trabalho complexo e do dia a dia",""),
+    ("sonnet","Sonnet","Mais econômico, para tarefas simples",""),
+    ("fable","Fable","Para os desafios mais difíceis",""),
+    ("haiku","Haiku","O mais rápido, respostas curtas",""),
+    ("claude-fable-5","Fable 5","Tarefas longas e difíceis","Mais modelos"),
+    ("claude-opus-5","Opus 5","Trabalho complexo e do dia a dia","Mais modelos"),
+    ("claude-sonnet-5","Sonnet 5","Tarefas de rotina","Mais modelos"),
+    ("claude-haiku-4-5","Haiku 4.5","O mais rápido, respostas curtas","Mais modelos"),
+    ("claude-opus-4-8","Opus 4.8","Trabalho complexo e do dia a dia","Mais modelos"),
+    ("claude-opus-4-7","Opus 4.7","Trabalho complexo e do dia a dia","Mais modelos"),
+    ("claude-opus-4-6","Opus 4.6","Trabalho complexo e do dia a dia","Mais modelos"),
+    ("claude-sonnet-4-6","Sonnet 4.6","Tarefas de rotina","Mais modelos"),
+];
 const ESFORCOS_CLAUDE: [&str; 5] = ["low","medium","high","xhigh","max"];
 
 /// Só letras, números e `._-[]`: o valor vira argumento de um comando digitado num shell.
@@ -1550,13 +1614,23 @@ fn ultima_sessao(state: &EngineState, id: &str) -> Result<omni_core::conversatio
         .ok_or_else(||error(StatusCode::NOT_FOUND,"Conversa não encontrada"))?;
     Ok(omni_core::conversations::Segment {
         provider: entrada.provider, profile_id: Some(entrada.profile_id), external_session_id: Some(entrada.session_id),
-        transcript_path: Some(entrada.path), terminal_session_id: None, started_at_ms: 0, ended_at_ms: None,
+        transcript_path: Some(entrada.path), terminal_session_id: None, started_at_ms: 0, ended_at_ms: None, historico_ate_ms: None,
     })
 }
 
 fn pasta_da_conversa(state: &EngineState, id: &str) -> Option<String> {
     current(state,id).map(|(c,_)| c.cwd).ok()
         .or_else(|| historical_entries(state).into_iter().find(|e| history_id(e) == id).and_then(|e| e.cwd))
+}
+
+/// Id da conversa na CLI. O Antigravity só ganha um depois da primeira mensagem, e o índice só o
+/// recebe na próxima descoberta: até lá vale o que o log da própria sessão diz — sem isso, trocar o
+/// modelo logo depois da primeira resposta dizia "mande a primeira mensagem antes".
+fn id_externo(segmento: &omni_core::conversations::Segment) -> Option<String> {
+    segmento.external_session_id.clone().or_else(|| {
+        if segmento.provider != "antigravity" { return None; }
+        omni_core::antigravity::conversa_da_sessao(&crate::config_do_antigravity()?, segmento.terminal_session_id.as_deref()?).map(|(id, _)| id)
+    })
 }
 
 fn opcoes_da_conversa(state: &EngineState, id: &str) -> Result<Value, ApiError> {
@@ -1580,7 +1654,7 @@ fn opcoes_da_conversa(state: &EngineState, id: &str) -> Result<Value, ApiError> 
         _ => (None, None),
     };
     let modelos: Vec<Value> = match segmento.provider.as_str() {
-        "claude" => MODELOS_CLAUDE.iter().map(|(id,label)| json!({"id":id,"label":label,"efforts":ESFORCOS_CLAUDE})).collect(),
+        "claude" => MODELOS_CLAUDE.iter().map(|(id,label,hint,secao)| json!({"id":id,"label":label,"hint":hint,"section":secao,"efforts":ESFORCOS_CLAUDE})).collect(),
         "codex" => atual.map(|perfil| modelos_codex(Path::new(&perfil.config_dir))).unwrap_or_default(),
         "antigravity" => omni_core::antigravity::familias(&saida_agy).into_iter()
             .map(|f| json!({"id":f.id,"label":f.label,"efforts":f.esforcos})).collect(),
@@ -1593,8 +1667,23 @@ fn opcoes_da_conversa(state: &EngineState, id: &str) -> Result<Value, ApiError> 
         "effort": runtime.as_ref().and_then(|r| r.effort.clone()).or(esforco_agy),
         "profiles": perfis.iter().map(|p| json!({"id":p.id,"name":p.name})).collect::<Vec<_>>(),
         "models": modelos,
-        "can_resume": segmento.external_session_id.is_some(),
+        "can_resume": id_externo(segmento).is_some(),
+        // Contexto da conversa (só Claude): quanto a última resposta leu e onde ele compacta.
+        "context_tokens": runtime.as_ref().and_then(|r| r.context_tokens),
+        "context_window": (segmento.provider == "claude").then(|| crate::Compactacao::ler(dir).janela),
     }))
+}
+
+async fn compactacao_ler(State(state): State<Arc<EngineState>>) -> Json<crate::Compactacao> {
+    Json(crate::Compactacao::ler(state.state_file.parent().unwrap()))
+}
+
+/// Vale para as sessões abertas daqui em diante (a janela vai no ambiente de cada CLI).
+async fn compactacao_salvar(State(state): State<Arc<EngineState>>, Json(body): Json<crate::Compactacao>) -> Result<Json<crate::Compactacao>,ApiError> {
+    if !body.valida() { return Err(error(StatusCode::BAD_REQUEST,"Janela deve ser 400 mil ou 1 milhão; limiar entre 50 e 99")); }
+    omni_protocol::atomic_write_json(&state.state_file.parent().unwrap().join("compactacao.json"),&body)
+        .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Não foi possível salvar"))?;
+    Ok(Json(body))
 }
 
 async fn opcoes(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>) -> Result<Json<Value>, ApiError> {
@@ -1725,6 +1814,21 @@ async fn arquivos_da_conversa(State(state): State<Arc<EngineState>>, RoutePath(i
         };
         Ok(Json(json!({"arquivos":melhores_arquivos(&lista,&busca.q,40),"total":lista.len()})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao listar arquivos"))?
+}
+
+/// Comandos `/` do agente desta conversa, para o menu do chat: embutidos, os seus, skills e plugins
+/// ligados da conta dela. Conversa só do histórico (sem agente aberto) não tem menu.
+async fn comandos_da_conversa(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let Ok((conversa,_)) = current(&state,&id) else { return Ok(Json(json!([]))) };
+        let Some(segmento) = conversa.segments.last() else { return Ok(Json(json!([]))) };
+        let perfis = omni_core::profiles(state.state_file.parent().unwrap());
+        let conta = segmento.profile_id.as_ref().and_then(|perfil| perfis.iter().find(|p| &p.id == perfil))
+            .or_else(|| perfis.iter().find(|p| p.provider == segmento.provider && p.builtin))
+            .map(|p| PathBuf::from(&p.config_dir));
+        let projeto = Path::new(&conversa.cwd);
+        Ok(Json(json!(omni_core::comandos::listar(&segmento.provider, conta.as_deref(), projeto.is_dir().then_some(projeto)))))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao listar comandos"))?
 }
 
 /// Linha de comando que retoma a conversa com o modelo e o esforço pedidos.
@@ -1901,7 +2005,6 @@ fn retomar(state: &Arc<EngineState>, action: &Action, plano: &Retomada) -> Resul
     let sessao = spawn_terminal_inner(state, state.next_id(), plano.project_id.clone(), plano.title.clone(), plano.cwd.clone(),
         None, Some(comando), 30, 120, agora,
         SessionOrigin {
-            headless: true,
             env: alvo.map(omni_core::env_for).unwrap_or_default(),
             provider: Some(plano.provider.clone()),
             profile_id: alvo_id.clone(),
@@ -1910,7 +2013,7 @@ fn retomar(state: &Arc<EngineState>, action: &Action, plano: &Retomada) -> Resul
         })?;
     let segmento = omni_core::conversations::Segment {
         provider: plano.provider.clone(), profile_id: alvo_id, external_session_id: Some(plano.session_id.clone()),
-        transcript_path: transcript, terminal_session_id: Some(sessao.id.clone()), started_at_ms: agora, ended_at_ms: None,
+        transcript_path: transcript, terminal_session_id: Some(sessao.id.clone()), started_at_ms: agora, ended_at_ms: None, historico_ate_ms: None,
     };
     let mut indice = omni_core::conversations::read_index(&dir);
     match indice.iter_mut().find(|c| c.id == plano.conversation_id) {
@@ -1936,7 +2039,7 @@ fn reabrir_com(state: &Arc<EngineState>, conversation_id: &str, ajustes: &Ajuste
     let mut indice = omni_core::conversations::read_index(&dir);
     let conversa = indice.iter_mut().find(|c| c.id == conversation_id).ok_or_else(||anyhow!("Conversa removida"))?;
     let segmento = conversa.segments.last().cloned().ok_or_else(||anyhow!("Conversa sem sessão"))?;
-    let sessao_externa = segmento.external_session_id.clone()
+    let sessao_externa = id_externo(&segmento)
         .ok_or_else(||anyhow!("Mande a primeira mensagem antes: ainda não há conversa para retomar"))?;
     let perfis = omni_core::profiles(&dir);
     let alvo_id = ajustes.profile_id.clone().or(segmento.profile_id.clone());
@@ -1984,7 +2087,7 @@ fn reabrir_com(state: &Arc<EngineState>, conversation_id: &str, ajustes: &Ajuste
         if let Some(ultimo) = conversa.segments.last_mut() { ultimo.ended_at_ms = Some(agora); }
         conversa.segments.push(omni_core::conversations::Segment {
             provider: segmento.provider.clone(), profile_id: alvo_id, external_session_id: Some(sessao_externa),
-            transcript_path: transcript, terminal_session_id: Some(sessao_id.clone()), started_at_ms: agora, ended_at_ms: None,
+            transcript_path: transcript, terminal_session_id: Some(sessao_id.clone()), started_at_ms: agora, ended_at_ms: None, historico_ate_ms: None,
         });
         omni_core::conversations::write_index(&dir,&indice)?;
     }
@@ -2022,7 +2125,7 @@ fn spawn_from_mobile(state:&Arc<EngineState>, action:&Action, plan:&SpawnPlan) -
             transcript_path: plan.transcript_path.clone(),
             terminal_session_id: None,
             started_at_ms: now_ms(),
-            ended_at_ms: None,
+            ended_at_ms: None, historico_ate_ms: None,
         }],
     };
 
@@ -2040,8 +2143,6 @@ fn spawn_from_mobile(state:&Arc<EngineState>, action:&Action, plan:&SpawnPlan) -
         120,
         now_ms(),
         SessionOrigin {
-            // Aberta sem nenhum terminal exibindo: o engine responde o `ESC[6n` do ConPTY.
-            headless: true,
             env: plan.env.clone(),
             provider: Some(plan.provider.clone()),
             profile_id: plan.profile_id.clone(),
@@ -2097,6 +2198,12 @@ fn execute_checked(state:&Arc<EngineState>, action:&Action, is_running: impl Fn(
         ActionKind::Escolha(opcao) => {
             let menu = interaction::escolha(&interaction::linha_a_linha(context.parser.screen())).ok_or_else(||anyhow!("Menu não reconhecido"))?;
             match opcao {
+                // Menu sem números (`interaction::escolha_por_setas`): anda da marcada até a pedida.
+                Resposta::Opcao(n) if menu.setas.is_some() && menu.opcoes.iter().any(|o| o.numero == *n) => {
+                    let marcada = menu.setas.unwrap_or(1);
+                    let seta = if *n >= marcada { "\x1b[B" } else { "\x1b[A" };
+                    (format!("{}\r", seta.repeat(n.abs_diff(marcada) as usize)), false)
+                }
                 // Antigravity: menu de setas ("↑/↓ Navigate · enter Select"). Anda da opção marcada com
                 // `>` até a pedida e confirma.
                 Resposta::Opcao(n) if provider == "antigravity" && menu.opcoes.iter().any(|o| o.numero == *n) => {
@@ -2487,7 +2594,7 @@ quebra"}"#] {
         let (_dir,state) = fixture(); let app = router(state);
         assert_eq!(app.clone().oneshot(req("POST","/conversas/c/prompt","https://evil.example",r#"{"texto":"oi"}"#)).await.unwrap().status(),StatusCode::FORBIDDEN);
         assert_eq!(app.clone().oneshot(req("GET","/conversas/missing/timeline","","")).await.unwrap().status(),StatusCode::NOT_FOUND);
-        assert_eq!(app.oneshot(req("POST","/conversas/c/prompt","http://127.0.0.1:47322",r#"{"texto":"/exit"}"#)).await.unwrap().status(),StatusCode::BAD_REQUEST);
+        assert_eq!(app.oneshot(req("POST","/conversas/c/prompt","http://127.0.0.1:47322",r#"{"texto":"oi\u001b[A"}"#)).await.unwrap().status(),StatusCode::BAD_REQUEST);
     }
     #[test] fn idempotent_retry_does_not_need_a_live_session_or_enqueue_again() {
         let (_dir,state) = fixture();
@@ -2908,7 +3015,7 @@ quebra"}"#] {
                 "state":"answered","pid":42,"created_at_ms":1,"last_activity_at_ms":1,"output_seq":0,"rows":20,"cols":100,
                 "provider":"claude","profile_id":"profile","conversation_id":"c"})).unwrap();
             let mut context = interaction::Interaction::new(20,100); context.parser.process(b"\x1b[?2004h"); context.parser.process(text.as_bytes());
-            let session = Arc::new(LiveSession{interaction:Mutex::new(context),reserved:std::sync::atomic::AtomicBool::new(false),headless:std::sync::atomic::AtomicBool::new(false),
+            let session = Arc::new(LiveSession{interaction:Mutex::new(context),reserved:std::sync::atomic::AtomicBool::new(false),
                 meta:Mutex::new(meta),writer:Mutex::new(Box::new(RecordingWriter(bytes.clone()))),master:Mutex::new(Box::new(FakeMaster)),
                 child:Mutex::new(Box::new(FakeChild)),output:Mutex::new(OutputBuffer{chunks:VecDeque::new(),bytes:0,next_seq:0})});
             state.sessions.lock().unwrap().insert("s".into(),SessionEntry::Live(session.clone()));

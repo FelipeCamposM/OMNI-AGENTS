@@ -323,9 +323,16 @@
 .aba-agente-chips { display: flex; align-items: center; gap: .375rem; padding-bottom: .375rem; min-width: 0; }
 .aba-agente-resumo { display: flex; align-items: center; gap: .5rem; min-width: 0; padding-bottom: .5rem; font-size: .6875rem; }
 .aba-agente-titulo { min-width: 0; max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; color: rgb(var(--c-text-primary)); }
-.aba-agente-estado { flex-shrink: 0; color: rgb(var(--c-text-muted)); }
-.aba-agente-estado::before { content: '·'; margin-right: .5rem; }
-@media (max-width: 760px) { .aba-agente-titulo, .aba-agente-estado { display: none; } }
+@media (max-width: 760px) { .aba-agente-titulo { display: none; } }
+
+/* Branch da conversa à direita do estado: o nome em destaque (cor da paleta), pull e grafo ao lado. */
+.git-topo { display: flex; align-items: center; gap: .3rem; min-width: 0; flex-shrink: 1; margin-left: .25rem; padding-bottom: .35rem; }
+.git-topo-branch { display: flex; align-items: center; gap: .35rem; min-width: 0; max-width: 16rem; height: 1.6rem; padding: 0 .55rem; font: inherit; font-size: .75rem; font-weight: 700; color: rgb(var(--c-accent)); background: rgb(var(--c-accent) / .1); border: 1px solid rgb(var(--c-accent) / .55); cursor: pointer; }
+.git-topo-branch:hover { background: rgb(var(--c-accent) / .18); border-color: rgb(var(--c-accent)); }
+.git-topo-botao { display: flex; align-items: center; gap: .3rem; flex-shrink: 0; height: 1.6rem; padding: 0 .5rem; font: inherit; font-size: .6875rem; font-weight: 600; color: rgb(var(--c-text-secondary)); background: none; border: 1px solid rgb(var(--c-outline) / .7); cursor: pointer; }
+.git-topo-botao:hover:not(:disabled) { color: rgb(var(--c-text-primary)); background: rgb(var(--c-overlay) / .06); }
+.git-topo-botao:disabled { opacity: .45; cursor: default; }
+@media (max-width: 760px) { .git-topo-botao { display: none; } }
 
 /* Fundo "Igual à web" da conversa no app do PC: a grade de pixels da página web na cor do tema, com um
    brilho suave da mesma cor. Pintada só no painel — o fundo do app pode ser um efeito animado. */

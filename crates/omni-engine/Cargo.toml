@@ -19,6 +19,9 @@ axum = "0.8"
 tower = { version = "0.5", features = ["util"] }
 vt100 = "0.16"
 include_dir = "0.7"
+# Voz: transcrição local (whisper.cpp). O modelo é baixado à parte, só se a pessoa quiser.
+whisper-rs = "0.16"
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }

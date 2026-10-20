@@ -242,13 +242,22 @@ fn blocos_de_imagem(message: &Value) -> impl Iterator<Item = &Value> {
 
 /// A imagem `k` da mensagem `n` (a mesma numeração do timeline: `fontes` na ordem dos segmentos,
 /// sem repetir identidade). Devolve `(tipo, base64)`. Lê só a linha da mensagem de novo.
-pub fn imagem(fontes: &[(PathBuf, String)], n: usize, k: usize, cache: &mut FeedCache) -> Option<(String, String)> {
+/// Se o item é de até `limite` (ms). Sem limite ou sem hora no item, vale — ver
+/// `Segment::historico_ate_ms`.
+pub fn ate(item: &Item, limite: Option<u64>) -> bool {
+    let Some(limite) = limite else { return true };
+    item.timestamp.as_deref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+        .is_none_or(|hora| hora.timestamp_millis() <= limite as i64)
+}
+
+pub fn imagem(fontes: &[(PathBuf, String, Option<u64>)], n: usize, k: usize, cache: &mut FeedCache) -> Option<(String, String)> {
     let mut vistos = std::collections::HashSet::new();
     let mut indice = 0;
-    for (caminho, provider) in fontes {
+    for (caminho, provider, limite) in fontes {
         let Ok(entradas) = cache.read(caminho, provider) else { continue };
         let mut alvo = None;
         for entrada in entradas {
+            if !ate(&entrada.item, *limite) { continue; }
             if !vistos.insert(entrada.identity.clone()) { continue; }
             if indice == n { alvo = Some(entrada.clone()); break; }
             indice += 1;
@@ -561,7 +570,7 @@ mod tests {
         let mut cache = FeedCache::default();
         let itens = cache.read(&caminho, "claude").unwrap().to_vec();
         assert_eq!((itens[1].item.imagens, itens[1].item.text.as_str()), (1, "[Image #1] olha isso"));
-        let fontes = [(caminho, "claude".to_owned())];
+        let fontes = [(caminho, "claude".to_owned(), None)];
         assert_eq!(imagem(&fontes, 1, 0, &mut cache), Some(("image/png".into(), "iVBORw0K".into())));
         assert_eq!(imagem(&fontes, 1, 1, &mut cache), None);
         assert_eq!(imagem(&fontes, 0, 0, &mut cache), None);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { matchesShortcut } from "../../lib/shortcuts";
-import { GitBranchIcon, GithubIcon } from "../../components/ui/PixelIcon";
+import { ChartIcon, GitBranchIcon, GithubIcon } from "../../components/ui/PixelIcon";
+import { GitGraphModal } from "./GitGraphPane";
 import { isRemoteProject } from "../projects/targetState";
 import { gitBranches, gitCheckoutBranch, gitConta, gitPull, gitStatus, type GitBranch, type GitConta } from "./gitService";
 
@@ -22,6 +23,7 @@ export function GitContaStatus({ projectPath }: { projectPath: string | null }) 
 
   if (!conta) return null;
   const quem = conta.github ?? conta.nome ?? "sem conta";
+  const inicial = (quem.trim()[0] ?? "?").toUpperCase();
   const detalhes = [
     conta.nome ? `Commits como: ${conta.nome}` : "Commits sem nome de autor",
     conta.email_configurado ? "E-mail do git configurado" : "E-mail do git não configurado",
@@ -29,10 +31,10 @@ export function GitContaStatus({ projectPath }: { projectPath: string | null }) 
     conta.problema ?? "Tudo certo para commitar e dar push",
   ].join("\n");
   return (
-    <span className="flex min-w-0 shrink items-center gap-1.5" title={detalhes}>
-      <span aria-hidden className={`h-1.5 w-1.5 shrink-0 ${conta.problema ? "bg-warning" : "bg-success"}`} />
+    <span className="rodape-conta" title={detalhes}>
+      <Avatar login={conta.github} inicial={inicial} problema={Boolean(conta.problema)} />
       <span className="sr-only">{conta.problema ? `Git com problema: ${conta.problema}.` : "Git ok."}</span>
-      <span className={`min-w-0 truncate ${conta.problema ? "text-warning" : ""}`}>{quem}</span>
+      <span className={`min-w-0 truncate ${conta.problema ? "text-warning" : "text-text-primary"}`}>{quem}</span>
       {conta.github
         ? <GithubIcon aria-hidden className={`h-3 w-3 shrink-0 ${conta.problema ? "text-warning" : "text-success"}`} />
         : <GitBranchIcon aria-hidden className={`h-3 w-3 shrink-0 ${conta.problema ? "text-warning" : "text-success"}`} />}
@@ -40,21 +42,36 @@ export function GitContaStatus({ projectPath }: { projectPath: string | null }) 
   );
 }
 
-/** Branch do projeto em foco no rodapé, com pull, troca de branch e criação ao lado. O status vem
- *  do mesmo `git_status` do painel lateral; relê sozinho porque quem troca de branch costuma ser o
- *  agente, no terminal. */
+/** Foto do GitHub (`github.com/<login>.png`, pública, sem token). Sem login ou sem rede, a inicial.
+ *  O ponto no canto é o estado do git: verde pronto para commitar e dar push, amarelo com problema. */
+function Avatar({ login, inicial, problema }: { login: string | null; inicial: string; problema: boolean }) {
+  const [falhou, setFalhou] = useState(false);
+  useEffect(() => setFalhou(false), [login]);
+  return (
+    <span className="rodape-avatar" data-problema={problema}>
+      {login && !falhou
+        ? <img src={`https://github.com/${encodeURIComponent(login)}.png?size=40`} alt="" onError={() => setFalhou(true)} />
+        : <span aria-hidden>{inicial}</span>}
+    </span>
+  );
+}
+
+/** Branch da pasta da conversa, no topo dela: troca/criação de branch, pull e o grafo num modal. O
+ *  status vem do mesmo `git_status` do painel lateral; relê sozinho porque quem troca de branch
+ *  costuma ser o agente, no terminal. */
 export function GitBranchStatus({ projectPath }: { projectPath: string | null }) {
   const [branch, setBranch] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [grafo, setGrafo] = useState(false);
   const [branches, setBranches] = useState<GitBranch[] | null>(null);
   const [nome, setNome] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const botaoRef = useRef<HTMLButtonElement>(null);
-  /** Posição do popover em coordenadas de tela. O rodapé é `h-7` com `overflow-hidden`: um popover
-   *  `absolute` nasce dentro dele e é recortado até sumir — `fixed` escapa do recorte. */
-  const [ancora, setAncora] = useState({ left: 0, bottom: 0 });
+  /** Posição do popover em coordenadas de tela. O topo da conversa recorta o que passa dele
+   *  (`overflow-hidden`): `fixed` escapa do recorte. Ancorado pela direita, que é onde o botão fica. */
+  const [ancora, setAncora] = useState({ right: 0, top: 0 });
 
   const refresh = useCallback(() => {
     if (!projectPath) {
@@ -81,6 +98,9 @@ export function GitBranchStatus({ projectPath }: { projectPath: string | null })
       if (!matchesShortcut(event, "newBranch") || !projectPath) return;
       event.preventDefault();
       event.stopPropagation();
+      // ponytail: com várias conversas abertas, a primeira montada atende; escolher pelo painel em
+      // foco se isso incomodar.
+      event.stopImmediatePropagation();
       setOpen(true);
     }
     window.addEventListener("keydown", onKeyDown, true);
@@ -93,7 +113,7 @@ export function GitBranchStatus({ projectPath }: { projectPath: string | null })
     setNome("");
     setBranches(null);
     const rect = botaoRef.current?.getBoundingClientRect();
-    if (rect) setAncora({ left: rect.left, bottom: window.innerHeight - rect.top + 4 });
+    if (rect) setAncora({ right: Math.max(8, window.innerWidth - rect.right), top: rect.bottom + 4 });
     gitBranches(projectPath)
       .then(setBranches)
       .catch(() => setBranches([]));
@@ -123,7 +143,7 @@ export function GitBranchStatus({ projectPath }: { projectPath: string | null })
   const listadas = (branches ?? []).filter((item) => item.name.toLowerCase().includes(alvo.toLowerCase()));
 
   return (
-    <span className="relative flex min-w-0 items-center gap-1.5">
+    <span className="git-topo">
       <button
         ref={botaoRef}
         type="button"
@@ -131,26 +151,31 @@ export function GitBranchStatus({ projectPath }: { projectPath: string | null })
         aria-expanded={open}
         aria-haspopup="dialog"
         title={`Branch atual: ${branch} — clique para trocar ou criar`}
-        className="min-w-0 truncate hover:text-text-primary"
+        className="git-topo-branch"
       >
-        ⎇ {branch}
+        <GitBranchIcon aria-hidden className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{branch}</span>
       </button>
       <button
         type="button"
         disabled={busy}
         onClick={() => void correr(() => gitPull(projectPath))}
         title="git pull --ff-only"
-        className="shrink-0 px-1 uppercase hover:text-text-primary disabled:opacity-40"
+        className="git-topo-botao"
       >
-        {busy ? "pull…" : "pull"}
+        {busy ? "Pull…" : "Pull"}
       </button>
+      <button type="button" onClick={() => setGrafo(true)} title="Histórico de commits e branches" className="git-topo-botao">
+        <ChartIcon aria-hidden className="h-3.5 w-3.5" />Ver grafo
+      </button>
+      {grafo && <GitGraphModal projectPath={projectPath} onFechar={() => setGrafo(false)} />}
       {message && (
         // Clicar limpa: é recado de uma ação só, e no rodapé não cabe banner.
         <button
           type="button"
           onClick={() => setMessage(null)}
           title={message}
-          className="hidden min-w-0 max-w-[16rem] truncate text-left hover:text-text-primary lg:inline"
+          className="hidden min-w-0 max-w-[16rem] truncate text-left text-[10px] text-text-muted hover:text-text-primary lg:inline"
         >
           {message.split("\n")[0]}
         </button>
@@ -163,7 +188,7 @@ export function GitBranchStatus({ projectPath }: { projectPath: string | null })
           <div
             role="dialog"
             aria-label="Branches"
-            style={{ left: ancora.left, bottom: ancora.bottom }}
+            style={{ right: ancora.right, top: ancora.top }}
             className="popover fixed z-50 flex w-64 flex-col gap-1 p-1"
           >
             <input

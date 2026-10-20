@@ -5,7 +5,8 @@ import type { TabDragData } from "./tabDrag";
 export const TAB_DRAG_EVENT = "omni-tab-drag";
 
 export type DropZone = "center" | "left" | "right" | "top" | "bottom";
-export interface TabDropTarget { paneId: string; zone: DropZone }
+/** `index`: posição entre as abas do cabeçalho (solto em cima de uma aba); sem ele, vai para o fim. */
+export interface TabDropTarget { paneId: string; zone: DropZone; index?: number }
 /** `null` = nenhum arraste; `target: null` = arrastando fora de qualquer painel. */
 export type TabDragState = { tab: TabDragData; target: TabDropTarget | null } | null;
 
@@ -27,7 +28,10 @@ function targetAt(x: number, y: number): TabDropTarget | null {
   const pane = element?.closest<HTMLElement>("[data-drop-pane]");
   if (!pane) return null;
   const overHeader = Boolean(element!.closest("header"));
-  return { paneId: pane.dataset.dropPane!, zone: dropZone(pane.getBoundingClientRect(), x, y, overHeader) };
+  const aba = element!.closest<HTMLElement>("[data-tab-index]");
+  // Metade esquerda da aba = antes dela; direita = depois.
+  const index = aba ? Number(aba.dataset.tabIndex) + (x > aba.getBoundingClientRect().left + aba.offsetWidth / 2 ? 1 : 0) : undefined;
+  return { paneId: pane.dataset.dropPane!, zone: dropZone(pane.getBoundingClientRect(), x, y, overHeader), index };
 }
 
 // Pointer events, não HTML5 DnD: com o drop de arquivos do Explorer ligado no Tauri (Windows),
@@ -90,7 +94,7 @@ export function startTabDrag(
     if (!drop) return;
     const { paneId: sourcePaneId, tabId } = tab;
     if (drop.zone === "center") {
-      dispatch({ type: "MOVE_TAB", sourcePaneId, tabId, targetPaneId: drop.paneId });
+      dispatch({ type: "MOVE_TAB", sourcePaneId, tabId, targetPaneId: drop.paneId, ...(drop.index === undefined ? {} : { index: drop.index }) });
       return;
     }
     dispatch({ type: "SPLIT_WITH_TAB", sourcePaneId, tabId, targetPaneId: drop.paneId,

@@ -1,4 +1,5 @@
 import { samePath } from "../../lib/paths";
+import { LAYOUT_PRESETS, quantosPaineis, type Molde } from "./layoutPresets";
 import type {
   LayoutNode,
   LayoutPreset,
@@ -93,8 +94,10 @@ function splitOf(direction: SplitNode["direction"], first: LayoutNode, second: L
  * (`newPane`) se faltar; se sobrar pane além dos slots do preset, empilha as tabs extras no
  * último slot em vez de descartá-las. */
 function buildPresetLayout(current: LayoutNode, preset: LayoutPreset): LayoutNode {
+  const molde = LAYOUT_PRESETS.find((item) => item.id === preset)?.molde;
+  if (!molde) return current;
   const existing = collectPanes(current);
-  const slots = preset === "grid-2x2" ? 4 : preset === "main-plus-side" ? 3 : 2;
+  const slots = quantosPaineis(molde);
   const panes: PaneNode[] = [];
   for (let i = 0; i < slots; i++) {
     panes.push(i < existing.length ? existing[i] : newPane("Novo painel"));
@@ -105,16 +108,11 @@ function buildPresetLayout(current: LayoutNode, preset: LayoutPreset): LayoutNod
     panes[slots - 1] = { ...last, tabs, activeTabId: last.activeTabId ?? tabs[0]?.id ?? null };
   }
 
-  switch (preset) {
-    case "columns-2":
-      return splitOf("horizontal", panes[0], panes[1]);
-    case "rows-2":
-      return splitOf("vertical", panes[0], panes[1]);
-    case "grid-2x2":
-      return splitOf("horizontal", splitOf("vertical", panes[0], panes[1]), splitOf("vertical", panes[2], panes[3]));
-    case "main-plus-side":
-      return splitOf("horizontal", panes[0], splitOf("vertical", panes[1], panes[2]), 0.6);
-  }
+  let proximo = 0;
+  const montar = (parte: Molde): LayoutNode => parte === "p"
+    ? panes[proximo++]
+    : splitOf(parte.d === "h" ? "horizontal" : "vertical", montar(parte.a), montar(parte.b), parte.r);
+  return montar(molde);
 }
 
 /** IDs de sessão (terminal/agente) referenciados em qualquer tab da árvore — usado para
@@ -352,13 +350,20 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
       return updateActiveProject(state, (project) => {
         if (action.sourcePaneId === action.targetPaneId) {
           const target = findPane(project.layout, action.targetPaneId);
-          if (!target?.tabs.some((tab) => tab.id === action.tabId)) return project;
+          const de = target?.tabs.findIndex((tab) => tab.id === action.tabId) ?? -1;
+          if (!target || de < 0) return project;
+          const tabs = [...target.tabs];
+          if (action.index !== undefined) {
+            const [movida] = tabs.splice(de, 1);
+            // O índice veio contado com a aba ainda no lugar antigo.
+            tabs.splice(action.index > de ? action.index - 1 : action.index, 0, movida);
+          }
           return {
             ...project,
             activePaneId: action.targetPaneId,
             layout: mapNode(project.layout, (node) =>
               node.type === "pane" && node.id === action.targetPaneId
-                ? { ...node, activeTabId: action.tabId }
+                ? { ...node, tabs, activeTabId: action.tabId }
                 : node
             ),
           };
@@ -372,7 +377,7 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           maximizedPaneId: null,
           layout: mapNode(taken.layout, (node) =>
             node.type === "pane" && node.id === action.targetPaneId
-              ? { ...node, tabs: [...node.tabs, taken.tab], activeTabId: taken.tab.id }
+              ? { ...node, tabs: [...node.tabs.slice(0, action.index ?? node.tabs.length), taken.tab, ...node.tabs.slice(action.index ?? node.tabs.length)], activeTabId: taken.tab.id }
               : node
           ),
         };

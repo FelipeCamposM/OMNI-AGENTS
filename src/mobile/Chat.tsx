@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
@@ -11,7 +11,7 @@ import {
 } from "../components/ui/PixelIcon";
 import { iconForPath } from "../features/files/fileIcons";
 import { nomeDoCaminho, semMarcasDeImagem, separarAnexos } from "./anexos";
-import { request, type Mensagem } from "./api";
+import { abridorDeArquivo, NOME_DO_AGENTE, pareceArquivo, request, type Mensagem } from "./api";
 
 /** Os quadros do spinner do Claude Code, em vai-e-volta — é o que faz parecer que ele "respira". */
 const QUADROS = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
@@ -63,7 +63,6 @@ export function horarioCurto(iso: string | null | undefined): string | null {
     : `${data.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${hora}`;
 }
 
-const NOME_DO_AGENTE: Record<string, string> = { claude: "Claude", codex: "Codex", cursor: "Cursor" };
 
 /** Anexo já no PC (caminho) ou ainda só no celular (com prévia local). */
 interface AnexoVisivel { nome: string; previa?: string | null }
@@ -164,7 +163,8 @@ export const MessageBubble = memo(function MessageBubble({ lado, provider, texto
   const autor = doUsuario ? "Você" : NOME_DO_AGENTE[provider ?? ""] ?? provider ?? "Agente";
   const hora = horarioCurto(horario);
   return (
-    <article className={`bubble ${doUsuario ? "bubble-user" : "bubble-agent"}${pendente ? " bubble-pending" : ""}${continua ? " bubble-continua" : ""}`}>
+    // `selectable`: no desktop o body barra a seleção (app nativo); o texto da conversa tem de copiar.
+    <article className={`bubble selectable ${doUsuario ? "bubble-user" : "bubble-agent"}${pendente ? " bubble-pending" : ""}${continua ? " bubble-continua" : ""}`}>
       {/* Avatar só na primeira fala do turno; as seguintes alinham com ele. */}
       {!doUsuario && !continua && (
         <span className="bubble-avatar" aria-hidden><AgentIcon provider={provider} size={16} /></span>
@@ -176,7 +176,7 @@ export const MessageBubble = memo(function MessageBubble({ lado, provider, texto
       {corpo && (doUsuario
         ? <div className="mobile-message">{corpo}</div>
         : <div className="bubble-markdown prose prose-sm max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} components={{ pre: BlocoDeCodigo }}>{corpo}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} components={COMPONENTES_DO_MARKDOWN}>{corpo}</ReactMarkdown>
           </div>)}
       {imagens && imagens.total > 0 && (
         <ul className="bubble-imagens" aria-label="Imagens da mensagem">
@@ -210,6 +210,39 @@ function BotaoCopiar({ texto, rotulo, className }: { texto: string | (() => stri
   );
 }
 
+/** Arquivo citado pelo agente: no app do PC abre num painel; na web e no celular continua texto. */
+function Arquivo({ caminho, children }: { caminho: string; children: ReactNode }) {
+  const abrir = abridorDeArquivo();
+  if (!abrir) return <>{children}</>;
+  return (
+    <button type="button" className="bubble-arquivo" title={`Abrir ${caminho}`} onClick={() => abrir(caminho)}>
+      {children}
+    </button>
+  );
+}
+
+/** Dentro de bloco de código nada vira link: ali o caminho é parte de um comando ou de um trecho. */
+const DentroDeBloco = createContext(false);
+
+/** `código` solto no texto: se parece arquivo (`src/App.tsx:42`), abre ao clicar. */
+function CodigoNoTexto({ children, className }: { children?: ReactNode; className?: string }) {
+  const emBloco = useContext(DentroDeBloco);
+  const codigo = <code className={className}>{children}</code>;
+  const texto = typeof children === "string" ? children : null;
+  if (emBloco || !texto || !pareceArquivo(texto)) return codigo;
+  return <Arquivo caminho={texto}>{codigo}</Arquivo>;
+}
+
+/** Link `[App.tsx](src/App.tsx#L42)`, como o Claude cita arquivo. Sem esquema é arquivo: abrir o
+ *  link levaria a janela do app para fora da tela. */
+function LinkNoTexto({ href, children }: { href?: string; children?: ReactNode }) {
+  const caminho = href && !/^[a-z][\w+.-]+:/i.test(href) && !href.startsWith("#") ? decodeURI(href) : null;
+  if (caminho && abridorDeArquivo()) return <Arquivo caminho={caminho}>{children}</Arquivo>;
+  return <a href={href}>{children}</a>;
+}
+
+const COMPONENTES_DO_MARKDOWN = { pre: BlocoDeCodigo, code: CodigoNoTexto, a: LinkNoTexto };
+
 /** Bloco de código do markdown com a linguagem no topo e um "Copiar", como num editor. */
 function BlocoDeCodigo({ children }: { children?: ReactNode }) {
   const corpo = useRef<HTMLPreElement>(null);
@@ -222,7 +255,7 @@ function BlocoDeCodigo({ children }: { children?: ReactNode }) {
         <span className="codigo-linguagem">{linguagem ?? "código"}</span>
         <BotaoCopiar texto={() => corpo.current?.textContent ?? ""} rotulo="Copiar código" className="codigo-copiar" />
       </div>
-      <pre ref={corpo}>{children}</pre>
+      <pre ref={corpo}><DentroDeBloco.Provider value>{children}</DentroDeBloco.Provider></pre>
     </div>
   );
 }
@@ -262,12 +295,16 @@ function IconeDaAcao({ tool }: { tool?: string }) {
   return <Icone aria-hidden className="acao-icone h-3.5 w-3.5" />;
 }
 
+/** Ações cujo detalhe é o arquivo mexido: no PC, clicar abre. */
+const DE_ARQUIVO = new Set(["Read", "Edit", "MultiEdit", "Write", "NotebookEdit"]);
+
 function LinhaDeAcao({ acao }: { acao: Mensagem }) {
+  const detalhe = acao.text && <code className="acao-detalhe">{encurtarCaminho(acao.text)}</code>;
   return (
     <li className="acao" title={acao.text}>
       <IconeDaAcao tool={acao.tool} />
       <span className="acao-verbo">{verboDaAcao(acao.tool)}</span>
-      {acao.text && <code className="acao-detalhe">{encurtarCaminho(acao.text)}</code>}
+      {detalhe && DE_ARQUIVO.has(acao.tool ?? "") ? <Arquivo caminho={acao.text}>{detalhe}</Arquivo> : detalhe}
     </li>
   );
 }

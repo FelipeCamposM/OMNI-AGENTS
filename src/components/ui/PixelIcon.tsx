@@ -440,6 +440,10 @@ export const AttachmentIcon = makeIcon(
   "M7 7v10H5V7zm12 0v12h-2V7zm-8 2v10H9V9zm4 0v8h-2V9zm0-6v2H9V3zm-2 4v2h-2V7zm4 12v2h-6v-2zm0-14v2h-2V5zM9 5v2H7V5z"
 );
 
+export const MicIcon = makeIcon(
+  "M10 2h4v2h2v8h-2v2h-4v-2H8V4h2zM5 9h2v3h2v2h6v-2h2V9h2v3h-2v2h-2v2H9v-2H7v-2H5zm6 7h2v4h-2zm-4 4h10v2H7z"
+);
+
 export const SendIcon = makeIcon(
   "M4 19h4v2H2v-8h2v6Zm8 0H8v-2h4v2Zm4-2h-4v-2h4v2Zm4-2h-4v-2h4v2Zm-10-2H4v-2h6v2Zm12 0h-2v-2h2v2ZM8 5H4v6H2V3h6v2Zm12 6h-4V9h4v2Zm-4-2h-4V7h4v2Zm-4-2H8V5h4v2Z"
 );

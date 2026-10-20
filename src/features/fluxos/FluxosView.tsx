@@ -44,7 +44,8 @@ interface Props {
  * histórico e ações na execução — ou, sem nó, o resumo da execução.
  */
 export function FluxosView(props: Props) {
-  return <ReactFlowProvider><Fluxos {...props} /></ReactFlowProvider>;
+  // `fx-caixa`: container das consultas de largura — o editor vive em tela cheia ou num painel dividido.
+  return <div className="fx-caixa"><ReactFlowProvider><Fluxos {...props} /></ReactFlowProvider></div>;
 }
 
 interface MenuRapido { x: number; y: number; de: string; saida?: string }
@@ -355,7 +356,7 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
             <div className="fx-boas-vindas">
               <h3 className="pixel-text">Monte times de agentes como no n8n</h3>
               <p>Arraste etapas, ligue umas nas outras e rode no seu projeto — cada agente numa cópia isolada do repositório.</p>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap justify-center gap-2">
                 <Button variant="primary" onClick={() => abrirFluxo(null)}>+ Novo fluxo</Button>
                 <Button variant="ghost" onClick={() => setDialogo("ia")}><SparkleIcon aria-hidden className="h-3.5 w-3.5" />Criar com IA</Button>
                 <Button variant="ghost" onClick={() => setManual(true)}><BookIcon aria-hidden className="h-3.5 w-3.5" />Como usar</Button>

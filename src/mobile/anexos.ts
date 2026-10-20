@@ -14,6 +14,9 @@ const MARCADORES_ANTIGOS = ["[Anexos enviados pelo celular]"];
 export const EVENTO_ANEXAR = "omni:anexar";
 /** `detail: boolean` — arquivo sendo arrastado por cima da conversa (mostra "Solte para anexar"). */
 export const EVENTO_ARRASTANDO = "omni:arrastando";
+/** `detail: string` — arquivo citado na conversa, como o agente escreveu (relativo ao projeto ou
+ *  absoluto, talvez com `:linha`). O app do PC abre num painel. */
+export const EVENTO_ABRIR_ARQUIVO = "omni:abrir-arquivo";
 
 /** Tipo pelo nome do arquivo, para quem só tem o caminho (o arrastar do app do PC). */
 export function tipoPelaExtensao(nome: string): string {

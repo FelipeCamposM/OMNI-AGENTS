@@ -95,6 +95,45 @@ const requested = targetIndex >= 0 ? process.argv[targetIndex + 1] : process.env
 const host = execFileSync("rustc", ["-vV"], { encoding: "utf8" }).match(/^host: (\S+)/m)[1]; // sem `$`: no Windows a linha termina em \r
 const triple = requested ?? host;
 
+/**
+ * Flags do whisper.cpp (voz), que o `whisper-rs-sys` compila com CMake:
+ * - `GGML_NATIVE=OFF`: sem isso ele usa as instruções da CPU **da máquina do build** — o binário do CI
+ *   travaria com "instrução ilegal" no PC de quem tem outro processador. Em x86_64 fica o piso
+ *   AVX2/FMA/F16C/BMI2 (Haswell, 2013+); o engine confere a CPU antes de carregar o modelo.
+ * - MSVC: o crate `cmake` sobrescreve `CMAKE_<LANG>_FLAGS_RELEASE` sem o `/O2`, e a transcrição saía
+ *   ~10x mais lenta. Aqui vão as flags de Release completas.
+ */
+function whisperEnv(target) {
+  const env = { GGML_NATIVE: "OFF" };
+  if (target.startsWith("x86_64")) Object.assign(env, { GGML_AVX: "ON", GGML_AVX2: "ON", GGML_FMA: "ON", GGML_F16C: "ON" });
+  if (target.includes("msvc")) {
+    const flags = "-O2 -Ob2 -DNDEBUG -MD";
+    Object.assign(env, { CMAKE_C_FLAGS_RELEASE: flags, CMAKE_CXX_FLAGS_RELEASE: `${flags} -utf-8` });
+  }
+  return env;
+}
+
+/** O whisper.cpp precisa de CMake e de libclang (bindgen). No Windows o CMake vem com o Visual Studio
+ *  Build Tools, mas fora do PATH; o libclang só existe com o LLVM instalado. CI e macOS/Linux já têm. */
+function ferramentasDoWhisper(env) {
+  if (process.platform !== "win32") return env;
+  const llvm = resolve(process.env.ProgramFiles ?? "C:\\Program Files", "LLVM", "bin", "libclang.dll");
+  if (!env.LIBCLANG_PATH && !existsSync(llvm)) {
+    throw new Error("O engine compila o whisper.cpp (prompt por voz), que precisa do LLVM. Instale uma vez com " +
+      "`winget install LLVM.LLVM` e abra um terminal novo (ou aponte LIBCLANG_PATH para a pasta do libclang.dll).");
+  }
+  try { execFileSync("cmake", ["--version"], { stdio: "ignore" }); return env; } catch { /* procura no VS */ }
+  try {
+    const vswhere = resolve(process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)", "Microsoft Visual Studio", "Installer", "vswhere.exe");
+    const vs = execFileSync(vswhere, ["-latest", "-products", "*", "-property", "installationPath"], { encoding: "utf8" }).trim();
+    const bin = resolve(vs, "Common7", "IDE", "CommonExtensions", "Microsoft", "CMake", "CMake", "bin");
+    // No Windows a chave costuma ser `Path`; duas grafias no mesmo env deixam uma delas de fora.
+    const chave = Object.keys(env).find((nome) => nome.toUpperCase() === "PATH") ?? "PATH";
+    if (existsSync(resolve(bin, "cmake.exe"))) return { ...env, [chave]: `${env[chave] ?? ""};${bin}` };
+  } catch { /* sem VS: o erro do cargo explica */ }
+  return env;
+}
+
 function buildCrate(crate, target) {
   const cargoArgs = ["build", "-p", crate, "-j", "1"];
   if (release) cargoArgs.push("--release");
@@ -102,7 +141,7 @@ function buildCrate(crate, target) {
   execFileSync("cargo", cargoArgs, {
     cwd: resolve("."),
     stdio: "inherit",
-    env: { ...process.env, CARGO_INCREMENTAL: "0", CARGO_TARGET_DIR: engineTarget },
+    env: ferramentasDoWhisper({ ...process.env, ...whisperEnv(target ?? host), CARGO_INCREMENTAL: "0", CARGO_TARGET_DIR: engineTarget }),
   });
   return resolve(engineTarget, ...(target ? [target] : []), profile, `${crate}${extension}`);
 }

@@ -75,6 +75,7 @@ pub fn run() {
             git_client::git_commit,
             git_client::git_push,
             git_client::git_pull,
+            git_client::git_fetch,
             engine_client::wsl_distros,
             engine_client::rename_conversation,
             engine_client::rename_session,

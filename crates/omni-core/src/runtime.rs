@@ -46,6 +46,9 @@ pub struct AgentRuntime {
     /// O Claude Code escreve uma linha `{"type":"permission-mode","permissionMode":…}` a cada
     /// troca — ler a última é mais confiável que interpretar o rodapé da tela.
     pub permission_mode: Option<String>,
+    /// Tokens que a última resposta leu (entrada + cache criado + cache lido) = o tamanho do
+    /// contexto agora. `None` antes da primeira resposta e logo depois de uma compactação.
+    pub context_tokens: Option<u64>,
     pub source: RuntimeSource,
 }
 
@@ -81,6 +84,7 @@ fn claude_config_model(config_dir: &Path) -> Option<AgentRuntime> {
         effort: None,
         cli_version: None,
         permission_mode: None,
+        context_tokens: None,
         source: RuntimeSource::Config,
     })
     .filter(|runtime| runtime.model.is_some())
@@ -107,9 +111,16 @@ pub fn claude_runtime(config_dir: &Path, cwd: &str, session_id: &str) -> Option<
             .flatten()
     });
 
+    // Compactação depois da última resposta: o contexto daquela resposta já não vale.
+    let mut compactou = false;
     for linha in conteudo.lines().rev() {
         let Ok(entrada) = serde_json::from_str::<Value>(linha) else { continue };
-        if entrada.get("type").and_then(Value::as_str) != Some("assistant") {
+        if entrada.get("subtype").and_then(Value::as_str) == Some("compact_boundary") {
+            compactou = true;
+        }
+        // Subagente (`isSidechain`) tem contexto próprio, não o da conversa.
+        if entrada.get("type").and_then(Value::as_str) != Some("assistant")
+            || entrada.get("isSidechain").and_then(Value::as_bool) == Some(true) {
             continue;
         }
         let Some(modelo) = entrada.get("message").and_then(|m| texto(m, "model")) else { continue };
@@ -125,6 +136,11 @@ pub fn claude_runtime(config_dir: &Path, cwd: &str, session_id: &str) -> Option<
         // turno ganha quando existe — é o que de fato rodou.
         resultado.effort = texto(&entrada, "perTurnEffort").or_else(|| texto(&entrada, "effort"));
         resultado.cli_version = texto(&entrada, "version");
+        let uso = &entrada["message"]["usage"];
+        resultado.context_tokens = (!compactou && uso.is_object()).then(|| {
+            ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"]
+                .iter().filter_map(|chave| uso[chave].as_u64()).sum()
+        });
         return Some(resultado);
     }
     (!resultado.vazio()).then_some(resultado).or_else(|| claude_config_model(config_dir))
@@ -237,6 +253,25 @@ mod tests {
 
     use super::*;
     use std::fs;
+
+    /// Contexto = o que a última resposta da conversa leu; subagente não conta e, depois de uma
+    /// compactação ainda sem resposta nova, o número antigo some.
+    #[test]
+    fn contexto_e_a_entrada_da_ultima_resposta() {
+        let dir = tempfile::tempdir().unwrap();
+        let caminho = claude_transcript_path(dir.path(), "C:/t", "s");
+        fs::create_dir_all(caminho.parent().unwrap()).unwrap();
+        let resposta = r#"{"type":"assistant","message":{"model":"claude-opus-5","usage":{"input_tokens":2,"cache_creation_input_tokens":1000,"cache_read_input_tokens":120000,"output_tokens":300}}}"#;
+        let subagente = r#"{"type":"assistant","isSidechain":true,"message":{"model":"claude-haiku-5","usage":{"input_tokens":9,"cache_read_input_tokens":5}}}"#;
+        fs::write(&caminho, format!("{resposta}\n{subagente}\n")).unwrap();
+        assert_eq!(claude_runtime(dir.path(), "C:/t", "s").unwrap().context_tokens, Some(121_002));
+
+        let compactou = r#"{"type":"system","subtype":"compact_boundary","compactMetadata":{"preTokens":121002}}"#;
+        fs::write(&caminho, format!("{resposta}\n{compactou}\n")).unwrap();
+        let runtime = claude_runtime(dir.path(), "C:/t", "s").unwrap();
+        assert_eq!(runtime.context_tokens, None);
+        assert_eq!(runtime.model.as_deref(), Some("claude-opus-5"));
+    }
 
     #[test]
     fn claude_pega_o_ultimo_turno_e_ignora_lixo_e_linha_cortada() {

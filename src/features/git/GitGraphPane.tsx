@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "../../components/ui/Button";
-import { CheckIcon, CopyIcon, GitBranchIcon, LabelIcon, CloudIcon, ReloadIcon } from "../../components/ui/PixelIcon";
+import { CheckIcon, CloseIcon, CopyIcon, GitBranchIcon, LabelIcon, CloudIcon, ReloadIcon } from "../../components/ui/PixelIcon";
 import { timeAgo } from "../terminal/AgentUsageStatus";
-import { gitLogGraph, type GitCommit } from "./gitService";
+import { gitFetch, gitLogGraph, type GitCommit } from "./gitService";
 import { layoutGraph, parseRefs, type CommitRef, type GraphEdge, type GraphRow } from "./graphLayout";
 
 interface GitGraphPaneProps {
   projectPath: string;
+  /** Dentro do modal: mostra o botão de fechar no cabeçalho. */
+  onFechar?: () => void;
 }
 
 /**
@@ -137,12 +140,30 @@ function LinhaDoCommit({ row, largura, agora }: { row: GraphRow; largura: number
   );
 }
 
-export function GitGraphPane({ projectPath }: GitGraphPaneProps) {
+export function GitGraphPane({ projectPath, onFechar }: GitGraphPaneProps) {
   const [commits, setCommits] = useState<GitCommit[] | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [recarga, setRecarga] = useState(0);
   const [carregando, setCarregando] = useState(false);
+  const [buscando, setBuscando] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
+
+  /** Fetch from remote: traz as refs dos remotos e redesenha o grafo com elas. */
+  async function buscarDoRemoto() {
+    setBuscando(true);
+    setAviso(null);
+    try {
+      const saida = await gitFetch(projectPath);
+      // O git escreve o resumo do fetch no stderr; sem saída aqui, deu certo.
+      setAviso(saida.trim() ? saida.trim().split("\n").pop()! : "Fetch concluído.");
+      setRecarga((n) => n + 1);
+    } catch (motivo) {
+      setAviso(motivo instanceof Error ? motivo.message : String(motivo));
+    } finally {
+      setBuscando(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -178,10 +199,21 @@ export function GitGraphPane({ projectPath }: GitGraphPaneProps) {
           {commits.length} commit{commits.length === 1 ? "" : "s"} · {branches} branch{branches === 1 ? "" : "es"}
           {total > commits.length && ` · mostrando os ${commits.length} mais recentes de ${total}`}
         </span>
-        <Button variant="ghost" size="sm" className="ml-auto !px-2" aria-label="Atualizar grafo" title="Atualizar"
+        {aviso && <span className="ml-auto min-w-0 truncate text-[11px] text-text-secondary" title={aviso}>{aviso}</span>}
+        <Button variant="ghost" size="sm" className={`${aviso ? "" : "ml-auto "}shrink-0 gap-1.5 !px-2`} disabled={buscando}
+          title="git fetch --all --prune: traz as branches e commits dos remotos sem mexer na sua branch"
+          onClick={() => void buscarDoRemoto()}>
+          <CloudIcon aria-hidden className="h-3.5 w-3.5" />{buscando ? "Buscando…" : "Fetch from remote"}
+        </Button>
+        <Button variant="ghost" size="sm" className="shrink-0 !px-2" aria-label="Atualizar grafo" title="Atualizar"
           disabled={carregando} onClick={() => setRecarga((n) => n + 1)}>
           <ReloadIcon aria-hidden className={`h-3.5 w-3.5${carregando ? " animate-spin" : ""}`} />
         </Button>
+        {onFechar && (
+          <Button variant="ghost" size="sm" className="shrink-0 !px-2" aria-label="Fechar grafo" title="Fechar (Esc)" onClick={onFechar}>
+            <CloseIcon aria-hidden className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </header>
       {commits.length === 0
         ? <p className="p-4 text-xs text-text-muted">Sem commits ainda.</p>
@@ -189,5 +221,22 @@ export function GitGraphPane({ projectPath }: GitGraphPaneProps) {
             {rows.map((row) => <LinhaDoCommit key={row.commit.hash} row={row} largura={largura} agora={agora} />)}
           </ol>}
     </div>
+  );
+}
+
+/** O mesmo grafo num modal, aberto pelo "Ver grafo" do topo da conversa. */
+export function GitGraphModal({ projectPath, onFechar }: { projectPath: string; onFechar: () => void }) {
+  useEffect(() => {
+    const tecla = (e: KeyboardEvent) => { if (e.key === "Escape") onFechar(); };
+    window.addEventListener("keydown", tecla);
+    return () => window.removeEventListener("keydown", tecla);
+  }, [onFechar]);
+  return createPortal(
+    <div className="manual-fundo" onMouseDown={(e) => { if (e.target === e.currentTarget) onFechar(); }}>
+      <div className="gg-modal" role="dialog" aria-modal="true" aria-label="Git Graph">
+        <GitGraphPane projectPath={projectPath} onFechar={onFechar} />
+      </div>
+    </div>,
+    document.body,
   );
 }

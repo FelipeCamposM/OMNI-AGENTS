@@ -267,7 +267,18 @@
   border-top: 1px dashed rgb(var(--c-outline) / .7);
 }
 .composer-chips { display: flex; align-items: center; flex-wrap: wrap; gap: .375rem; flex: 1 1 auto; min-width: 0; }
-.composer-direita { display: flex; align-items: center; gap: .5rem; margin-left: auto; }
+.composer-direita { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: .5rem; margin-left: auto; }
+/* Anexo e microfone ao lado do Parar/Enviar: mesma altura e borda deles, e colados um no outro
+   (borda dividida) como um grupo só — soltos e sem borda, pareciam de outra tela. */
+.composer-direita .composer-botao {
+  width: 2.25rem; height: 2.25rem;
+  color: rgb(var(--c-text-secondary));
+  background: rgb(var(--c-bg-primary));
+  border: 1px solid rgb(var(--c-outline) / .7);
+  transition: color .15s, background .15s, border-color .15s;
+}
+.composer-direita .composer-botao + .composer-botao { margin-left: calc(-.5rem - 1px); }
+.composer-direita .composer-botao:hover { color: rgb(var(--c-accent)); background: rgb(var(--c-accent) / .1); border-color: rgb(var(--c-accent) / .6); position: relative; z-index: 1; }
 
 .composer-botao {
   display: grid;
@@ -645,6 +656,35 @@
 .composer-modo.is-ativo { color: rgb(var(--c-accent)); background: rgb(var(--c-accent) / .14); }
 .m-chip > .relative > .field svg { color: rgb(var(--c-accent) / .8); filter: none; opacity: 1; }
 
+/* Menus dos chips: largos o bastante para a dica de cada modelo, opção marcada na cor da paleta,
+   seção ("Mais modelos") com filete — mesmo desenho do menu do Claude, no estilo do app. */
+.m-chip > .relative > .field.select-aberto { border-color: rgb(var(--c-accent) / .8); background: rgb(var(--c-accent) / .1); color: rgb(var(--c-text-primary)); }
+.m-chip .popover { min-width: 15rem; max-width: min(20rem, calc(100vw - 2rem)); padding: .3rem; }
+.m-chip .popover ul { max-height: 20rem; }
+.m-chip .select-opcao { align-items: center; gap: .55rem; padding: .45rem .6rem; }
+.m-chip .select-opcao + .select-opcao { margin-top: 1px; }
+.m-chip .select-opcao > svg:first-child { margin-top: 0; }
+.m-chip .select-opcao .text-xs { font-size: .75rem; font-weight: 600; }
+.m-chip .select-opcao .text-\[10px\] { margin-top: .1rem; font-size: .6875rem; }
+.m-chip .select-opcao.is-marcada { background: rgb(var(--c-accent) / .1); }
+.m-chip .select-opcao.is-marcada .text-xs { color: rgb(var(--c-accent)); }
+.m-chip .select-opcao.is-ativa { background: rgb(var(--c-accent) / .18); }
+
+/* Contexto usado até a compactação automática: texto + barrinha, que esquenta perto do limite. */
+.m-contexto {
+  display: inline-flex; flex-direction: column; justify-content: center; gap: .2rem;
+  min-height: 2rem; padding: .2rem .55rem;
+  font-size: .6875rem; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: rgb(var(--c-text-secondary));
+  border: 1px solid rgb(var(--c-outline) / .7);
+  cursor: default;
+}
+.m-contexto-barra { display: block; width: 100%; min-width: 5.5rem; height: 3px; background: rgb(var(--c-overlay) / .1); }
+.m-contexto-barra > span { display: block; height: 100%; background: rgb(var(--c-accent) / .8); transition: width .3s ease; }
+.m-contexto[data-nivel="medio"] .m-contexto-barra > span { background: rgb(var(--c-warning)); }
+.m-contexto[data-nivel="alto"] { color: rgb(var(--c-danger)); border-color: rgb(var(--c-danger) / .5); }
+.m-contexto[data-nivel="alto"] .m-contexto-barra > span { background: rgb(var(--c-danger)); }
+
 /* ── Desenho da conversa: avatar, separador de dia, copiar, código, ações ──
    O agente ganha uma coluna de avatar à esquerda (o filete sai: o avatar já marca o turno) e todo o
    turno alinha com ele. Copiar aparece só no hover — limpo em repouso, à mão quando precisa. */
@@ -780,6 +820,8 @@
 .composer-mencao.is-ativa { color: rgb(var(--c-text-primary)); background: rgb(var(--c-accent) / .14); }
 .composer-mencao svg { color: rgb(var(--c-text-muted)); }
 .composer-mencao-nome { flex-shrink: 0; font-weight: 600; }
+.composer-comando-descricao { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgb(var(--c-text-muted)); }
+.composer-comando-origem { flex-shrink: 0; padding: 0 .3rem; font-size: .625rem; text-transform: uppercase; letter-spacing: .06em; color: rgb(var(--c-accent)); border: 1px solid rgb(var(--c-accent) / .45); }
 .composer-mencao-pasta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgb(var(--c-text-muted)); direction: rtl; text-align: left; }
 
 /* ── Status da conversa na lista (o mesmo da lateral do PC) ─────────────────
@@ -951,3 +993,10 @@
 .m-subtitulo { display: flex; align-items: center; gap: .375rem; margin: .625rem 0 .375rem; font-size: .625rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: rgb(var(--c-text-secondary)); }
 .m-subtitulo:first-child { margin-top: 0; }
 .m-subtitulo-total { margin-left: auto; min-width: 1.25rem; padding: 0 .25rem; text-align: center; font-size: .5625rem; color: rgb(var(--c-text-muted)); border: 1px solid rgb(var(--c-border-subtle)); }
+
+/* Prompt por voz (Composer → BotaoDeVoz). Gravando: o botão fica vermelho e pulsa, com o tempo ao lado. */
+.composer-voz.is-gravando { color: rgb(var(--c-danger)); border-color: rgb(var(--c-danger) / .6); background: rgb(var(--c-danger) / .1); animation: voz-pulso 1.4s ease-in-out infinite; }
+@keyframes voz-pulso { 50% { background: rgb(var(--c-danger) / .22); } }
+@media (prefers-reduced-motion: reduce) { .composer-voz.is-gravando { animation: none; } }
+.composer-voz-tempo { font-size: .75rem; font-variant-numeric: tabular-nums; color: rgb(var(--c-danger)); }
+.composer-voz-erro { order: 10; flex-basis: 100%; font-size: .75rem; color: rgb(var(--c-danger)); }

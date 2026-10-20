@@ -37,9 +37,6 @@ export const GlifoLinhas = () => <Glifo largura={14} altura={12}>{MOLDURA}<rect 
 export const GlifoGrade = () => (
   <Glifo largura={14} altura={12}>{MOLDURA}<rect x="6" y="2" width="2" height="8" /><rect x="2" y="5" width="10" height="2" /></Glifo>
 );
-export const GlifoPrincipalLateral = () => (
-  <Glifo largura={14} altura={12}>{MOLDURA}<rect x="8" y="2" width="2" height="8" /><rect x="10" y="5" width="2" height="2" /></Glifo>
-);
 /** Painel maximizado dentro do projeto: moldura cheia com cantos para fora. */
 export const GlifoExpandir = () => (
   <Glifo largura={12} altura={12}>

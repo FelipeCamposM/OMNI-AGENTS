@@ -302,13 +302,13 @@ fn modelo_do_agente(nome: &str, projeto: &str) -> Result<omni_core::agentes::Mod
         .map(|a| a.modelo.clone()).ok_or_else(|| anyhow!("Modelo de agente “{nome}” não encontrado"))
 }
 
-fn executavel(nome: &str) -> Option<PathBuf> {
+pub(crate) fn executavel(nome: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH")?;
     let nomes: Vec<String> = if cfg!(windows) { vec![format!("{nome}.exe"), format!("{nome}.cmd")] } else { vec![nome.to_owned()] };
     env::split_paths(&path).find_map(|d| nomes.iter().map(|n| d.join(n)).find(|p| p.is_file()))
 }
 
-fn comando_da_cli(exe: &Path) -> Command {
+pub(crate) fn comando_da_cli(exe: &Path) -> Command {
     if exe.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd")) { let mut c = Command::new("cmd"); c.arg("/C").arg(exe); c } else { Command::new(exe) }
 }
 
@@ -546,7 +546,7 @@ pub fn abrir_conversa(state: &Arc<EngineState>, id: &str, no: &str) -> Result<Te
     let titulo = e.fluxo.nos.iter().find(|x| x.id == no).map(fluxos::rotulo).unwrap_or_else(|| no.to_owned());
     spawn_terminal_inner(state, state.next_id(), e.projeto_id.clone(), format!("{titulo} · {}", e.fluxo.nome), e.pasta.clone(), None,
         Some(comando), 30, 120, now_ms(), SessionOrigin {
-            headless: false, env: perfil.as_ref().map(omni_core::env_for).unwrap_or_default(), provider: Some(cli),
+            env: perfil.as_ref().map(omni_core::env_for).unwrap_or_default(), provider: Some(cli),
             profile_id: perfil.map(|p| p.id), conversation_id: None, external_session_id: Some(sid) })
 }
 

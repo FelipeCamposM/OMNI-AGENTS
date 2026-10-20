@@ -7,6 +7,7 @@ export type PaneKind =
   | "git-diff"
   | "git-graph"
   | "kanban"
+  | "fluxos"
   | "logs"
   | "docker-logs";
 
@@ -80,7 +81,8 @@ export type WorkspaceAction =
   | { type: "RENAME_TAB_RESOURCE"; fromResourceId: string; toResourceId: string; title?: string }
   | { type: "CLOSE_TABS_BY_RESOURCE_PREFIX"; prefix: string }
   | { type: "CLOSE_TAB"; paneId: string; tabId: string }
-  | { type: "MOVE_TAB"; sourcePaneId: string; targetPaneId: string; tabId: string }
+  /** `index`: posição de destino entre as abas (reordenar no mesmo painel); sem ele, vai para o fim. */
+  | { type: "MOVE_TAB"; sourcePaneId: string; targetPaneId: string; tabId: string; index?: number }
   | {
       type: "SPLIT_WITH_TAB";
       sourcePaneId: string;
@@ -103,9 +105,11 @@ export type WorkspaceAction =
   | { type: "SWAP_PANE"; sourcePaneId: string; targetPaneId: string }
   | { type: "APPLY_LAYOUT_PRESET"; preset: LayoutPreset };
 
-/** Layouts prontos (estilo Snap Layouts do Windows) — `buildPresetLayout` em
- * `workspaceReducer.ts` monta a árvore de splits correspondente a partir das panes atuais. */
-export type LayoutPreset = "columns-2" | "rows-2" | "grid-2x2" | "main-plus-side";
+/** Layouts prontos (estilo Snap Layouts do Windows). O molde de cada um está em
+ * `features/workspace/layoutPresets.ts`; `buildPresetLayout` monta a árvore a partir das panes atuais. */
+export type LayoutPreset =
+  | "columns-2" | "columns-3" | "columns-4" | "rows-2" | "rows-3" | "grid-2x2" | "grid-3x2"
+  | "main-plus-side" | "side-plus-main" | "main-plus-3" | "main-top" | "main-bottom";
 
 export type WorkspacesAction =
   | { type: "ADD_WORKSPACE"; name?: string }

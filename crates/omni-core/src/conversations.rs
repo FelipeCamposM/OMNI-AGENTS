@@ -11,6 +11,10 @@ pub struct Segment {
     pub terminal_session_id: Option<String>,
     pub started_at_ms: u64,
     pub ended_at_ms: Option<u64>,
+    /// Fork: este segmento é o histórico da conversa de origem, e vale só até o instante do fork — a
+    /// original segue viva, e o que ela ganha depois não é desta conversa.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub historico_ate_ms: Option<u64>,
 }
 
 /// De onde veio o nome da conversa. `Manual` trava o nome automático: escreveu, é seu.
@@ -311,10 +315,10 @@ pub fn timeline(conversation: &Conversation, profiles: &[crate::Profile], cursor
 
 /// Os transcripts da conversa na ordem do timeline (os mesmos que `timeline_cached` lê), para achar
 /// de novo uma mensagem pelo número — ver `feed::imagem`.
-pub fn fontes(conversation: &Conversation, profiles: &[crate::Profile]) -> Vec<(std::path::PathBuf, String)> {
+pub fn fontes(conversation: &Conversation, profiles: &[crate::Profile]) -> Vec<(std::path::PathBuf, String, Option<u64>)> {
     conversation.segments.iter()
         .filter(|segment| !segment.transcript_path.as_deref().is_some_and(|path| !Path::new(path).exists()))
-        .filter_map(|segment| resolve_transcript(segment, conversation, profiles).map(|path| (path, segment.provider.clone())))
+        .filter_map(|segment| resolve_transcript(segment, conversation, profiles).map(|path| (path, segment.provider.clone(), segment.historico_ate_ms)))
         .collect()
 }
 
@@ -350,7 +354,8 @@ pub fn timeline_cached(
             entries
         };
         for entry in entries {
-            // Claude UUIDs survive profile copies. Codex records preserve timestamp/content.
+            if !crate::feed::ate(&entry.item, segment.historico_ate_ms) { continue; }
+            // Claude UUIDs survive profile copies (and forks). Codex records preserve timestamp/content.
             if !seen.insert(entry.identity.clone()) { continue; }
             itens.push((segment.provider.clone(), entry.item.clone()));
         }
@@ -459,7 +464,7 @@ mod tests {
             title: "Conversa".into(), title_source: TitleSource::Auto, created_at_ms: 0,
             segments: vec![Segment { provider: "claude".into(), profile_id: Some("p".into()), external_session_id: None,
                 transcript_path: Some(transcript.to_string_lossy().into_owned()), terminal_session_id: None,
-                started_at_ms: 0, ended_at_ms: None }],
+                started_at_ms: 0, ended_at_ms: None, historico_ate_ms: None }],
         }
     }
 
@@ -472,7 +477,7 @@ mod tests {
         ]);
         conversa.segments.push(Segment { provider: "claude".into(), profile_id: Some("q".into()), external_session_id: None,
             transcript_path: Some(dir.path().join("ainda-nao-existe.jsonl").to_string_lossy().into_owned()), terminal_session_id: None,
-            started_at_ms: 1_000, ended_at_ms: None });
+            started_at_ms: 1_000, ended_at_ms: None, historico_ate_ms: None });
         let perfis: Vec<crate::Profile> = serde_json::from_value(json!([
             {"id":"p","provider":"claude","name":"Padrão","config_dir":"x","created_at_ms":0},
             {"id":"q","provider":"claude","name":"EmailUber","config_dir":"y","created_at_ms":0}])).unwrap();
@@ -496,7 +501,7 @@ mod tests {
         let caminho = conversa.segments[0].transcript_path.clone();
         let ms = |t: &str| chrono::DateTime::parse_from_rfc3339(t).unwrap().timestamp_millis() as u64;
         let seg = |perfil: &str, inicio: u64| Segment { provider: "claude".into(), profile_id: Some(perfil.into()), external_session_id: None,
-            transcript_path: caminho.clone(), terminal_session_id: None, started_at_ms: inicio, ended_at_ms: None };
+            transcript_path: caminho.clone(), terminal_session_id: None, started_at_ms: inicio, ended_at_ms: None, historico_ate_ms: None };
         conversa.segments.push(seg("q", ms("2026-10-12T11:00:00Z")));
         // Três trocas em segundos no dia 15: viram um aviso só (EmailUber → Padrão).
         conversa.segments.push(seg("p", ms("2026-10-15T11:00:00Z")));
@@ -560,7 +565,7 @@ segunda linha"}}),
         let mut conversations = vec![Conversation { id:"c".into(),project_id:"p".into(),cwd:"C:/projeto".into(),
             title:"Projeto · novo agente".into(),title_source:TitleSource::Auto,created_at_ms:9_000,
             segments:vec![Segment { provider:"codex".into(),profile_id:Some("codex-p".into()),external_session_id:None,
-                transcript_path:None,terminal_session_id:Some("t".into()),started_at_ms:9_000,ended_at_ms:None }] }];
+                transcript_path:None,terminal_session_id:Some("t".into()),started_at_ms:9_000,ended_at_ms:None,historico_ate_ms:None }] }];
 
         assert!(discover_codex_transcripts(&mut conversations, &[profile]));
         assert_eq!(conversations[0].segments[0].external_session_id.as_deref(), Some("codex-1"));
@@ -594,7 +599,7 @@ com quebra").is_err());
         let transcript = dir.path().join("transcript.jsonl");
         std::fs::write(&transcript,(0..105).map(|i|json!({"uuid":format!("m{i}"),"type":"user","message":{"role":"user","content":format!("message {i}")}}).to_string()).collect::<Vec<_>>().join("\n")).unwrap();
         let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false,email:None};
-        let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(transcript.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
+        let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(transcript.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None,historico_ate_ms:None};
         let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),title_source:TitleSource::default(),created_at_ms:0,segments:vec![segment.clone(),segment]};
         let first = timeline(&conversation,std::slice::from_ref(&profile),Some(0),100);
         assert_eq!(first.messages.len(),100); assert_eq!(first.next_cursor,Some(100)); assert!(first.prev_cursor.is_none());
@@ -604,6 +609,25 @@ com quebra").is_err());
         assert_eq!(timeline(&conversation,&[wrong],Some(0),100).unavailable_segments,vec![0,1]);
     }
 
+    /// Fork: antes da primeira mensagem a cópia não tem arquivo e a conversa mostra o histórico da
+    /// original. O que a original ganhou depois do fork não entra, e o que foi copiado não duplica.
+    #[test] fn fork_mostra_o_historico_da_original_ate_o_fork() {
+        let dir = tempfile::tempdir().unwrap();
+        let linha = |uuid: &str, hora: &str, texto: &str| json!({"uuid":uuid,"type":"user","timestamp":hora,"message":{"role":"user","content":texto}}).to_string();
+        let original = dir.path().join("original.jsonl");
+        std::fs::write(&original, [linha("a","2026-10-19T10:00:00Z","antes"), linha("b","2026-10-19T12:00:00Z","depois do fork, na original")].join("\n")).unwrap();
+        let copia = dir.path().join("copia.jsonl");
+        let fork = chrono::DateTime::parse_from_rfc3339("2026-10-19T11:00:00Z").unwrap().timestamp_millis() as u64;
+        let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false,email:None};
+        let seg = |caminho: &Path, ate: Option<u64>| Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(caminho.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:fork,ended_at_ms:None,historico_ate_ms:ate};
+        let conversa = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"fork".into(),title_source:TitleSource::Manual,created_at_ms:fork,segments:vec![seg(&original,Some(fork)),seg(&copia,None)]};
+        let textos = || timeline(&conversa,std::slice::from_ref(&profile),None,100).messages.into_iter().map(|m| m.text).collect::<Vec<_>>();
+
+        assert_eq!(textos(), ["antes"]);
+        std::fs::write(&copia, [linha("a","2026-10-19T10:00:00Z","antes"), linha("c","2026-10-19T11:30:00Z","nova no fork")].join("\n")).unwrap();
+        assert_eq!(textos(), ["antes", "nova no fork"]);
+    }
+
     /// O chat abre no fim: sem cursor vêm as últimas mensagens, com a mais nova por último, e o
     /// cursor para buscar as anteriores. Os ids batem com os da leitura paginada.
     #[test] fn sem_cursor_devolve_o_fim_da_conversa() {
@@ -611,7 +635,7 @@ com quebra").is_err());
         let transcript = dir.path().join("transcript.jsonl");
         std::fs::write(&transcript,(0..250).map(|i|json!({"uuid":format!("m{i}"),"type":"user","message":{"role":"user","content":format!("message {i}")}}).to_string()).collect::<Vec<_>>().join("\n")).unwrap();
         let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false,email:None};
-        let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(transcript.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
+        let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(transcript.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None,historico_ate_ms:None};
         let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),title_source:TitleSource::default(),created_at_ms:0,segments:vec![segment]};
 
         let fim = timeline(&conversation,std::slice::from_ref(&profile),None,100);
@@ -639,7 +663,7 @@ com quebra").is_err());
         let dir = tempfile::tempdir().unwrap();
         let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:true,created_at_ms:0,last_used_at_ms:None,authenticated:false,email:None};
         let futuro = dir.path().join("projects").join("x").join("ainda-nao-existe.jsonl");
-        let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:Some("s".into()),transcript_path:Some(futuro.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None};
+        let segment = Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:Some("s".into()),transcript_path:Some(futuro.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None,historico_ate_ms:None};
         let conversation = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"test".into(),title_source:TitleSource::default(),created_at_ms:0,segments:vec![segment]};
         let vazia = timeline(&conversation,std::slice::from_ref(&profile),None,100);
         assert!(vazia.messages.is_empty());
