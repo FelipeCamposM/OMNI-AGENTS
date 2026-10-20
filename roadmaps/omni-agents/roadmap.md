@@ -3500,3 +3500,13 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
 - [ ] **Achado, não corrigido**: Claude Code 2.1.304 abre "Resume this conversation?" (conversa ociosa há horas) ao
   receber o `/usage` que o leitor de uso digita em sessão parada; a sessão fica presa no diálogo, e "Resume" custa
   ~10% do limite de 5h. Decidir: não consultar uso em sessão ociosa há muito tempo, ou reconhecer o diálogo.
+
+### v0.7.4 (publicada 2026-10-20, commit `b21e616`)
+- [x] Correção da conversa travada por U+FFFD (engine), celular acompanhando a resposta com topo/caixa fixos no
+  teclado, uso da conta na conversa do celular, início do celular com uso/busca/recorte de projetos, branch do topo
+  ajustada ao painel estreito.
+- [x] Verificado antes: tsc, 414 testes de front, 107 do engine, `cargo check` do Tauri. CI da main verde nas 3
+  plataformas antes da tag; release verde nas 3; rascunho publicado como latest; `latest.json` = 0.7.4 com
+  assinatura nas 11 entradas; os 6 instaladores HTTP 200.
+- [ ] Pendente: diálogo "Resume this conversation?" do Claude Code 2.1.304 disparado pelo `/usage` em sessão ociosa
+  (ver entrada acima).
