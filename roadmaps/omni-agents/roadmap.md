@@ -3078,6 +3078,16 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
 - [x] 383 testes de front, 88 do engine, 47 do core e 23 do Tauri verdes.
 - [x] Publicada como release normal/latest (commit `a0cbcc6`, tag `v0.6.2`). CI e build verdes nas 3 plataformas; `latest.json` = 0.6.2, assinado; instalador Windows HTTP 200.
 
+### v0.7.3 (publicada 2026-10-20, commit `5bb6e46`)
+- [x] Reúne voz, comandos `/`, arquivo citado, layouts, fluxos como painel, uso de todas as IAs e bifurcação
+  com histórico (sessão omni-agents-5b/66) e compactação de contexto, failover sem órfãos, git no topo da
+  conversa, rodapé com avatar, mais modelos do Claude (esta sessão). Commits `9cd2468` (features) e `5bb6e46`
+  (versão + notas). Pisos da compactação: antes do limite = metade da janela; depois da troca = 150k.
+- [x] Verificado antes: tsc, 409 testes de front, 76 do core, 106 do engine (com whisper, cmake do VS no PATH e
+  pasta de build sem espaço), `cargo check` do Tauri. CI da main verde nas 3 plataformas antes da tag.
+- [x] Release verde nas 3 plataformas; rascunho conferido e publicado como latest; `latest.json` = 0.7.3 com
+  assinatura nas 11 entradas; exe, dmg e AppImage HTTP 200.
+
 ### v0.7.2 (publicada 2026-10-19, commit `899bc43`)
 - [x] Reúne as seções abaixo marcadas "sem release" (perguntas do agente, imagens no chat, Mac, celular sem
   arraste lateral) e o Antigravity da outra sessão. Commits: backend + Antigravity, front das perguntas/celular,
