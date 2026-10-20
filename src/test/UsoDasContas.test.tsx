@@ -30,3 +30,21 @@ it("o botão de atualizar busca o uso de novo e troca os números", async () => 
   expect(await screen.findByText("51%")).toBeInTheDocument();
   expect(fetch.mock.calls.some(([url, init]) => url === "/contas/emailuber/uso" && init?.method === "POST")).toBe(true);
 });
+
+it("na conversa mostra só a conta dela; sem conta escolhida, as do agente dela", async () => {
+  const contas = [
+    { id: "emailuber", provider: "claude", name: "EmailUber", usage: null },
+    { id: "pessoal", provider: "claude", name: "Pessoal", usage: null },
+    { id: "cdx", provider: "codex", name: "Trabalho", usage: null },
+  ];
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(contas))));
+  const { unmount } = render(<UsoDasContas contaAtiva={null} daConversa={{ profileId: "pessoal", provider: "claude" }} />);
+  expect(await screen.findByText("Pessoal")).toBeInTheDocument();
+  expect(screen.queryByText("EmailUber")).not.toBeInTheDocument();
+  expect(screen.queryByText("Uso das contas")).not.toBeInTheDocument();
+  unmount();
+
+  render(<UsoDasContas contaAtiva={null} daConversa={{ profileId: null, provider: "codex" }} />);
+  expect(await screen.findByText("Trabalho")).toBeInTheDocument();
+  expect(screen.queryByText("Pessoal")).not.toBeInTheDocument();
+});

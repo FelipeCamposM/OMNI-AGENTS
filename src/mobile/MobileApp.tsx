@@ -24,6 +24,7 @@ import { useRota, type Rota } from "./rota";
 import { useDados } from "./useDados";
 import { usePoll } from "./usePoll";
 import { corrigir, transcrever, useVozInstalada } from "./voz";
+import { UsoDasContas } from "../web/UsoDasContas";
 
 const STATES: Record<string,string> = { working: "Trabalhando", answered: "Resposta disponível", approval_required: "Aprovação pendente", stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido" };
 
@@ -131,14 +132,34 @@ export function Secao({ titulo, children, acao }: { titulo: string; children: Re
 
 /* ─────────────────────────────────────────────────────────────── listas */
 
-export function ProjectList({ projects, conversations, abrir }: {
+/** Pasta oculta (`.worker-data`), temporária (`AppData/Local/Temp`) ou worktree de execução: agente
+ *  rodado por outro programa, teste ou fluxo, não projeto de alguém. Só aparece em "Mostrar todos" e na busca. */
+export const PASTA_TEMPORARIA = /[\\/](\.[^\\/]+|Temp|tmp|worktrees)([\\/]|$)/i;
+
+/** `D:\a\b\PROJETO` → `a/b`: a pasta de onde o projeto vem, curta o bastante para caber no card. */
+function pastaCurta(caminho: string): string {
+  const partes = caminho.split(/[\\/]/).filter(Boolean);
+  return partes.slice(-3, -1).join("/") || caminho;
+}
+
+export function ProjectList({ projects, conversations, abrir, limite = Infinity, vazio = "Nenhum projeto conhecido ainda. Abra um projeto no OMNI do PC." }: {
   projects: Projects["projects"]; conversations: Conversation[]; abrir: (id: string) => void;
+  /** Quantos mostrar antes do "Mostrar todos": o PC guarda toda pasta que um agente já abriu. */
+  limite?: number; vazio?: string;
 }) {
-  if (projects.length === 0) return <Vazio>Nenhum projeto conhecido ainda. Abra um projeto no OMNI do PC.</Vazio>;
+  const [verTodos, setVerTodos] = useState(false);
+  if (projects.length === 0) return <Vazio>{vazio}</Vazio>;
   // Projeto mexido por último primeiro, como a lista de conversas.
   const ultimaAtividade = (id: string) => Math.max(0, ...conversations.filter(c => c.project_id === id).map(c => c.updated_at_ms ?? 0));
   const ordenados = [...projects].sort((a, b) => ultimaAtividade(b.id) - ultimaAtividade(a.id));
-  return <ul className="m-lista">{ordenados.map(project => {
+  // Projeto sem conversa é só uma pasta que o PC já abriu um dia: fica recolhido junto com os antigos.
+  // Sem limite (a busca) mostra tudo o que bateu.
+  const principais = limite === Infinity ? ordenados
+    : ordenados.filter(p => conversations.some(c => c.project_id === p.id) && !PASTA_TEMPORARIA.test(p.path)).slice(0, limite);
+  const resto = ordenados.length - (principais.length || ordenados.length);
+  const visiveis = verTodos || principais.length === 0 ? ordenados : principais;
+  return <>
+    <ul className="m-lista">{visiveis.map(project => {
     const doProjeto = conversations.filter(c => c.project_id === project.id);
     const aguardando = doProjeto.filter(c => c.capabilities?.approve).length;
     const trabalhando = doProjeto.filter(c => c.state === "working").length;
@@ -152,17 +173,24 @@ export function ProjectList({ projects, conversations, abrir }: {
           <span className="m-card-titulo">{project.name}</span>
           <span className="m-card-sub">
             {agentes.map(p => <AgentIcon key={p} provider={p} size={11} className="shrink-0" />)}
-            <span className="truncate">{doProjeto.length === 1 ? "1 conversa" : `${doProjeto.length} conversas`}{ultima ? ` · ${ultima}` : ""}</span>
+            <span className="truncate">{doProjeto.length === 0 ? "Sem conversas" : doProjeto.length === 1 ? "1 conversa" : `${doProjeto.length} conversas`}{ultima ? ` · ${ultima}` : ""}</span>
           </span>
+          <span className="m-card-caminho">{pastaCurta(project.path)}</span>
         </span>
         <span className="m-card-lado">
           {aguardando > 0 && <span className="m-badge m-badge-alerta">{aguardando} aprovar</span>}
           {trabalhando > 0 && <span className="m-badge m-badge-ativo">{trabalhando} ativo</span>}
-          <span className="m-badge">{doProjeto.length}</span>
         </span>
       </button>
     </li>;
-  })}</ul>;
+  })}</ul>
+    {resto > 0 && (
+      <button type="button" className="m-ocultas-botao" aria-expanded={verTodos} onClick={() => setVerTodos(v => !v)}>
+        <FolderIcon aria-hidden className="h-3.5 w-3.5" />
+        {verTodos ? "Mostrar só os recentes" : `Mostrar todos os projetos (mais ${resto})`}
+      </button>
+    )}
+  </>;
 }
 
 export function ConversationList({ conversations, perfis, projetos = [], mostrarProjeto = false, abrir, vazio, ativa = null, naoVistas }: {
@@ -598,8 +626,11 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
     return () => alvo.removeEventListener("scroll", aoRolar);
   }, [data !== null]);
 
+  // Rola só quem rola a conversa: o `scrollIntoView` também mexia na página e, com o teclado aberto,
+  // empurrava a barra de cima para fora da tela.
   const irParaOFim = useCallback((suave = false) => {
-    fim.current?.scrollIntoView?.({ block: "end", behavior: suave ? "smooth" : "auto" });
+    const rolagem = rolagemDe(fim.current);
+    rolagem?.scrollTo?.({ top: rolagem.scrollHeight, behavior: suave ? "smooth" : "auto" });
     grudado.current = true;
     setNovidades(false);
   }, []);
@@ -609,6 +640,21 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
     if (grudado.current) irParaOFim();
     else if (ultimaId) setNovidades(true);
   }, [ultimaId, ativo, irParaOFim]);
+
+  // Resposta crescendo na mesma mensagem, ações entrando no mesmo bloco, imagem carregando, teclado
+  // abrindo: nada disso troca o `ultimaId`. Quem estava no fim continua no fim.
+  useEffect(() => {
+    const lista = fim.current?.parentElement;
+    const rolagem = rolagemDe(fim.current);
+    if (!lista || !rolagem) return;
+    const seguir = () => { if (grudado.current) irParaOFim(); };
+    const mudancas = new MutationObserver(seguir);
+    mudancas.observe(lista, { childList: true, subtree: true, characterData: true });
+    const tamanho = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(seguir);
+    tamanho?.observe(rolagem === document.scrollingElement ? lista : rolagem);
+    lista.addEventListener("load", seguir, true);
+    return () => { mudancas.disconnect(); tamanho?.disconnect(); lista.removeEventListener("load", seguir, true); };
+  }, [data !== null, irParaOFim]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function adicionar(arquivos: File[]) {
     if (arquivos.length === 0) return;
@@ -1040,6 +1086,27 @@ function RenomearConversa({ nome, onSalvar, onFechar }: { nome: string; onSalvar
 
 const CHAVE_FILTRO = "omni-filtro";
 
+/**
+ * Publica a área que sobra acima do teclado em `--vv-topo`/`--vv-altura`. A conversa (`.m-shell-chat`)
+ * se prende nela: com o teclado aberto o iOS e o Chrome só encolhem a área *visível* e rolam a página
+ * por baixo — a barra de cima sumia e a de digitação andava junto com o que o agente escrevia.
+ */
+function useAreaVisivel() {
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const raiz = document.documentElement;
+    const aplicar = () => {
+      raiz.style.setProperty("--vv-topo", `${vv.offsetTop}px`);
+      raiz.style.setProperty("--vv-altura", `${vv.height}px`);
+    };
+    aplicar();
+    vv.addEventListener("resize", aplicar);
+    vv.addEventListener("scroll", aplicar);
+    return () => { vv.removeEventListener("resize", aplicar); vv.removeEventListener("scroll", aplicar); };
+  }, []);
+}
+
 export function MobileApp() {
   const { rota, ir, voltar } = useRota();
   const { conversations, attention, catalog, carregado, error, semAcesso, refresh, atualizar, parear } = useDados(rota.tela === "conversa" ? rota.conversa : null);
@@ -1048,6 +1115,7 @@ export function MobileApp() {
   const [query, setQuery] = useState("");
 
   useEffect(() => { gravarSessao(CHAVE_FILTRO, onlyAttention ? "atencao" : null); }, [onlyAttention]);
+  useAreaVisivel();
 
 
   if (semAcesso) return <main className="m-shell"><PairingScreen parear={parear} /></main>;
@@ -1079,7 +1147,13 @@ export function MobileApp() {
             .filter(Boolean).join(" · ")}
         </span>
       </>;
-      conteudo = <ConversationDetail key={conversa.id} conversation={conversa} refresh={refresh} abrirConversa={abrirConversa} />;
+      // Só no celular: o PC e a web já mostram o uso de todas as contas ao lado.
+      conteudo = <>
+        <section className="m-uso m-uso-conversa" aria-label="Uso da IA desta conversa">
+          <UsoDasContas contaAtiva={null} daConversa={{ profileId: conversa.profile_id, provider: conversa.provider }} />
+        </section>
+        <ConversationDetail key={conversa.id} conversation={conversa} refresh={refresh} abrirConversa={abrirConversa} />
+      </>;
     } else {
       titulo = "Conversa";
       conteudo = <Vazio>{carregado ? "Essa conversa não existe mais no PC." : "Carregando conversa…"}</Vazio>;
@@ -1118,6 +1192,8 @@ export function MobileApp() {
     const resultadoDaBusca = filterConversations(baseDaBusca, query, perfis, catalog?.projects);
     const trabalhandoAgora = visiveis.filter(c => c.state === "working").length;
     const projetos = catalog?.projects ?? [];
+    const termo = query.trim().toLocaleLowerCase("pt-BR");
+    const projetosDaBusca = projetos.filter(p => `${p.name} ${p.path}`.toLocaleLowerCase("pt-BR").includes(termo));
     conteudo = <>
       {aviso && <p className="m-aviso">{aviso}</p>}
       {/* Painel do início: o que está acontecendo agora, em três números. "Precisa de você" filtra. */}
@@ -1136,11 +1212,20 @@ export function MobileApp() {
           <span className="m-resumo-rotulo">Projetos</span>
         </button>
       </div>
+      <section className="m-uso glass" aria-label="Uso das IAs"><UsoDasContas contaAtiva={null} /></section>
       <Input type="search" value={query} onChange={event => setQuery(event.target.value)}
-        placeholder="Pesquisar conversas" aria-label="Pesquisar conversas" className="m-busca" />
+        placeholder="Pesquisar projetos e conversas" aria-label="Pesquisar projetos e conversas" className="m-busca" />
       {query
-        ? <ConversationList conversations={resultadoDaBusca} perfis={perfis} projetos={projetos}
-            mostrarProjeto abrir={abrirConversa} naoVistas={naoVistas} vazio="Nenhuma conversa encontrada." />
+        ? <>
+            <Secao titulo="Projetos">
+              <ProjectList projects={projetosDaBusca} conversations={visiveis} vazio="Nenhum projeto encontrado."
+                abrir={id => ir({ tela: "projeto", projeto: id })} />
+            </Secao>
+            <Secao titulo="Conversas">
+              <ConversationList conversations={resultadoDaBusca} perfis={perfis} projetos={projetos}
+                mostrarProjeto abrir={abrirConversa} naoVistas={naoVistas} vazio="Nenhuma conversa encontrada." />
+            </Secao>
+          </>
         : onlyAttention
         ? <Secao titulo="Precisa de você">
             <ConversationList conversations={attention} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
@@ -1154,13 +1239,13 @@ export function MobileApp() {
               </Secao>
             )}
             <Secao titulo="Projetos">
-              <ProjectList projects={projetos} conversations={visiveis} abrir={id => ir({ tela: "projeto", projeto: id })} />
+              <ProjectList projects={projetos} conversations={visiveis} limite={6} abrir={id => ir({ tela: "projeto", projeto: id })} />
             </Secao>
           </>}
     </>;
   }
 
-  return <div className="m-shell">
+  return <div className={rota.tela === "conversa" ? "m-shell m-shell-chat" : "m-shell"}>
     <TopBar titulo={titulo} subtitulo={subtitulo} onAtualizar={atualizar}
       onVoltar={rota.tela === "inicio" ? undefined : () => voltar(pai)} />
     <main className="m-conteudo">

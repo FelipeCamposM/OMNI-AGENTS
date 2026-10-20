@@ -1000,3 +1000,65 @@
 @media (prefers-reduced-motion: reduce) { .composer-voz.is-gravando { animation: none; } }
 .composer-voz-tempo { font-size: .75rem; font-variant-numeric: tabular-nums; color: rgb(var(--c-danger)); }
 .composer-voz-erro { order: 10; flex-basis: 100%; font-size: .75rem; color: rgb(var(--c-danger)); }
+
+/* ── Conversa presa na área visível ────────────────────────────────────── */
+/* Na conversa a página não rola: a casca ocupa só o que sobra acima do teclado (`--vv-*`, ver
+   `useAreaVisivel`), a barra de cima e a de digitação ficam paradas e só a lista de mensagens rola.
+   Antes rolava o documento, e abrir o teclado empurrava tudo para cima. */
+.m-shell-chat {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--vv-topo, 0px);
+  height: var(--vv-altura, 100dvh);
+  min-height: 0;
+  overflow: hidden;
+}
+.m-shell-chat > .m-conteudo { min-height: 0; padding-top: 0; gap: 0; }
+.m-shell-chat .chat-tela { min-height: 0; gap: .5rem; }
+.m-shell-chat .chat {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  margin-inline: calc(-1 * max(.75rem, env(safe-area-inset-left)));
+  padding: 1rem max(.75rem, env(safe-area-inset-left)) .75rem;
+}
+.m-shell-chat .m-paginar { margin-top: .5rem; }
+.m-shell-chat .composer-faixa { position: static; flex-shrink: 0; }
+/* O botão flutua sobre o fim da lista, sem ocupar linha entre ela e o campo. */
+.m-shell-chat .chat-novidades { position: relative; bottom: auto; margin: -3rem 0 .75rem; }
+
+/* ── Início: uso das IAs e projetos ────────────────────────────────────── */
+.m-uso { display: flex; flex-direction: column; gap: .5rem; padding: .75rem; }
+.m-uso .w-rotulo { font-size: .6875rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: rgb(var(--c-text-secondary)); }
+.m-uso .w-uso { margin: 0; gap: .5rem; }
+.m-uso .w-uso-conta { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: .5rem; row-gap: .3rem; padding: .5rem .625rem; border-left: 3px solid rgb(var(--c-outline)); }
+.m-uso .w-uso-nome, .m-uso .w-uso-vazio, .m-uso .w-uso-erro, .m-uso .w-uso-janela { grid-column: 1; }
+.m-uso .w-uso-nome { font-size: .8125rem; }
+.m-uso .w-uso-janela { font-size: .6875rem; }
+.m-uso .w-uso-barra { height: .5rem; }
+/* Atualizar à direita, na altura das barras: embaixo delas dobrava a altura de cada conta. */
+.m-uso .w-uso-conta > .w-uso-atualizar { grid-column: 2; grid-row: 1 / span 3; align-self: center; margin: 0; min-height: 2.25rem; padding: 0 .5rem; }
+.m-uso .w-uso-cabecalho .w-uso-atualizar { min-height: 2rem; padding: 0 .625rem; }
+.m-card-caminho { font-size: .625rem; color: rgb(var(--c-text-muted)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* No celular o atualizar de cada conta é só o ícone (o nome acessível continua no botão). */
+.m-uso .w-uso-conta > .w-uso-atualizar { width: 2.25rem; justify-content: center; padding: 0; }
+.m-uso .w-uso-conta > .w-uso-atualizar > span { display: none; }
+.m-uso .w-uso-conta > .w-uso-atualizar svg { width: .875rem; height: .875rem; }
+/* Digitando (teclado aberto) a tela encolhe pela metade: conta, modelo, esforço e contexto saem de
+   cena até o campo perder o foco, e a conversa fica com o espaço. Rolagem lateral recortaria os menus. */
+.m-shell-chat .composer:has(.composer-campo:focus) .composer-chips { display: none; }
+
+/* Uso da conta da conversa aberta: uma linha fina acima das mensagens. */
+.m-uso-conversa { flex-shrink: 0; padding: .375rem 0; gap: 0; border-bottom: 1px solid rgb(var(--c-outline) / .6); }
+.m-uso-conversa .w-uso { gap: .25rem; }
+.m-uso-conversa .w-uso-conta { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; align-items: center; padding: .25rem .5rem; }
+.m-uso-conversa .w-uso-nome { grid-column: 1 / 3; font-size: .75rem; }
+.m-uso-conversa .w-uso-janela { grid-column: auto; font-size: .625rem; }
+.m-uso-conversa .w-uso-janela > span:first-child { width: auto; }
+.m-uso-conversa .w-uso-pct { width: 2.25rem; }
+.m-uso-conversa .w-uso-barra { height: .375rem; }
+.m-uso-conversa .w-uso-vazio, .m-uso-conversa .w-uso-erro { grid-column: 1 / 3; }
+.m-uso-conversa .w-uso-conta > .w-uso-atualizar { grid-column: 3; grid-row: 1 / span 2; width: 2rem; min-height: 2rem; }
+/* Digitando, o teclado já come metade da tela: a faixa sai e volta quando ele fecha. */
+.m-shell-chat:has(.composer-campo:focus) .m-uso-conversa { display: none; }

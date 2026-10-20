@@ -14,6 +14,18 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.4",
+    date: "2026-10-20",
+    changes: [
+      "Corrigido: a conversa parava de aceitar mensagens (\"Entrada do CLI não reconhecida\") depois que um comando mostrava texto com acento no terminal. Agora dá para mandar e enfileirar normalmente.",
+      "No celular, a conversa desce sozinha e acompanha o texto do agente enquanto ele escreve.",
+      "No celular, ao abrir o teclado, o topo e a caixa de texto continuam no lugar e só as mensagens rolam.",
+      "No celular, a conversa aberta mostra o uso da conta que ela está usando.",
+      "Início do celular com o uso das contas, busca de projetos pelo nome ou pela pasta e só os projetos recentes; os demais ficam em \"Mostrar todos os projetos\".",
+      "A branch no topo da conversa não estoura mais o painel quando ele fica estreito.",
+    ],
+  },
+  {
     version: "0.7.3",
     date: "2026-10-20",
     changes: [

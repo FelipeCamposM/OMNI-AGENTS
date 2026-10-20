@@ -268,6 +268,21 @@ pub fn tokens_do_turno(texto: &str) -> Option<String> {
 /// (`❯ Try "edit <filepath> to..."`). Na tela capturada ele já vinha apagado por um `ESC[K`
 /// logo depois, então não era o que travava; a regra antiga (linha inteira igual a `❯`) quebraria
 /// no dia em que o redesenho vier sem esse `ESC[K`.
+/// O ConPTY escreve U+FFFD no lugar do que não converteu (acento de saída em cp1252, por exemplo).
+/// O terminal desenha cada um com 1 coluna; o `vt100` com 0. A linha sai torta, o autowrap do
+/// ConPTY deixa de bater e o campo do `❯` fica coberto pela borda: a conversa travava em "entrada
+/// não reconhecida" até o fim da sessão. `?` ocupa a mesma coluna que o terminal mostra.
+pub(crate) fn sem_substituto(bytes: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    const FFFD: &[u8] = "\u{FFFD}".as_bytes();
+    if !bytes.windows(3).any(|w| w == FFFD) { return std::borrow::Cow::Borrowed(bytes); }
+    let mut saida = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(FFFD) { saida.push(b'?'); i += 3; } else { saida.push(bytes[i]); i += 1; }
+    }
+    std::borrow::Cow::Owned(saida)
+}
+
 pub(crate) fn composer_vazio(screen: &vt100::Screen) -> bool {
     let (row, col) = screen.cursor_position();
     let (_, cols) = screen.size();
@@ -875,6 +890,16 @@ mod tests {
         assert_eq!(menu.pergunta, "O que você gostaria de fazer agora?");
         assert_eq!(menu.opcoes.iter().map(|o| o.numero).collect::<Vec<_>>(), vec![1, 2, 3, 4]);
         assert_eq!(menu.opcoes[0].rotulo, "(Recommended) Criar um novo projeto do zero");
+    }
+    /// Saída de comando com acento que o ConPTY trocou por U+FFFD: sem a troca o `vt100` contava 0
+    /// colunas para cada um, a linha quebrava fora do lugar e o campo vazio sumia da tela.
+    #[test] fn substituto_ocupa_uma_coluna() {
+        let mut context = Interaction::new(3, 20);
+        let linha = "Configura\u{FFFD}\u{FFFD}es\r\n\x1b[?2004h\u{276f} ";
+        context.parser.process(&sem_substituto(linha.as_bytes()));
+        assert_eq!(context.parser.screen().rows(0, 20).next().unwrap(), "Configura??es");
+        assert!(composer_vazio(context.parser.screen()));
+        assert_eq!(&*sem_substituto(b"abc"), b"abc");
     }
     /// Sugestão de compactar do Claude Code, copiada da tela real: menu só de setas, sem números.
     #[test] fn escolha_de_setas_sem_numero() {

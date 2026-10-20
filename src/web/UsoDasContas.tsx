@@ -4,6 +4,7 @@ import { ReloadIcon } from "../components/ui/PixelIcon";
 import { AGENTES_COM_USO, request } from "../mobile/api";
 import { usePoll } from "../mobile/usePoll";
 import { resetShort, usageTone, type UsageWindow } from "../lib/uso";
+import "./uso.css";
 
 interface Conta {
   id: string;
@@ -37,8 +38,12 @@ function Janela({ rotulo, janela }: { rotulo: string; janela: UsageWindow | null
 /**
  * Uso de cada conta, como o rodapé do app do PC: janela de 5 h e semanal, com as mesmas cores (verde
  * até 60%, amarelo até 85%, vermelho acima). A conta da conversa aberta vem destacada.
+ * Com `daConversa`, mostra só a conta que a conversa usa (sem conta escolhida, as do agente dela).
  */
-export function UsoDasContas({ contaAtiva }: { contaAtiva: string | null }) {
+export function UsoDasContas({ contaAtiva, daConversa }: {
+  contaAtiva: string | null;
+  daConversa?: { profileId: string | null; provider: string | null };
+}) {
   const [contas, setContas] = useState<Conta[]>([]);
   const [atualizando, setAtualizando] = useState<Set<string>>(new Set());
   const [erros, setErros] = useState<Record<string, string>>({});
@@ -66,13 +71,15 @@ export function UsoDasContas({ contaAtiva }: { contaAtiva: string | null }) {
     setContas(Array.isArray(lista) ? lista : []);
   }, () => undefined, [], INTERVALO_MS);
 
-  if (contas.length === 0) return null;
+  const visiveis = !daConversa ? contas : contas.filter((conta) => daConversa.profileId
+    ? conta.id === daConversa.profileId : conta.provider === daConversa.provider);
+  if (visiveis.length === 0) return null;
   // Só Claude e Codex sabem reler o uso na hora; o Cursor não tem leitura.
-  const atualizaveis = contas.filter((conta) => AGENTES_COM_USO.includes(conta.provider));
+  const atualizaveis = visiveis.filter((conta) => AGENTES_COM_USO.includes(conta.provider));
   const todasLendo = atualizaveis.length > 0 && atualizaveis.every((conta) => atualizando.has(conta.id));
   return (
     <>
-      <div className="w-uso-cabecalho">
+      {!daConversa && <div className="w-uso-cabecalho">
         <h2 className="w-rotulo">Uso das contas</h2>
         {atualizaveis.length > 1 && (
           <button type="button" className="w-uso-atualizar" disabled={todasLendo} title="Buscar o uso de todas as contas de uma vez"
@@ -81,13 +88,13 @@ export function UsoDasContas({ contaAtiva }: { contaAtiva: string | null }) {
             <span>{todasLendo ? "Lendo…" : "Atualizar todas"}</span>
           </button>
         )}
-      </div>
+      </div>}
       <ul className="w-uso">
-        {contas.map((conta) => (
+        {visiveis.map((conta) => (
           <li key={conta.id} className={`w-uso-conta${conta.id === contaAtiva ? " w-uso-conta-ativa" : ""}`}>
             <span className="w-uso-nome">
               <AgentIcon provider={conta.provider} size={12} className="shrink-0" />
-              <span className="w-atencao-texto">{conta.name}</span>
+              <span className="w-uso-texto">{conta.name}</span>
               <span className="w-uso-agente">{AGENTE[conta.provider] ?? conta.provider}</span>
             </span>
             {erros[conta.id] && <span className="w-uso-vazio w-uso-erro" role="alert">{erros[conta.id]}</span>}

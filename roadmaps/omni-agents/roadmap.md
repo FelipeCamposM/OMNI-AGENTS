@@ -3460,3 +3460,43 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
 - Faltou: print ponta a ponta do clique em arquivo no app.
 - Artefato de teste: uma conversa "C:/Program Files/Git/context" no histórico do OMNI-AGENTS (o Git Bash
   converteu o argumento `/context` do meu script; virou prompt e bateu no limite da conta).
+
+### 2026-10-20 — Celular: conversa presa na tela, acompanhar a resposta, home com uso e busca de projetos (sem release)
+
+- [x] **Acompanhar o agente escrevendo**: a tela só descia quando chegava mensagem com id novo; resposta
+  crescendo, ações entrando no mesmo bloco ou imagem carregando não moviam nada. Agora um
+  `MutationObserver` na lista + `ResizeObserver` no rolador seguem o fim enquanto quem lê está nele
+  (`src/mobile/MobileApp.tsx`, `ConversationDetail`). `irParaOFim` rola o próprio rolador
+  (`scrollTo`) em vez de `scrollIntoView`, que também arrastava a página.
+- [x] **Teclado não empurra mais o topo**: na conversa a casca vira `.m-shell-chat` (fixa, na área
+  visível publicada por `useAreaVisivel` em `--vv-topo`/`--vv-altura` a partir do `visualViewport`).
+  Topo e campo ficam parados; só a lista rola. Com o campo em foco os chips (contexto, conta, modelo,
+  esforço) somem para a conversa ganhar espaço (`:has(.composer-campo:focus)`), e voltam ao fechar o teclado.
+- [x] **Home**: card "Uso das contas" (reusa `src/web/UsoDasContas.tsx`; o CSS saiu de `web.css` para
+  `src/web/uso.css`, importado pelo componente). No celular o atualizar é só o ícone.
+- [x] **Projetos**: busca agora acha projetos (nome ou pasta) e conversas. A lista mostra os 6 projetos com
+  conversa mais recentes; pastas temporárias (`PASTA_TEMPORARIA`: pasta oculta, `Temp`, `tmp`,
+  `worktrees`) e projetos sem conversa ficam em "Mostrar todos". Cada card mostra de qual pasta vem.
+- Testes: `src/test/MobileApp.test.tsx` (início com uso + recolher, busca de projeto, regex de pasta
+  temporária, conversa seguindo texto que cresce). 412+ testes, typecheck ok. Conferido em Chrome
+  headless 390px contra o engine real (inclusive altura 500px simulando teclado).
+- Não testado em aparelho de verdade (iOS/Android): o `visualViewport` é o ponto a conferir.
+
+### 2026-10-20 — Uso da conta na conversa (celular), git no painel estreito, conversa travada por U+FFFD (sem release)
+
+- [x] **Celular, conversa aberta**: faixa com o uso (5H/semana) só da conta da conversa (sem conta escolhida, as do agente
+  dela), acima das mensagens; some enquanto digita. `UsoDasContas` ganhou `daConversa`; a faixa é montada na rota do
+  celular em `src/mobile/MobileApp.tsx` (não no `ConversationDetail`, que o PC e a web também usam). Teste em
+  `src/test/UsoDasContas.test.tsx`.
+- [x] **Branch no topo da conversa estourava** com o painel estreito (tela dividida): a media query olhava a janela.
+  `.aba-agente-topo` virou container (`src/web/web.css`): até 560px saem Pull/Ver grafo/título; até 400px a branch fica
+  só o ícone.
+- [x] **Conversa travada em "Entrada do CLI não reconhecida" (sem enviar nem enfileirar)**: o ConPTY escreve U+FFFD no
+  lugar do acento que não converte (ex.: aviso do Windows "Configurações" na saída de um comando); o terminal desenha
+  com 1 coluna e o `vt100` com 0. A tela do engine entortava e a linha do `❯` ficava coberta pela borda.
+  `interaction::sem_substituto` troca por `?` antes do parser (`crates/omni-engine/src/main.rs::append_output`).
+  Confirmado reproduzindo a saída real da sessão: sem a troca `composer_vazio=false`, com ela `true`. Teste
+  `substituto_ocupa_uma_coluna`. Vale só com engine novo (release).
+- [ ] **Achado, não corrigido**: Claude Code 2.1.304 abre "Resume this conversation?" (conversa ociosa há horas) ao
+  receber o `/usage` que o leitor de uso digita em sessão parada; a sessão fica presa no diálogo, e "Resume" custa
+  ~10% do limite de 5h. Decidir: não consultar uso em sessão ociosa há muito tempo, ou reconhecer o diálogo.

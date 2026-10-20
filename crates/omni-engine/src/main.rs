@@ -1137,7 +1137,7 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
         if meta.pid != watched_pid { return; }
         meta.provider.clone().filter(|provider| screen_tracked(Some(provider)))
     };
-    interaction.parser.process(bytes);
+    interaction.parser.process(&interaction::sem_substituto(bytes));
     answer_terminal_queries(session, &data, interaction.parser.screen());
     let screen_text = interaction.parser.screen().contents();
     let approval_requested = match &tracked_provider {

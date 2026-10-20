@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MobileApp } from "../mobile/MobileApp";
+import { MobileApp, PASTA_TEMPORARIA } from "../mobile/MobileApp";
 import type { Conversation } from "../mobile/api";
 import { MARCADOR_ANEXOS, montarPrompt, nomeDoCaminho, semMarcasDeImagem, separarAnexos } from "../mobile/anexos";
 
@@ -50,7 +50,7 @@ it("pesquisa conversas de todos os projetos e mantém Plano/Auto junto ao compos
   ))));
   render(<MobileApp />);
 
-  const busca = await screen.findByLabelText("Pesquisar conversas");
+  const busca = await screen.findByLabelText("Pesquisar projetos e conversas");
   await act(async () => { await userEvent.type(busca, "pagamentos antigos"); });
   expect(screen.getByRole("button", { name: /Abrir conversa Auditar pagamentos antigos/ })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /Abrir projeto/ })).not.toBeInTheDocument();
@@ -564,4 +564,77 @@ it("imagem colada que a CLI trocou por [Image #N] não vira texto cru", () => {
   const separado = separarAnexos(texto);
   expect(separado.anexos).toEqual([]);
   expect(semMarcasDeImagem(separado.texto)).toBe("olha isso");
+});
+
+describe("início", () => {
+  const catalogo = {
+    ...PROJETOS,
+    projects: [
+      { id: "p", name: "Projeto", path: "D:/dev/clientes/Projeto" },
+      { id: "tmp", name: "legenda-fb962b5f", path: "D:/app/.worker-data/instagram/legenda-fb962b5f" },
+      { id: "vazio", name: "Esquecido", path: "D:/dev/velhos/Esquecido" },
+    ],
+  };
+  const contas = [{ id: "emailuber", provider: "claude", name: "EmailUber",
+    usage: { status: "ok", reason: null, primary: { used_percent: 42, resets_at: null }, secondary: { used_percent: 7, resets_at: null } } }];
+  function servidor() {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(
+      url === "/projetos" ? catalogo
+        : url === "/atencao" ? []
+        : url === "/contas" ? contas
+        : url.includes("timeline") ? TIMELINE_VAZIA
+        : [conversaPronta({ title: "Do projeto" }), conversaPronta({ id: "t", title: "Do worker", project_id: "tmp" })],
+    ))));
+  }
+
+  it("mostra o uso das IAs e só os projetos de verdade; o resto fica em Mostrar todos", async () => {
+    servidor();
+    render(<MobileApp />);
+    expect(await screen.findByText("EmailUber")).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "5H consumido" })).toHaveAttribute("aria-valuenow", "42");
+
+    expect(await screen.findByRole("button", { name: /Abrir projeto Projeto/ })).toBeInTheDocument();
+    expect(screen.getByText("dev/clientes")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Abrir projeto legenda/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Abrir projeto Esquecido/ })).not.toBeInTheDocument();
+
+    await act(async () => { await userEvent.click(screen.getByRole("button", { name: /Mostrar todos os projetos \(mais 2\)/ })); });
+    expect(screen.getByRole("button", { name: /Abrir projeto legenda/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Abrir projeto Esquecido/ })).toBeInTheDocument();
+  });
+
+  it("reconhece pasta temporária no Windows e no Unix", () => {
+    for (const caminho of ["D:\\app\\.worker-data\\x\\legenda", "C:\\Users\\F\\AppData\\Local\\Temp", "C:\\Users\\F\\AppData\\Local\\Temp\\claude\\x",
+      "C:\\x\\com.omni.agents\\engine\\worktrees\\exec-1", "/home/f/.cache/x", "/tmp/teste"]) expect(PASTA_TEMPORARIA.test(caminho), caminho).toBe(true);
+    for (const caminho of ["D:\\PROGRAMACAO\\PROJETOS\\OMNI-AGENTS", "/home/f/dev/Templates-site"]) expect(PASTA_TEMPORARIA.test(caminho), caminho).toBe(false);
+  });
+
+  it("a busca acha projetos pelo nome ou pela pasta, inclusive os recolhidos", async () => {
+    servidor();
+    render(<MobileApp />);
+    const busca = await screen.findByLabelText("Pesquisar projetos e conversas");
+    await act(async () => { await userEvent.type(busca, "velhos"); });
+    expect(screen.getByRole("button", { name: /Abrir projeto Esquecido/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Abrir projeto Projeto/ })).not.toBeInTheDocument();
+  });
+});
+
+it("conversa fica presa na tela e acompanha a resposta crescendo sem mensagem nova", async () => {
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => new Response(JSON.stringify(
+    url.includes("timeline") ? { ...TIMELINE_VAZIA, timeline: { ...TIMELINE_VAZIA.timeline, messages: [{ id: "c:0", role: "assistant", text: "Começando", provider: "claude" }] } }
+      : url === "/projetos" ? PROJETOS : url === "/atencao" || url === "/contas" ? [] : [conversaPronta()],
+  ))));
+  const rolar = vi.fn();
+  // jsdom não tem `scrollingElement`; no celular quem rola é o documento (ou a lista, no CSS real).
+  Object.defineProperty(document, "scrollingElement", { value: document.documentElement, configurable: true });
+  document.documentElement.scrollTo = rolar as unknown as typeof document.documentElement.scrollTo;
+  const { container } = render(<MobileApp />);
+  await abrirConversa();
+  await screen.findByText("Começando");
+  expect(container.querySelector(".m-shell")).toHaveClass("m-shell-chat");
+
+  rolar.mockClear();
+  // O texto da mesma mensagem cresce (o id não muda): a tela desce junto.
+  await act(async () => { screen.getByText("Começando").append(" e continuando"); await Promise.resolve(); });
+  expect(rolar).toHaveBeenCalled();
 });
