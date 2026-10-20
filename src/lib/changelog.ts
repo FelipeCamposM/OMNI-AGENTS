@@ -14,6 +14,33 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.3",
+    date: "2026-10-20",
+    changes: [
+      "Novo: fale o prompt em vez de digitar. O microfone aparece ao lado do enviar depois de baixar o modelo de voz em Configurações; a fala vira texto aqui no PC, enquanto você fala, e cai no campo para revisar.",
+      "Digite / na conversa para ver os comandos e skills do agente.",
+      "No app do PC, clique num arquivo citado na conversa para abri-lo.",
+      "Mais layouts prontos para dividir a tela em painéis.",
+      "Os fluxos de agentes podem ser abertos como painel, ao lado das conversas.",
+      "O rodapé mostra o uso de todas as IAs.",
+      "Uma conversa bifurcada mostra todo o histórico da original e não abre mais vazia.",
+      "Gasta menos da cota do Claude: escolha em Configurações → Agentes se a conversa se resume sozinha ao chegar em 400 mil ou em 1 milhão de tokens. A compactação automática fica sempre ligada.",
+      "Novo contador \"Contexto\" ao lado do modelo, na caixa de texto: mostra quanto a conversa já ocupa e quanto falta para ela ser resumida.",
+      "Perto do fim da cota, o OMNI resume a conversa em uso ainda na conta atual, que sai mais barato. Quando o limite chega no meio de uma tarefa, a conta nova resume antes de continuar. Abrir uma conversa parada nunca dispara isso.",
+      "Corrigido: na troca de conta, a sessão antiga continuava rodando escondida e podia voltar sozinha depois. Fechar, parar ou reiniciar uma aba agora encerra tudo o que rodava nela.",
+      "Corrigido: o \"continue\" automático da troca de conta desistia em conversas grandes, que demoram mais para abrir.",
+      "A branch aparece no topo da conversa, em destaque, com Pull e Ver grafo. O grafo abre numa janela e tem \"Fetch from remote\" para trazer o que está no servidor.",
+      "Rodapé repaginado, com a sua foto do GitHub ao lado da conta do git.",
+      "Mais modelos do Claude no seletor da conversa, como no /model, e menus de conta, modelo e esforço redesenhados.",
+      "Anexo e microfone ficam junto do botão de enviar.",
+      "Dá para selecionar e copiar (Ctrl+C) o texto das mensagens, com a seleção na cor do app.",
+      "Arraste as abas para mudar a ordem delas.",
+      "Avisos do Claude que se respondem com as setas, como o de compactar mais cedo, agora aparecem como pergunta na conversa e não travam mais o envio.",
+      "Corrigido: trocar o modelo de uma conversa do Antigravity logo depois da primeira mensagem.",
+      "O topo da conversa mostra só a etiqueta de status, sem o texto \"Pronta para a próxima mensagem\".",
+    ],
+  },
+  {
     version: "0.7.2",
     date: "2026-10-19",
     changes: [
