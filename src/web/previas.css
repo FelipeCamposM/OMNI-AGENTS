@@ -1,0 +1,15 @@
+/* Prévia de servidores locais do PC. Importado pelo próprio componente: vale na web e no celular. */
+.previas { display: flex; flex-direction: column; gap: .375rem; }
+.previas .w-rotulo { margin: 0; }
+.previas-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .25rem; }
+.previas-item { display: flex; align-items: center; gap: .375rem; min-width: 0; padding: .25rem .5rem; background: rgb(var(--c-overlay) / .04); }
+.previas-nome { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .75rem; font-weight: 600; color: rgb(var(--c-text-primary)); }
+.previas-botao { flex-shrink: 0; min-height: 1.75rem; padding: 0 .5rem; font: inherit; font-size: .6875rem; font-weight: 700; color: rgb(var(--c-text-secondary)); background: rgb(var(--c-overlay) / .06); border: 1px solid rgb(var(--c-outline)); cursor: pointer; }
+.previas-botao:hover:not(:disabled) { color: rgb(var(--c-accent)); border-color: rgb(var(--c-accent) / .6); }
+.previas-botao:disabled { cursor: default; opacity: .5; }
+.previas-abrir { color: rgb(var(--c-accent)); border-color: rgb(var(--c-accent) / .55); }
+.previas-outra { display: flex; gap: .375rem; }
+.previas-campo { flex: 1 1 auto; min-width: 0; min-height: 1.75rem; padding: 0 .5rem; font: inherit; font-size: .75rem; color: rgb(var(--c-text-primary)); background: rgb(var(--c-bg-elevated)); border: 1px solid rgb(var(--c-outline)); outline: none; }
+.previas-campo:focus-visible { border-color: rgb(var(--c-accent)); }
+.previas-vazio { margin: 0; font-size: .6875rem; color: rgb(var(--c-text-muted)); }
+.previas-erro { margin: 0; font-size: .6875rem; color: rgb(var(--c-danger)); }

@@ -28,6 +28,21 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("links-externos")
+                .on_navigation(|_, url| {
+                    if eh_do_app(url) {
+                        return true;
+                    }
+                    // Link do chat (`localhost:3000`, docs…) trocava a tela do app pela página, sem
+                    // volta: vai para o navegador do sistema e o app fica onde estava.
+                    if matches!(url.scheme(), "http" | "https") {
+                        let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+                    }
+                    false
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             engine_client::engine_status,
             account_usage::account_usage,
@@ -108,4 +123,33 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// A própria tela do app: instalado (`tauri.localhost`/`tauri:`), em dev (Vite na 1420) ou interna
+/// (`about:`, `blob:`, `data:`). `localhost` em outra porta é o projeto do usuário, não o app.
+fn eh_do_app(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "http" | "https" => match url.host_str() {
+            Some("tauri.localhost") => true,
+            Some("localhost") => url.port() == Some(1420),
+            _ => false,
+        },
+        _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::eh_do_app;
+
+    #[test]
+    fn so_a_tela_do_app_navega_na_janela() {
+        let url = |s: &str| tauri::Url::parse(s).unwrap();
+        assert!(eh_do_app(&url("http://tauri.localhost/index.html")));
+        assert!(eh_do_app(&url("tauri://localhost/")));
+        assert!(eh_do_app(&url("http://localhost:1420/")));
+        assert!(eh_do_app(&url("about:blank")));
+        assert!(!eh_do_app(&url("http://localhost:3000/")));
+        assert!(!eh_do_app(&url("https://github.com/x")));
+    }
 }

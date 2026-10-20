@@ -11,6 +11,7 @@ import { useDados } from "../mobile/useDados";
 import { usePoll } from "../mobile/usePoll";
 import { NOME_DO_AGENTE, request, temConversa, type Conversation } from "../mobile/api";
 import { UsoDasContas } from "./UsoDasContas";
+import { PreviasLocais } from "./PreviasLocais";
 
 /** O xterm só baixa quando alguém abre a aba Terminal: quem só conversa não paga por ele. */
 const TerminalEspelho = lazy(() => import("./TerminalEspelho"));
@@ -247,7 +248,10 @@ export function WebApp() {
     <div className="w-tela">
       <header className="w-topo glass glass-strong">
         <OmniLogo className="neon-glow w-logo" />
-        <span className="pixel-text w-marca">OMNI AGENTS</span>
+        <span className="w-marca">
+          <span className="pixel-text">OMNI AGENTS</span>
+          <span className="w-versao">v{__APP_VERSION__}</span>
+        </span>
         {conversa ? (
           <div className="w-topo-conversa">
             <button type="button" className="btn btn-ghost w-voltar" aria-label="Fechar conversa" title="Fechar conversa" onClick={fecharConversa}>
@@ -348,6 +352,7 @@ export function WebApp() {
               </ul>
             </div>
           )}
+          {!query && <div className="w-previas-bloco"><PreviasLocais /></div>}
           {projetoAtivo?.path && !query && (
             <div className="w-rodape-lateral">
               {catalog && <NovaSessao project={projetoAtivo} catalog={catalog} onCriada={refresh} classeBotao="w-rodape-botao" />}

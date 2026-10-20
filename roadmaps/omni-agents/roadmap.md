@@ -3510,3 +3510,38 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
   assinatura nas 11 entradas; os 6 instaladores HTTP 200.
 - [ ] Pendente: diálogo "Resume this conversation?" do Claude Code 2.1.304 disparado pelo `/usage` em sessão ociosa
   (ver entrada acima).
+
+### 2026-10-20 — Prévia no navegador (localhost do PC na web e no celular) e versão no topo da web (sem release)
+
+- [x] **Prévia**: `crates/omni-engine/src/previa.rs` — repasse TCP por porta (alvo + 10000, ou porta livre), não por
+  caminho (Next/Vite pedem pela raiz e usam websocket). Reescreve `Host`/`Origin` para `localhost:<alvo>` (Vite
+  recusaria o host, Next bloqueia HMR de outra origem); `Connection: close` por pedido, `Upgrade` mantido para HMR.
+  Acesso por segredo na URL (`?__omni=`) que vira cookie `omni_previa_<porta>`; sem ele, 403. Modo direto: escuta no
+  IP do acesso; modo Serve: escuta em loopback e publica `tailscale serve --https=<porta>` (testado no Tailscale real:
+  porta arbitrária aceita; removida ao parar). Rotas `GET/POST /previas`, `POST /previas/{porta}/fechar`. Lista testa
+  portas comuns (3000, 5173, 8080…) e aceita qualquer outra digitada.
+- [x] Tela: `src/web/PreviasLocais.tsx` (+ `previas.css`) na lateral da web e na home do celular; abre numa aba nova
+  (janela aberta antes do `await`, senão o celular bloqueia). Engine antigo (404): "Atualize o OMNI no PC".
+- [x] **Versão** sutil abaixo de "OMNI AGENTS" no topo da web (só PC; some na largura de celular). `__APP_VERSION__`
+  via `define` no `vite.config.ts` **e** no `vite.mobile.config.ts` (faltava neste: a web ficava preta com ReferenceError).
+- [x] Testes: 6 em `previa.rs` (inclui ponta a ponta com servidor falso), `src/test/PreviasLocais.test.tsx`.
+  416 front, 112 engine, `cargo check` ok. Prints conferidos (web 1280px, celular 390px).
+- [ ] Limites: prévias somem quando o engine reinicia (a publicação do Serve fica apontando para nada até abrir de novo);
+  OAuth com callback para `localhost` não funciona pela prévia.
+
+### Fala do navegador no prompt (sem release)
+
+- [x] `src/mobile/voz.ts` → `falaDoNavegador()`/`ouvir()`: Web Speech API (`SpeechRecognition`), texto parcial em
+  tempo real, sem modelo no PC. Religa quando o Chrome encerra no silêncio, guardando o que já veio.
+- [x] `Composer` usa a fala do navegador quando existe; senão, o whisper do PC como antes. Fora do app desktop
+  (WebView2 tem o objeto mas não o serviço) e fora de página segura. Firefox não tem → whisper.
+- [x] Teste: `src/test/FalaDoNavegador.test.tsx`. 417 front ok.
+- [ ] Não testado em aparelho real. Áudio vai ao serviço do navegador (Google no Chrome, Apple no Safari).
+  Chrome do Android pode repetir trechos no modo contínuo — ver `ponytail:` em `ouvir()`.
+
+### Link do chat prendia o app na página (sem release)
+
+- [x] Clicar em `http://localhost:3000` (ou qualquer link) no chat do app navegava a própria janela para a página,
+  sem volta. `src-tauri/src/lib.rs`: plugin `links-externos` com `on_navigation` — só a tela do app
+  (`tauri.localhost`, Vite 1420, `about:`/`blob:`/`data:`) navega na janela; http(s) externo abre no navegador do
+  sistema (`tauri_plugin_opener::open_url`, lado Rust, sem escopo de capability). Teste `so_a_tela_do_app_navega_na_janela`.

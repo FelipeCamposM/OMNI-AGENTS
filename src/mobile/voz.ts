@@ -17,6 +17,71 @@ export function navegadorGrava(): boolean {
     && Boolean(navigator.mediaDevices?.getUserMedia) && typeof AudioContext !== "undefined";
 }
 
+interface Reconhecedor {
+  lang: string; continuous: boolean; interimResults: boolean;
+  onresult: ((evento: { results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }> }) => void) | null;
+  onerror: ((evento: { error: string }) => void) | null;
+  onend: (() => void) | null;
+  start: () => void; stop: () => void; abort: () => void;
+}
+
+/**
+ * Fala → texto do próprio navegador (Chrome/Edge/Safari mandam o áudio ao serviço deles, de graça,
+ * sem modelo no PC). Fora do app desktop: o WebView2 tem o objeto mas não o serviço, e só dá erro.
+ */
+export function falaDoNavegador(): (new () => Reconhecedor) | null {
+  if (typeof window === "undefined" || "__TAURI_INTERNALS__" in window || !window.isSecureContext) return null;
+  const w = window as unknown as Record<string, unknown>;
+  return (w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null) as (new () => Reconhecedor) | null;
+}
+
+export interface Escuta { parar: () => void; cancelar: () => void }
+
+/**
+ * Escuta contínua: `aoTexto` recebe a fala inteira até agora (final + parcial) a cada palavra. O Chrome
+ * encerra sozinho depois de um silêncio; aqui religa até a pessoa parar, guardando o que já veio.
+ */
+export function ouvir(aoTexto: (falado: string) => void, aoFim: (erro: string | null) => void): Escuta {
+  const Classe = falaDoNavegador();
+  if (!Classe) throw new Error("Este navegador não reconhece fala");
+  let guardado = "";
+  let atual = "";
+  let ativo = true;
+  let erro: string | null = null;
+  const juntar = (a: string, b: string) => (a && b ? `${a} ${b}` : a || b);
+  const iniciar = () => {
+    const r = new Classe();
+    r.lang = navigator.language || "pt-BR";
+    r.continuous = true;
+    r.interimResults = true;
+    // ponytail: remonta tudo de `results` a cada evento; o Chrome do Android às vezes repete trechos
+    // finais no modo contínuo. Se aparecer texto dobrado, deduplicar por resultado.
+    r.onresult = (evento) => {
+      atual = Array.from(evento.results, (res) => res[0]?.transcript.trim() ?? "").filter(Boolean).join(" ");
+      aoTexto(juntar(guardado, atual));
+    };
+    r.onerror = (evento) => {
+      // "no-speech" é só silêncio; "aborted" é o nosso cancelar.
+      if (evento.error === "not-allowed" || evento.error === "service-not-allowed") { erro = "Sem acesso ao microfone. Libere a permissão do navegador e tente de novo."; ativo = false; }
+      else if (evento.error === "network") { erro = "Sem conexão com o reconhecimento de fala do navegador."; ativo = false; }
+    };
+    r.onend = () => {
+      guardado = juntar(guardado, atual);
+      atual = "";
+      if (ativo) iniciar(); else aoFim(erro);
+    };
+    r.start();
+    escuta.atual = r;
+  };
+  const escuta = {
+    atual: null as Reconhecedor | null,
+    parar: () => { ativo = false; escuta.atual?.stop(); },
+    cancelar: () => { ativo = false; if (escuta.atual) { escuta.atual.onend = null; escuta.atual.abort(); } },
+  };
+  iniciar();
+  return escuta;
+}
+
 /** Se o modelo de voz está no PC. Engine antigo (sem a rota) ou erro de rede contam como "não". */
 export function useVozInstalada(): boolean {
   const [instalada, setInstalada] = useState(false);

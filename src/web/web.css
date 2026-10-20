@@ -19,7 +19,8 @@
   flex-shrink: 0;
 }
 .w-logo { width: 1.5rem; height: 1.5rem; flex-shrink: 0; }
-.w-marca { font-size: 0.6875rem; color: rgb(var(--c-text-primary)); flex-shrink: 0; }
+.w-marca { display: flex; flex-direction: column; gap: .125rem; font-size: 0.6875rem; line-height: 1; color: rgb(var(--c-text-primary)); flex-shrink: 0; }
+.w-versao { font-size: .5625rem; letter-spacing: .04em; color: rgb(var(--c-text-muted)); }
 .w-topo-espaco { flex: 1 1 auto; }
 .w-topo-conversa {
   flex: 1 1 auto;
@@ -258,6 +259,7 @@
 
 /* ── Terminais sem agente (npm run dev) ───────────────────────────────── */
 .w-terminais-bloco { flex-shrink: 0; max-height: 25%; overflow-y: auto; }
+.w-previas-bloco { flex-shrink: 0; max-height: 30%; overflow-y: auto; margin-top: .5rem; }
 .w-fechar-terminal { min-height: 1.75rem; margin-bottom: 0.25rem; padding: 0 0.625rem; font-size: 0.6875rem; }
 
 

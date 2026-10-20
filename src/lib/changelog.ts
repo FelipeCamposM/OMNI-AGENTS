@@ -14,6 +14,16 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.5",
+    date: "2026-10-20",
+    changes: [
+      "Novo: veja no celular ou na web o site que está rodando no PC (localhost:3000, 5173…). Em \"Prévia no navegador\", toque em Abrir e ele abre numa aba nova, como se você estivesse no PC.",
+      "Novo: na web e no celular, o microfone usa a fala do próprio navegador (Chrome, Edge, Safari) — o texto aparece enquanto você fala, sem baixar o modelo de voz.",
+      "Corrigido: clicar num link no chat (como localhost:3000) trocava a tela do app pela página, sem volta. Agora abre no seu navegador.",
+      "A web mostra a versão do app abaixo do nome, no canto superior esquerdo.",
+    ],
+  },
+  {
     version: "0.7.4",
     date: "2026-10-20",
     changes: [

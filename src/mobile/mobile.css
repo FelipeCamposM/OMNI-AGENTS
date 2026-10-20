@@ -1062,3 +1062,7 @@
 .m-uso-conversa .w-uso-conta > .w-uso-atualizar { grid-column: 3; grid-row: 1 / span 2; width: 2rem; min-height: 2rem; }
 /* Digitando, o teclado já come metade da tela: a faixa sai e volta quando ele fecha. */
 .m-shell-chat:has(.composer-campo:focus) .m-uso-conversa { display: none; }
+
+/* Prévia no navegador: alvos de toque do tamanho do resto da home. */
+.m-uso .previas-botao, .m-uso .previas-campo { min-height: 2.25rem; font-size: .75rem; }
+.m-uso .previas-nome { font-size: .8125rem; }

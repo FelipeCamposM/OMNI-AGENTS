@@ -128,7 +128,7 @@ impl MobileRuntime {
 
 /// Roda a CLI do Tailscale e devolve (sucesso, stdout+stderr). Timeout curto: o cliente pode estar
 /// travado e a tela de Configurações não pode ficar pendurada esperando por ele.
-fn tailscale(args: &[&str], segundos: u64) -> Option<(bool,String)> {
+pub(crate) fn tailscale(args: &[&str], segundos: u64) -> Option<(bool,String)> {
     let app = PathBuf::from("/Applications/Tailscale.app/Contents/MacOS/Tailscale"); // app da Mac App Store / site
     let path = if cfg!(windows) { PathBuf::from("C:/Program Files/Tailscale/tailscale.exe") }
         else if cfg!(target_os = "macos") && app.is_file() { app } else { PathBuf::from("tailscale") };
@@ -580,6 +580,8 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/conversas/{id}/ajustes",post(ajustar))
         .route("/conversas/{id}/retomar",post(retomar_rota))
         .route("/contas",get(contas))
+        .route("/previas",get(previas_listar).post(previas_abrir))
+        .route("/previas/{porta}/fechar",post(previas_fechar))
         .route("/contas/{id}/uso",post(atualizar_uso))
         .route("/compactacao",get(compactacao_ler).post(compactacao_salvar))
         .route("/historico/levar",post(levar_do_historico))
@@ -663,7 +665,7 @@ fn error(status: StatusCode, message: &str) -> ApiError { (status,Json(json!({"e
 
 /// Comparação de tempo constante: `==` em string sai no primeiro byte diferente, e isso vaza o
 /// prefixo correto para quem conseguir medir. Três linhas resolvem sem dependência nova.
-fn token_confere(recebido: &str, esperado: &str) -> bool {
+pub(crate) fn token_confere(recebido: &str, esperado: &str) -> bool {
     recebido.len() == esperado.len()
         && recebido.bytes().zip(esperado.bytes()).fold(0_u8,|acumulado,(a,b)| acumulado | (a ^ b)) == 0
 }
@@ -1700,6 +1702,26 @@ async fn ajustar(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath
 
 /// Uso das contas como o rodapé do PC mostra (janela de 5 h e semanal). Só o que já foi lido —
 /// consultar de novo digitaria `/usage` num agente, e isso fica com o PC.
+async fn previas_listar() -> Json<Value> { Json(crate::previa::listar().await) }
+
+#[derive(serde::Deserialize)]
+struct PreviaPedido { porta: u16 }
+
+/// Abre a prévia de `localhost:<porta>` no mesmo caminho por onde o celular chega ao PC: o IP do
+/// acesso direto, ou o Tailscale Serve em HTTPS.
+async fn previas_abrir(State(state): State<Arc<EngineState>>, Json(pedido): Json<PreviaPedido>) -> Result<Json<Value>, ApiError> {
+    let config = state.mobile.config.lock().expect("config poisoned").clone();
+    let magic = state.mobile.magic_dns.lock().expect("magic poisoned").clone();
+    let bind = config.bind.parse::<SocketAddr>().map(|a| a.ip()).map_err(|_| error(StatusCode::CONFLICT,"Ative o acesso pelo celular nas Configurações do PC"))?;
+    crate::previa::abrir(pedido.porta, bind, config.serve, magic).await
+        .map(Json).map_err(|motivo| error(StatusCode::BAD_GATEWAY,&motivo.to_string()))
+}
+
+async fn previas_fechar(RoutePath(porta): RoutePath<u16>) -> Json<Value> {
+    crate::previa::fechar(porta).await;
+    Json(json!({}))
+}
+
 async fn contas(State(state): State<Arc<EngineState>>) -> Json<Value> {
     Json(tokio::task::spawn_blocking(move || {
         let dir = state.state_file.parent().unwrap().to_path_buf();

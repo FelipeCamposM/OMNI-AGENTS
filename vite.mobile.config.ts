@@ -52,6 +52,8 @@ function iconesDoApp(): Plugin {
 export default defineConfig({
   root: "mobile",
   plugins: [react(), iconesDoApp()],
+  // Igual ao vite.config.ts: sem isto o cabeçalho da web lança ReferenceError e a página fica preta.
+  define: { __APP_VERSION__: JSON.stringify(JSON.parse(readFileSync(resolve("package.json"), "utf8")).version) },
   css: { postcss: { plugins: [tailwindcss({ config: resolve("tailwind.config.ts") }), autoprefixer()] } },
   resolve: { alias: { "/src": resolve("src") } },
   build: {

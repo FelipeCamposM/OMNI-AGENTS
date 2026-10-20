@@ -3,7 +3,7 @@ import { AttachmentIcon, CloseIcon, LoaderIcon, MicIcon, SendIcon, StopIcon, War
 import { iconForPath } from "../features/files/fileIcons";
 import { tamanhoLegivel, type Anexo } from "./anexos";
 import type { Comando } from "./api";
-import { gravar, navegadorGrava, type Gravacao } from "./voz";
+import { falaDoNavegador, gravar, navegadorGrava, ouvir, type Escuta, type Gravacao } from "./voz";
 
 interface ComposerProps {
   texto: string;
@@ -181,6 +181,47 @@ function BotaoDeVoz({ voz, texto, aoTexto, travado }: { voz: Voz; texto: () => s
           : <MicIcon aria-hidden className="h-4 w-4" />}
       </button>
       {fase === "gravando" && <span className="composer-voz-tempo" aria-live="polite">{Math.floor(segundos / 60)}:{String(segundos % 60).padStart(2, "0")}</span>}
+      {erro && <span role="status" className="composer-voz-erro">{erro}</span>}
+    </>
+  );
+}
+
+/** Microfone pela fala do navegador: as palavras entram no campo enquanto a pessoa fala, sem modelo
+ *  no PC. Nunca envia sozinho. */
+function BotaoDeFala({ texto, aoTexto, travado }: { texto: () => string; aoTexto: (texto: string) => void; travado: boolean }) {
+  const [ouvindo, setOuvindo] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const escuta = useRef<Escuta | null>(null);
+  useEffect(() => () => escuta.current?.cancelar(), []);
+  useEffect(() => {
+    if (!erro) return;
+    const some = window.setTimeout(() => setErro(null), 6000);
+    return () => window.clearTimeout(some);
+  }, [erro]);
+
+  function alternar() {
+    if (ouvindo) { escuta.current?.parar(); return; }
+    setErro(null);
+    const antes = texto().trimEnd();
+    try {
+      escuta.current = ouvir(
+        (falado) => aoTexto(antes && falado ? `${antes} ${falado}` : antes || falado),
+        (motivo) => { escuta.current = null; setOuvindo(false); if (motivo) setErro(motivo); },
+      );
+      setOuvindo(true);
+    } catch (motivo) {
+      setErro(motivo instanceof Error ? motivo.message : "Falha ao ouvir");
+    }
+  }
+
+  const rotulo = ouvindo ? "Parar de ouvir" : "Falar o prompt";
+  return (
+    <>
+      <button type="button" className={`composer-botao composer-voz${ouvindo ? " is-gravando" : ""}`}
+        aria-label={rotulo} title={erro ?? rotulo} aria-pressed={ouvindo}
+        disabled={travado && !ouvindo} onClick={alternar}>
+        {ouvindo ? <StopIcon aria-hidden className="h-4 w-4" /> : erro ? <WarningIcon aria-hidden className="h-4 w-4" /> : <MicIcon aria-hidden className="h-4 w-4" />}
+      </button>
       {erro && <span role="status" className="composer-voz-erro">{erro}</span>}
     </>
   );
@@ -409,7 +450,13 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
                   event.target.value = "";
                 }} />
             </label>
-            {voz && navegadorGrava() && (
+            {/* Fala do navegador primeiro (tempo real, sem modelo); sem ela, o whisper do PC. */}
+            {falaDoNavegador() ? (
+              <BotaoDeFala travado={ocupado} texto={() => textoAtual.current} aoTexto={(novo) => {
+                textoAtual.current = novo;
+                onTexto(novo);
+              }} />
+            ) : voz && navegadorGrava() && (
               <BotaoDeVoz voz={voz} travado={ocupado} texto={() => textoAtual.current} aoTexto={(novo) => {
                 // O ref já anda junto: o próximo trecho chega antes do React renderizar este.
                 textoAtual.current = novo;

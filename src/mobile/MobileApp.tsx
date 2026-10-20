@@ -25,6 +25,7 @@ import { useDados } from "./useDados";
 import { usePoll } from "./usePoll";
 import { corrigir, transcrever, useVozInstalada } from "./voz";
 import { UsoDasContas } from "../web/UsoDasContas";
+import { PreviasLocais } from "../web/PreviasLocais";
 
 const STATES: Record<string,string> = { working: "Trabalhando", answered: "Resposta disponível", approval_required: "Aprovação pendente", stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido" };
 
@@ -1213,6 +1214,7 @@ export function MobileApp() {
         </button>
       </div>
       <section className="m-uso glass" aria-label="Uso das IAs"><UsoDasContas contaAtiva={null} /></section>
+      <section className="m-uso glass" aria-label="Prévia no navegador"><PreviasLocais /></section>
       <Input type="search" value={query} onChange={event => setQuery(event.target.value)}
         placeholder="Pesquisar projetos e conversas" aria-label="Pesquisar projetos e conversas" className="m-busca" />
       {query
