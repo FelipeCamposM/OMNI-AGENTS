@@ -3545,3 +3545,8 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
   sem volta. `src-tauri/src/lib.rs`: plugin `links-externos` com `on_navigation` — só a tela do app
   (`tauri.localhost`, Vite 1420, `about:`/`blob:`/`data:`) navega na janela; http(s) externo abre no navegador do
   sistema (`tauri_plugin_opener::open_url`, lado Rust, sem escopo de capability). Teste `so_a_tela_do_app_navega_na_janela`.
+
+### Release v0.7.5 publicada (2026-10-20)
+
+- [x] Prévia no navegador, fala do navegador na web/celular, link externo do app no navegador do sistema, versão no topo
+  da web. CI verde (`cb57d5f`), release `v0.7.5` publicada como latest; `latest.json` servindo 0.7.5.
