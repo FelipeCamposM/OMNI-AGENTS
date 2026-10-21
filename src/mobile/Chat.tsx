@@ -9,7 +9,7 @@ import {
   BookIcon, CheckIcon, CopyIcon, EditIcon, FileTextIcon, GlobeIcon, ListIcon, RobotIcon, SearchIcon, ToolsIcon,
   ReloadIcon,
 } from "../components/ui/PixelIcon";
-import { iconForPath } from "../features/files/fileIcons";
+import { iconForPath, iconStyle } from "../features/files/fileIcons";
 import { nomeDoCaminho, semMarcasDeImagem, separarAnexos } from "./anexos";
 import { abridorDeArquivo, NOME_DO_AGENTE, pareceArquivo, request, type Mensagem } from "./api";
 
@@ -77,7 +77,7 @@ function CartoesDeAnexo({ anexos }: { anexos: AnexoVisivel[] }) {
           <li key={`${anexo.nome}-${i}`} className="bubble-anexo">
             {anexo.previa
               ? <img src={anexo.previa} alt="" className="bubble-anexo-previa" />
-              : <Icone aria-hidden className="h-4 w-4 shrink-0" />}
+              : <Icone aria-hidden className="h-4 w-4 shrink-0" style={iconStyle(anexo.nome)} />}
             <span className="truncate">{anexo.nome}</span>
           </li>
         );
@@ -299,12 +299,30 @@ function IconeDaAcao({ tool }: { tool?: string }) {
 const DE_ARQUIVO = new Set(["Read", "Edit", "MultiEdit", "Write", "NotebookEdit"]);
 
 function LinhaDeAcao({ acao }: { acao: Mensagem }) {
+  const [verDiff, setVerDiff] = useState(false);
   const detalhe = acao.text && <code className="acao-detalhe">{encurtarCaminho(acao.text)}</code>;
+  const diff = acao.diff;
   return (
     <li className="acao" title={acao.text}>
       <IconeDaAcao tool={acao.tool} />
       <span className="acao-verbo">{verboDaAcao(acao.tool)}</span>
       {detalhe && DE_ARQUIVO.has(acao.tool ?? "") ? <Arquivo caminho={acao.text}>{detalhe}</Arquivo> : detalhe}
+      {diff && (
+        <button type="button" className="acao-contagem" aria-expanded={verDiff} title={verDiff ? "Esconder alterações" : "Ver alterações"}
+          onClick={() => setVerDiff((v) => !v)}>
+          {diff.mais > 0 && <span className="diff-mais">+{diff.mais}</span>}
+          {diff.menos > 0 && <span className="diff-menos">−{diff.menos}</span>}
+          <span className="acoes-seta" aria-hidden>{verDiff ? "▾" : "▸"}</span>
+        </button>
+      )}
+      {diff && verDiff && (
+        <pre className="acao-diff" aria-label="Alterações">
+          {diff.linhas.map((linha, i) => (
+            <span key={i} className={linha[0] === "+" ? "diff-linha-mais" : linha[0] === "-" ? "diff-linha-menos" : undefined}>{linha || " "}</span>
+          ))}
+          {diff.cortado && <span className="diff-cortado">… mais linhas no arquivo</span>}
+        </pre>
+      )}
     </li>
   );
 }

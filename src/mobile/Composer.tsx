@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { AttachmentIcon, CloseIcon, LoaderIcon, MicIcon, SendIcon, StopIcon, WarningIcon } from "../components/ui/PixelIcon";
-import { iconForPath } from "../features/files/fileIcons";
+import { Button } from "../components/ui/Button";
+import { Modal } from "../components/ui/Modal";
+import { iconForPath, iconStyle } from "../features/files/fileIcons";
 import { tamanhoLegivel, type Anexo } from "./anexos";
 import type { Comando } from "./api";
-import { falaDoNavegador, gravar, navegadorGrava, ouvir, type Escuta, type Gravacao } from "./voz";
+import { aplicarVocabulario, aprenderPalavras, falaDoNavegador, gravar, lerVocabulario, navegadorGrava, ouvir, substituicoes, type Escuta, type Gravacao, type Palavra } from "./voz";
 
 interface ComposerProps {
   texto: string;
@@ -75,7 +77,7 @@ function ChipAnexo({ anexo, onRemover, travado }: { anexo: Anexo; onRemover: () 
     <li className="anexo-chip" data-estado={anexo.estado}>
       {anexo.previa
         ? <img src={anexo.previa} alt="" className="anexo-previa" />
-        : <span className="anexo-tipo" aria-hidden><Icone className="h-5 w-5" /></span>}
+        : <span className="anexo-tipo" aria-hidden><Icone className="h-5 w-5" style={iconStyle(anexo.arquivo.name)} /></span>}
       <span className="anexo-info">
         <span className="anexo-nome">{anexo.arquivo.name || "anexo"}</span>
         <span className="anexo-meta">
@@ -97,9 +99,151 @@ export interface Voz {
   corrigir: (texto: string) => Promise<string>;
 }
 
+/** Barras que seguem a voz captada agora. Abre o próprio stream (a fala do navegador não expõe o
+ *  dela); o microfone já está liberado, então não pergunta de novo. */
+function Ondas() {
+  const tela = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    if (!navigator.mediaDevices?.getUserMedia) return;
+    let vivo = true, quadro = 0, soltar = () => {};
+    void navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      if (!vivo) { stream.getTracks().forEach((f) => f.stop()); return; }
+      const contexto = new AudioContext();
+      const analisador = contexto.createAnalyser();
+      analisador.fftSize = 256;
+      analisador.smoothingTimeConstant = .75;
+      contexto.createMediaStreamSource(stream).connect(analisador);
+      const dados = new Uint8Array(analisador.frequencyBinCount);
+      const desenhar = () => {
+        const c = tela.current, g = c?.getContext("2d");
+        if (c && g) {
+          analisador.getByteFrequencyData(dados);
+          const barras = 14, largura = c.width / barras;
+          g.clearRect(0, 0, c.width, c.height);
+          // Cor do tema (`color` do CSS), forte no centro e apagando para as pontas da barra.
+          const cor = getComputedStyle(c).color;
+          const degrade = g.createLinearGradient(0, 0, 0, c.height);
+          degrade.addColorStop(0, "transparent");
+          degrade.addColorStop(.5, cor);
+          degrade.addColorStop(1, "transparent");
+          g.fillStyle = degrade;
+          for (let i = 0; i < barras; i++) {
+            // Espelhado: graves (onde a voz mora, ~190 Hz por faixa) no meio, agudos nas pontas.
+            const v = dados[1 + Math.abs(i - (barras - 1) / 2) * 2 | 0] / 255;
+            const h = Math.min(c.height, Math.max(3, v * v * c.height * 1.6));
+            g.fillRect(i * largura + 1, (c.height - h) / 2, largura - 2, h);
+          }
+        }
+        quadro = requestAnimationFrame(desenhar);
+      };
+      desenhar();
+      soltar = () => { stream.getTracks().forEach((f) => f.stop()); void contexto.close(); };
+    }).catch(() => undefined);
+    return () => { vivo = false; cancelAnimationFrame(quadro); soltar(); };
+  }, []);
+  return <canvas ref={tela} className="composer-ondas" width={80} height={28} aria-hidden />;
+}
+
+/**
+ * Vocabulário da voz no campo. Ao fim de cada ditado troca as formas já conhecidas ("abra-se e a
+ * plus" → "SIAPLUS") e guarda o texto como ficou. Quando a pessoa envia ou sai do campo, o que ela
+ * corrigiu desde então vira pergunta: registrar no vocabulário? Uma pergunta só, com todas as trocas.
+ */
+function useDitado(textoAtual: { current: string }, onTexto: (texto: string) => void, ativo: boolean) {
+  const vocab = useRef<Palavra[]>([]);
+  const ditado = useRef<string | null>(null);
+  const [novas, setNovas] = useState<(Palavra & { marcada: boolean })[] | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  useEffect(() => {
+    if (ativo) lerVocabulario().then((v) => { vocab.current = v.itens; }).catch(() => undefined);
+  }, [ativo]);
+
+  function terminou() {
+    const texto = aplicarVocabulario(textoAtual.current, vocab.current);
+    if (texto !== textoAtual.current) { textoAtual.current = texto; onTexto(texto); }
+    ditado.current = texto;
+  }
+  function conferir() {
+    const base = ditado.current;
+    if (base === null) return;
+    ditado.current = null;
+    const trocas = substituicoes(base, textoAtual.current);
+    if (trocas.length) setNovas(trocas.map((t) => ({ ...t, marcada: true })));
+  }
+  async function registrar() {
+    const escolhidas = (novas ?? []).filter((n) => n.marcada).map(({ termo, ouvido }) => ({ termo, ouvido }));
+    setSalvando(true);
+    try { vocab.current = (await aprenderPalavras(escolhidas)).itens; } catch { /* fica para a próxima correção */ }
+    setSalvando(false);
+    setNovas(null);
+  }
+
+  const marcadas = novas?.filter((n) => n.marcada).length ?? 0;
+  const painel = novas && (
+    <section className="composer-aprender" aria-label="Registrar palavras no vocabulário">
+      <p className="composer-aprender-titulo">
+        {novas.length === 1 ? "Registrar esta correção no vocabulário da voz?" : `Registrar estas ${novas.length} correções no vocabulário da voz?`}
+      </p>
+      <ul>
+        {novas.map((n, i) => (
+          <li key={`${n.ouvido[0]}→${n.termo}`}>
+            <label>
+              <input type="checkbox" checked={n.marcada}
+                onChange={() => setNovas((atual) => atual && atual.map((x, j) => (j === i ? { ...x, marcada: !x.marcada } : x)))} />
+              <span className="composer-aprender-ouvido">{n.ouvido[0]}</span>
+              <span aria-hidden>→</span>
+              <strong>{n.termo}</strong>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <div className="composer-aprender-acoes">
+        <button type="button" className="btn btn-ghost min-h-0 px-2 py-1 text-xs" onClick={() => setNovas(null)}>Agora não</button>
+        <button type="button" className="btn btn-primary min-h-0 px-2 py-1 text-xs" disabled={!marcadas || salvando} onClick={() => void registrar()}>
+          {salvando ? "Registrando…" : marcadas > 1 ? `Registrar ${marcadas}` : "Registrar"}
+        </button>
+      </div>
+    </section>
+  );
+  return { terminou, conferir, painel };
+}
+
+const MICROFONE_LIBERADO = "omni-microfone-liberado";
+
+/** No app (Tauri) o WebView2 libera o microfone sozinho (`microfone.rs`), sem o aviso nativo: no lugar
+ *  dele, este modal pergunta uma vez. No navegador do celular quem pergunta é o próprio navegador. */
+function useAvisoDoMicrofone() {
+  const [pendente, setPendente] = useState<(() => void) | null>(null);
+  function pedir(comecar: () => void) {
+    let liberado = !("__TAURI_INTERNALS__" in window);
+    try { liberado ||= localStorage.getItem(MICROFONE_LIBERADO) === "1"; } catch { /* sem storage: pergunta */ }
+    if (liberado) comecar(); else setPendente(() => comecar);
+  }
+  const modal = pendente && (
+    <Modal titulo="Usar o microfone?" largura="sm" onFechar={() => setPendente(null)}>
+      <div className="modal-secao">
+        <p className="text-sm text-text-primary">O OMNI vai ouvir o microfone só enquanto o botão estiver gravando, para escrever o prompt por voz.</p>
+        <ul className="modal-explica">
+          <li>Nada é enviado sozinho: o texto entra no campo para você revisar.</li>
+          <li>Esta pergunta não aparece de novo neste computador.</li>
+        </ul>
+        <div className="modal-acoes">
+          <Button size="sm" variant="ghost" onClick={() => setPendente(null)}>Agora não</Button>
+          <Button size="sm" variant="primary" onClick={() => {
+            try { localStorage.setItem(MICROFONE_LIBERADO, "1"); } catch { /* pergunta de novo da próxima vez */ }
+            setPendente(null);
+            pendente();
+          }}>Permitir microfone</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+  return { pedir, modal };
+}
+
 /** Microfone: um toque grava, outro para. Cada pausa da fala vira um trecho transcrito na hora, e o
  *  texto vai entrando no campo enquanto a pessoa fala — para revisar, nunca envia sozinho. */
-function BotaoDeVoz({ voz, texto, aoTexto, travado }: { voz: Voz; texto: () => string; aoTexto: (texto: string) => void; travado: boolean }) {
+function BotaoDeVoz({ voz, texto, aoTexto, aoFim, travado }: { voz: Voz; texto: () => string; aoTexto: (texto: string) => void; aoFim: () => void; travado: boolean }) {
   const [fase, setFase] = useState<"parado" | "gravando" | "finalizando">("parado");
   const [erro, setErro] = useState<string | null>(null);
   const [segundos, setSegundos] = useState(0);
@@ -107,6 +251,7 @@ function BotaoDeVoz({ voz, texto, aoTexto, travado }: { voz: Voz; texto: () => s
   // Trechos transcritos em ordem, um por vez: o whisper não ganha nada rodando dois juntos.
   const fila = useRef<Promise<void>>(Promise.resolve());
   const falado = useRef("");
+  const aviso = useAvisoDoMicrofone();
 
   useEffect(() => {
     if (fase !== "gravando") return;
@@ -166,6 +311,7 @@ function BotaoDeVoz({ voz, texto, aoTexto, travado }: { voz: Voz; texto: () => s
       if (corrigido && corrigido !== bruto && atual.endsWith(bruto)) aoTexto(atual.slice(0, atual.length - bruto.length) + corrigido);
     } finally {
       setFase("parado");
+      aoFim();
     }
   }
 
@@ -174,12 +320,15 @@ function BotaoDeVoz({ voz, texto, aoTexto, travado }: { voz: Voz; texto: () => s
     <>
       <button type="button" className={`composer-botao composer-voz${fase === "gravando" ? " is-gravando" : ""}`}
         aria-label={rotulo} title={erro ?? rotulo} aria-pressed={fase === "gravando"}
-        disabled={fase === "finalizando" || (travado && fase === "parado")} onClick={() => void alternar()}>
+        disabled={fase === "finalizando" || (travado && fase === "parado")}
+        onClick={() => (fase === "parado" ? aviso.pedir(() => void alternar()) : void alternar())}>
         {fase === "finalizando" ? <LoaderIcon aria-hidden className="anexo-girando h-4 w-4" />
           : fase === "gravando" ? <StopIcon aria-hidden className="h-4 w-4" />
           : erro ? <WarningIcon aria-hidden className="h-4 w-4" />
           : <MicIcon aria-hidden className="h-4 w-4" />}
       </button>
+      {aviso.modal}
+      {fase === "gravando" && <Ondas />}
       {fase === "gravando" && <span className="composer-voz-tempo" aria-live="polite">{Math.floor(segundos / 60)}:{String(segundos % 60).padStart(2, "0")}</span>}
       {erro && <span role="status" className="composer-voz-erro">{erro}</span>}
     </>
@@ -188,10 +337,11 @@ function BotaoDeVoz({ voz, texto, aoTexto, travado }: { voz: Voz; texto: () => s
 
 /** Microfone pela fala do navegador: as palavras entram no campo enquanto a pessoa fala, sem modelo
  *  no PC. Nunca envia sozinho. */
-function BotaoDeFala({ texto, aoTexto, travado }: { texto: () => string; aoTexto: (texto: string) => void; travado: boolean }) {
+function BotaoDeFala({ texto, aoTexto, aoFim, travado }: { texto: () => string; aoTexto: (texto: string) => void; aoFim: () => void; travado: boolean }) {
   const [ouvindo, setOuvindo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const escuta = useRef<Escuta | null>(null);
+  const aviso = useAvisoDoMicrofone();
   useEffect(() => () => escuta.current?.cancelar(), []);
   useEffect(() => {
     if (!erro) return;
@@ -206,7 +356,7 @@ function BotaoDeFala({ texto, aoTexto, travado }: { texto: () => string; aoTexto
     try {
       escuta.current = ouvir(
         (falado) => aoTexto(antes && falado ? `${antes} ${falado}` : antes || falado),
-        (motivo) => { escuta.current = null; setOuvindo(false); if (motivo) setErro(motivo); },
+        (motivo) => { escuta.current = null; setOuvindo(false); if (motivo) setErro(motivo); aoFim(); },
       );
       setOuvindo(true);
     } catch (motivo) {
@@ -219,9 +369,11 @@ function BotaoDeFala({ texto, aoTexto, travado }: { texto: () => string; aoTexto
     <>
       <button type="button" className={`composer-botao composer-voz${ouvindo ? " is-gravando" : ""}`}
         aria-label={rotulo} title={erro ?? rotulo} aria-pressed={ouvindo}
-        disabled={travado && !ouvindo} onClick={alternar}>
+        disabled={travado && !ouvindo} onClick={() => (ouvindo ? alternar() : aviso.pedir(alternar))}>
         {ouvindo ? <StopIcon aria-hidden className="h-4 w-4" /> : erro ? <WarningIcon aria-hidden className="h-4 w-4" /> : <MicIcon aria-hidden className="h-4 w-4" />}
       </button>
+      {aviso.modal}
+      {ouvindo && <Ondas />}
       {erro && <span role="status" className="composer-voz-erro">{erro}</span>}
     </>
   );
@@ -239,6 +391,7 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
   // O texto de agora, não o de quando a gravação começou: dá para digitar enquanto fala.
   const textoAtual = useRef(texto);
   textoAtual.current = texto;
+  const ditado = useDitado(textoAtual, onTexto, Boolean(voz) || Boolean(falaDoNavegador()));
   // Menção aberta: onde começa o `@`, o que foi digitado depois dele e o que achou.
   const [mencao, setMencao] = useState<{ inicio: number; busca: string } | null>(null);
   const [sugestoes, setSugestoes] = useState<string[]>([]);
@@ -329,6 +482,7 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
 
   function enviar(event: FormEvent) {
     event.preventDefault();
+    ditado.conferir();
     if (podeEnviar) onEnviar();
   }
 
@@ -376,6 +530,7 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
     // `isComposing`: Enter que confirma acento/IME não pode disparar o envio.
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing || !enterEnvia()) return;
     event.preventDefault();
+    ditado.conferir();
     if (podeEnviar) onEnviar();
   }
 
@@ -388,6 +543,7 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
   return (
     <div className="composer-faixa">
       {toolbar}
+      {ditado.painel}
       <form onSubmit={enviar} className="composer">
         {anexos.length > 0 && (
           <ul className="anexos" aria-label="Anexos">
@@ -401,7 +557,7 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
           className="composer-campo" onPaste={colar} onKeyDown={tecla}
           onChange={(event) => { onTexto(event.target.value); acompanharMencao(event.target.value, event.target.selectionStart ?? event.target.value.length); }}
           onClick={(event) => acompanharMencao(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)}
-          onBlur={() => window.setTimeout(() => { setMencao(null); setBarra(null); }, 150)}
+          onBlur={() => { ditado.conferir(); window.setTimeout(() => { setMencao(null); setBarra(null); }, 150); }}
           aria-autocomplete="list" aria-expanded={Boolean((mencao && sugestoes.length) || comandosVisiveis.length)}
           aria-controls={comandosVisiveis.length ? "comandos" : "mencoes"} />
         {comandosVisiveis.length > 0 && (
@@ -428,7 +584,7 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
                   className={`composer-mencao${indice === escolhida ? " is-ativa" : ""}`}
                   onMouseDown={(event) => { event.preventDefault(); escolher(caminho); }}
                   onMouseEnter={() => setEscolhida(indice)}>
-                  <Icone aria-hidden className="h-3.5 w-3.5 shrink-0" />
+                  <Icone aria-hidden className="h-3.5 w-3.5 shrink-0" style={iconStyle(caminho)} />
                   <span className="composer-mencao-nome">{caminho.slice(barra + 1)}</span>
                   {barra > 0 && <span className="composer-mencao-pasta">{caminho.slice(0, barra)}</span>}
                 </li>
@@ -452,12 +608,12 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
             </label>
             {/* Fala do navegador primeiro (tempo real, sem modelo); sem ela, o whisper do PC. */}
             {falaDoNavegador() ? (
-              <BotaoDeFala travado={ocupado} texto={() => textoAtual.current} aoTexto={(novo) => {
+              <BotaoDeFala travado={ocupado} texto={() => textoAtual.current} aoFim={ditado.terminou} aoTexto={(novo) => {
                 textoAtual.current = novo;
                 onTexto(novo);
               }} />
             ) : voz && navegadorGrava() && (
-              <BotaoDeVoz voz={voz} travado={ocupado} texto={() => textoAtual.current} aoTexto={(novo) => {
+              <BotaoDeVoz voz={voz} travado={ocupado} texto={() => textoAtual.current} aoFim={ditado.terminou} aoTexto={(novo) => {
                 // O ref já anda junto: o próximo trecho chega antes do React renderizar este.
                 textoAtual.current = novo;
                 onTexto(novo);

@@ -3550,3 +3550,234 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
 
 - [x] Prévia no navegador, fala do navegador na web/celular, link externo do app no navegador do sistema, versão no topo
   da web. CI verde (`cb57d5f`), release `v0.7.5` publicada como latest; `latest.json` servindo 0.7.5.
+
+### Codex travado na tela de update (sem release)
+
+- [x] Codex com versão nova abre "Update available" (1 atualizar / 2 pular / 3 pular até a próxima), em inglês; o
+  composer não aparece e a conversa dá "Entrada do CLI não reconhecida ou sessão ocupada". `crates/omni-engine/src/main.rs`
+  → `sem_aviso_de_update()` em `spawn_initial_command_thread`: comando que começa com `codex` ganha
+  `-c check_for_update_on_startup=false` (spawn e reinício; idempotente). Chave confirmada no binário 0.154.0.
+  Teste `codex_abre_sem_tela_de_update`; 113 engine ok. Codex digitado à mão no terminal não muda.
+
+### Aprovação pela Conversa não era reconhecida (sem release)
+
+- [x] Sonda com as CLIs reais (`interaction.rs` → `sonda::sonda_aprovacao`, `#[ignore]`, `OMNI_SONDA=claude|codex`):
+  Claude Code 2.1.305 e Codex 0.154.0 mostram exatamente os textos esperados, mas `approval()` devolvia `None` nos
+  dois — a mensagem da pessoa fica visível acima com o mesmo `❯`/`›` da opção marcada, e a contagem de "uma opção
+  marcada" era na tela inteira. Agora conta só da pergunta para baixo. Reconfirmado nas CLIs reais: Claude
+  `1\r`/`3\r`, Codex `y`/Esc. Teste `aprovacao_real_com_a_mensagem_visivel`.
+- [ ] Não coberto: aprovação de edição de arquivo do Claude/Codex ("make the following edits?"), acesso de rede do
+  Codex e Antigravity (sem `approval`). Codex desta máquina usa `approvals_reviewer = "auto_review"` e quase nunca
+  pede — a sonda força `approvals_reviewer="user"`.
+
+### Codex na Conversa: campo some com o cabeçalho e modo Plan/Auto (sem release)
+
+- [x] Sonda real (Codex 0.154.0, resposta de 60 linhas): o cabeçalho "OpenAI Codex" sai da tela e `ready()` virava
+  `false` — a conversa travava em "Entrada do CLI não reconhecida" depois da primeira resposta comprida. Marca do
+  Codex removida de `ready`/`pode_enfileirar` (como já era no Claude; `provider_running` garante a CLI).
+  Reconfirmado na CLI real: `ready: true`.
+- [x] Modo: o shift+tab do Codex só alterna Padrão ↔ Plan; o rodapé mostra `Plan mode (shift+tab to cycle)` e o
+  Padrão não escreve nada. `modo_atual` reconhece a marca do Codex; `modo_com_provider` trata Codex com campo à
+  vista e sem marca como `auto`, e `alternar_modo` usa a mesma leitura.
+- [x] **Auto do Codex** = preset "Approve for me" do `/permissions` (Codex 0.154.0: Read Only / Ask for approval /
+  Approve for me / Full Access; a conta já abre em "Approve for me" por `approvals_reviewer = "auto_review"`).
+  `permissoes_do_codex()`: sai do Plan (shift+tab), digita `/permissions`, anda com as setas até o rótulo e confirma;
+  erro com motivo se o menu não abrir/fechar. Sonda real (`OMNI_SONDA_AUTO=1`): "Permissions updated to Approve for
+  me"; com conversa ativa o menu reaberto mostra o novo preset como `(current)`. Teste `menu_de_permissoes_do_codex`.
+- [ ] Clique no botão pela Conversa do app não testado (a função foi exercida direto na CLI pela sonda). O preset atual
+  não aparece na tela: Auto fica aceso fora do Plan mesmo se a pessoa trocar à mão para "Ask for approval".
+
+### Conversa mostrando mensagens velhas no fim depois de trocar de conta (sem release)
+
+- [x] Conversa "PRINCIPAL" (conta emailuber → padrão → emailuber, 8 segmentos): o chat terminava em mensagens de
+  20/10 e o que o terminal mostrava (o "ola" de 21/10) ficava enterrado no meio, sem erro. `timeline_cached` juntava
+  os segmentos em ordem de segmento; o `.jsonl` da conta lido primeiro já trazia o mais novo, e o que só existia no
+  arquivo da outra conta caía no fim. `crates/omni-core/src/conversations.rs` → `em_ordem_de_hora()` (ordenação
+  estável, item sem hora herda a do anterior). Teste `ida_e_volta_de_conta_mantem_o_chat_em_ordem_de_hora`.
+  77 core + 115 engine ok.
+- [x] Transcript de 299 MB (156 MB são linhas `api-request*` do Claude Code 2.1.3xx): `feed.rs` lê linha a linha
+  (`BufReader::read_until`, sem carregar o arquivo inteiro) e pula `{"type":"api-request…` sem parsear
+  (`chamada_da_api`). Mesmos 4024 itens, 3,2 s → 0,6 s (release). Teste `chamada_da_api_no_transcript_nao_vira_mensagem`.
+  O caminho `\?\` não duplicava nada (o `resolve_transcript` canonicaliza tudo); são dois arquivos de verdade, um por conta.
+
+### Configurações → Armazenamento (sem release)
+
+- [x] `crates/omni-core/src/armazenamento.rs` → `medir()`: por conta do `profiles.json` + pasta do engine (OMNI), só o
+  que é conversa (Claude: `projects`, `file-history`, `todos`/`plans`, `history.jsonl`; Codex: `sessions`,
+  `thread_history_*`; Cursor: `chats`, `projects`, `plans`; Antigravity: `conversations`, resumos, `brain`…). Não
+  segue link. 10 maiores conversas por conta, com o nome do OMNI pelo id da sessão. Sonda `sonda_armazenamento`
+  (`#[ignore]`): 1,77 GB nesta máquina em 0,7 s.
+- [x] Tauri `relatorio::armazenamento`; tela `src/features/armazenamento/Armazenamento.tsx` (seção nova em
+  Configurações): total, por IA, por conta, maiores conversas (avisa "também em <conta>", a cópia da troca de
+  conta) e partes de cada conta, com "Abrir pasta". Reusa `Barras`/`Kpi`/`Titulo` (agora exportados de
+  `RelatoriosIa`). Teste `src/test/Armazenamento.test.tsx`. 419 front, 80 core, 115 engine.
+- [ ] Sem apagar/limpar pela tela (só leitura). Não conferido no app rodando (só teste e sonda).
+
+### Conversa presa em "trabalhando" depois do done (sem release)
+
+- [x] `in_turn`, `ready` e `pode_enfileirar` procuravam "esc to interrupt" na tela inteira. Nesta própria sessão a tela
+  mostrava diffs do `interaction.rs` com `contains("esc to interrupt")` → "trabalhando" para sempre, mesmo no `done`
+  (confirmado lendo a saída da sessão pelo engine: 43 ocorrências, a maioria texto da conversa).
+  `interaction::area_do_turno()`: só da linha do campo (`❯`/`›`) − 4 até o fim (status acima do campo + rodapé;
+  Claude 2.1.305 põe o "esc to interrupt" no rodapé). Testes em `main.rs` (parado com diff na tela, Claude e Codex
+  trabalhando). 115 engine ok.
+
+### Workspaces: fechar só esconde, abrir/gerenciar em modal, arrastar para ordenar (sem release)
+
+- [x] `WorkspaceState.hidden`: o X da lateral só esconde (agentes seguem rodando); `HIDE_WORKSPACE`/`SHOW_WORKSPACE`,
+  `DELETE_WORKSPACE` (antigo CLOSE, encerra os terminais antes), `MOVE_WORKSPACE`, `CLOSE_PROJECT_IN_WORKSPACE`,
+  `MOVE_PROJECT` (`workspacesReducer.ts`, `workspaceReducer.ts` → `moverAntes`). Esconder o último visível cria um novo;
+  focar agente de um escondido o traz de volta; carregar com tudo escondido reabre o primeiro (`workspaceService`).
+- [x] "+" abre `AbrirWorkspace` (novo com nome ou reabrir fechado); ícone de ajustes abre `GerenciarWorkspaces` (abrir,
+  ver/remover projetos de cada um, excluir com confirmação explicando o que acontece) — `src/components/WorkspaceModais.tsx`,
+  `ui/Modal.tsx` (Esc fecha só o de cima).
+- [x] Arrastar workspaces e projetos na lateral (`lib/ordenarArrastando.ts`, pointer events — HTML5 DnD não chega no
+  Tauri/Windows), linha de inserção em CSS. CHATS ordenado pela última atividade (mais recente primeiro).
+- [x] Testes: reducer (esconder/reabrir/ordem/remover projeto), Sidebar (modais, confirmação, ordem das conversas),
+  App. 426 front ok. Prints dos três modais conferidos (página temporária, já removida).
+- [ ] Arrastar não testado no app real (só a lógica do reducer e o visual dos modais).
+
+### Armazenamento → limpeza de conversas antigas (sem release)
+
+- [x] `omni_core::armazenamento::antigas()`/`limpar()`: conversa entra só se **todas** as cópias (uma por conta da
+  mesma IA) estão sem escrita há mais de N dias e nenhuma sessão aberta é dela. Sai com os pertences (Claude:
+  `<id>/` com subagentes e `file-history/<id>`; Cursor: a pasta do chat; Antigravity: `brain/<id>`). A lista é refeita
+  na hora de apagar, nunca vem da tela. Conversa sem arquivo nenhum sai do `conversations.json`. Corrigido junto: o
+  `.jsonl` de subagente do Claude contava como conversa.
+- [x] Engine (`mobile.rs`): `GET /limpeza` (ajuste + sugestões 30/60/90 com as 50 maiores + última limpeza),
+  `POST /limpeza` (`limpeza.json`, só 30/60/90), `POST /limpeza/agora {dias}`; `conversas_abertas()` protege as sessões
+  vivas; `limpeza_automatica()` (thread: 10 min depois da subida e a cada 6 h, se ligada; grava `limpeza-ultima.json`).
+- [x] Tela: cartão "Limpeza de conversas antigas" na seção Armazenamento — 30 e 60 dias com tamanho, "Ver quais",
+  "Limpar" com confirmação ("Apagar N de vez?") e "Limpar sozinho" (Desligado / 30 / 60 dias; padrão desligado).
+- [x] Testes: core `limpeza_apaga_so_o_que_esta_parado_em_todas_as_contas`, engine `limpeza_sugere_salva_e_apaga_pela_rota`,
+  front em `Armazenamento.test.tsx`. 427 front, 81 core, 116 engine. Sonda (só leitura) nesta máquina: 30 dias = 30
+  conversas/58 MB, 60 dias = 20/40 MB (quase tudo Codex).
+- [ ] Apagar é definitivo (sem lixeira). O índice do próprio Codex (`thread_history_*.sqlite`) continua citando o rollout
+  apagado — o `codex resume` pode listar e não abrir. Não conferido no app rodando.
+
+### Atenção: sem "encerrado" ao reabrir, ícone por tipo e há quanto tempo (sem release)
+
+- [x] `stopped`/`orphan` saem do `AttentionReason`/`ATTENTION_ORDER` (`useAttention.ts`): reabrir o app listava dezenas
+  de "encerrado" de conversas paradas. Ficam só aprovação, finalizado e interrompido (limite, erro de API, travou).
+- [x] Engine grava `attention_at_ms` (`omni-protocol`) quando o aviso acontece — fim de turno, aprovação, notice novo.
+  `last_activity_at_ms` não serve: sobe a cada redesenho da TUI. Sessão antiga sem o campo cai na última saída.
+- [x] `AttentionPanel`: selos por tipo com ícone e contagem no lugar do número vermelho único; ícone em quadrado da
+  cor do status; "há 5 min" com a data completa no tooltip. `haQuantoTempo` foi para `ConversaStatus.tsx`.
+- [x] Testes: useAttention (encerrada/órfã fora, hora do evento), Sidebar (tempo + selo). 429 front, 116 engine.
+- [x] Workspace na lateral usa os mesmos selos por tipo (`SelosDeAtencao` em `AttentionPanel.tsx`) no lugar do número
+  vermelho. `WorkspaceList` recebe os itens de atenção; `countByWorkspace` saiu do `useAttention` (ficou sem uso).
+
+### Tarefas na barra superior, com prazo (sem release)
+
+- [x] Saíram da barra lateral (`Sidebar.tsx`, seção TAREFAS) para o topo: `src/features/todo/TarefasNoTopo.tsx` no
+  `TitleBar`, ao lado do sino. Contador de pendentes (vermelho com atrasada; pula ao mudar), halo que "respira"
+  devagar enquanto há pendência, painel em portal com entrada/saída animadas, Esc e clique fora fecham.
+- [x] Prazo opcional (`Todo.prazo`, ms; tarefas antigas sem o campo continuam valendo). Lista agrupada: Atrasadas,
+  Hoje, Próximas, Sem prazo, Concluídas; selo do prazo com cor ("atrasada há 2 h", "hoje 18:00", "amanhã 09:00").
+  Reordenar desliza (FLIP com Web Animations), apagar sai para o lado, concluir anima a caixa.
+- [x] `SeletorDePrazo.tsx`: atalhos (hoje 18h, amanhã 9h, segunda 9h, sem prazo), calendário próprio (mês desliza,
+  dia passado desabilitado) e rodas de hora/minuto no formato do timer do iPhone — `scroll-snap` nativo + inclinação
+  3D por item, arrastar com o mouse, roda, clique e setas/PageUp/PageDown (`role=spinbutton`). Horário passado não
+  deixa definir. Em portal (a lista rola e cortaria). CSS em `src/features/todo/tarefas.css`.
+- [x] Testes `src/test/todo.test.tsx` (6). Prints conferidos no Vite com Playwright (painel, seletor, roda arrastando e
+  encaixando, troca de mês, concluir).
+- [ ] Sem aviso do sistema quando o prazo chega (só a cor/contador mudam, relidos a cada 30 s). Rodas sem loop infinito
+  (23 → 0 não dá a volta). Tema claro não conferido em print.
+
+### Ícones de arquivo com as cores do Material Icon Theme (sem release)
+
+- [x] `fileIcons.ts`: `CORES_PASTAS`/`CORES_NOMES`/`CORES_EXTENSOES` com as cores do Material, uma para cada chave de
+  ícone (teste reprova chave sem cor ou cor sem ícone). Pasta sem regra = azul-acinzentado; arquivo desconhecido sem cor.
+  `iconStyle()` aplica inline com `color-mix` e `--mistura-arquivo` (72% no tema claro, `index.css`).
+- [x] Aplicado em: árvore (item, fantasma do arrasto, item novo), Quick Open, painel Git, abas (só ícone de arquivo,
+  não marca de agente), anexos e menções do celular.
+- [x] Conferido em print nos temas escuro e claro (página temporária, já removida). 438 testes front ok.
+- [x] Roda do mouse no seletor de hora pulava 3–4 itens por clique (~100 px de rolagem nativa antes do encaixe):
+  `wheel` nativo não passivo em `Roda` — um clique anda um item, trackpad anda um a cada 32 px. Conferido no Chromium
+  (2→3, três cliques 3→6, um para cima →5). Teste `cada clique da roda do mouse anda um item`.
+- [x] Botão de copiar o texto de cada tarefa (`navigator.clipboard`), ícone vira ✓ por 1,2 s. Teste no `todo.test.tsx`.
+
+### Arrasto da lateral com o item flutuando (sem release)
+
+- [x] `src/lib/ordenarArrastando.ts` (serve projetos e workspaces): cópia do item (`.ordenar-fantasma`, sem
+  `data-ordem`/ids, `pointer-events: none`) segue o ponteiro mantendo o ponto em que foi pego, erguida (sombra,
+  `scale`/`rotate` próprios, animação de levantar); original vira contorno tracejado. Ao soltar pousa na linha de
+  inserção e some; Esc/fora da lista volta para a origem. CSS junto das regras `[data-ordem]` em `index.css`.
+  Teste `src/test/ordenarArrastando.test.tsx`; prints no Vite (3 workspaces, arrasto e soltura). 441 front.
+- [x] `.claude` e `CLAUDE.md` com a marca do Claude, `.cursor` e `.cursorrules` com a do Cursor (`AgentIcon`); pasta
+  `apps` com ícone de monitor e cor própria. Teste de integridade aceita ícone de PixelIcon ou de AgentIcon.
+- [x] Aviso de atenção mostra a marca do agente (Claude/Codex/Cursor) ao lado do nome da conversa; o nome do agente
+  vai no tooltip e na notificação do Windows (que não tem ícone). `AttentionItem.provider`.
+
+### Fluxos: canvas em tela cheia, opções em menus (sem release)
+
+- [x] `FluxosView.tsx`: a lateral fixa (salvos, execuções, novo/IA/manual) virou o menu "Fluxos ▾"; a paleta flutuante
+  virou "+ Etapa ▾" com a dica de cada tipo; escopo, importar/copiar JSON e apagar foram para "Opções ▾"; cancelar
+  execução também. Componente `Suspenso` (fecha ao clicar fora, Esc ou ao escolher).
+- [x] Painel direito só vira coluna com etapa selecionada ou pelo botão de detalhes; numa execução abre com o resumo.
+  Erro e aviso flutuam sobre o canvas. CSS `fx-suspenso*`, `fx-opcao`, `.fx-tela.com-painel` (`index.css`); regras da
+  lateral e da paleta removidas.
+- [x] Conferido em print com Tauri simulado (página temporária, removida): menu de fluxos, de etapas, de opções e
+  etapa selecionada. Sem teste de componente para o fluxo (não havia antes).
+- [x] Correção do "Detalhes" (21/10): a barra de cima ocupa as duas colunas e quebra linha (antes ficava só na coluna
+  do canvas e os botões invadiam o painel e o X); ao abrir o painel ou trocar de etapa o canvas desliza até a etapa
+  se ela ficou escondida (`setCenter` com o zoom atual); minimapa some na tela estreita. Botão com `SlidersIcon`.
+
+### Fluxo de release: etapa "Comando" + fluxo pronto (sem release)
+
+- [x] Nó novo `comando` (`crates/omni-core/src/fluxos.rs`, `crates/omni-engine/src/fluxos.rs::rodar_comando`): roda
+  no shell (`cmd /D /S /C` no Windows, `sh -c` fora), saída ao vivo no histórico, pausar/cancelar matam o processo.
+  Saiu 0 → `sim`; falhou → `nao` (ou `esgotado` após `max_voltas`); sem nada ligado no `nao`, a execução para com a
+  última linha do erro. Teste `comando_segue_pelo_codigo_de_saida`.
+- [x] Fluxo com `na_pasta_do_projeto`: roda direto na pasta, sem worktree (leva o que não foi commitado). Não combina
+  com etapa de PR (`validar` reprova). Checkbox no resumo do fluxo; painel do Comando com comando e tentativas.
+- [x] `scripts/release.mjs` com os passos `validar | publicar | aguardar | liberar | registrar` (mesmo processo das
+  releases feitas à mão: CI local, commit+push+tag, espera o `release.yml`, tira do rascunho e confere o
+  `latest.json` público, commit do roadmap).
+- [x] `.omni/fluxos/release.json` "Release do OMNI AGENTS" (fluxo do projeto): agente prepara versão e changelog →
+  valida (loop com agente que corrige, até 3) → aprovação "Publicar?" → commit/push/tag → build no GitHub → aprovação
+  "Liberar para todos?" → libera → agente registra no roadmap → commit. Teste `fluxo_de_release_do_omni_valida`.
+  Conferido em print com Tauri simulado. 443 front, core 86, engine 117.
+- [ ] Próximo: rodar o fluxo de verdade na próxima release (o "Publicar" faz commit de TUDO que está na pasta).
+
+### Rodapé premium + "Uso" na barra de cima (sem release)
+
+- [x] Botão "Uso" na barra de cima, ao lado de "Layouts" e no mesmo estilo (`titlebar-acao`), em todas as telas: entra
+  pelo `acoes` do `TitleBar` em `App.tsx` (o `TitleBar` não mudou); a conta em uso vem da aba em foco (`sessaoAtiva`).
+- [x] `UsoDeTodasAsContas.tsx` refeito: abre para baixo, alinhado à direita; cabeçalho com resumo (contas · IAs · lido
+  há), "Atualizar todas"; grupo por IA com logo; cartão por conta com inicial, selo "em uso" sólido, e `Medidor` novo
+  (rótulo, "renova …", % grande e barra fina com brilho na cor da faixa). CSS `.uso-*` em `index.css`.
+- [x] Rodapé (`.rodape-app`): gradiente da superfície, filete do tema no topo, chips leves para conta do git, uso do
+  agente em foco (`.rodape-uso`) e engine (ponto verde com brilho); sombra suave no tema claro. Sem o filete solto.
+- [x] Conferido em print com Tauri simulado (escuro e claro, página temporária removida). 444 front.
+- [x] Animações do painel de uso com GSAP (`src/lib/motion.ts`): `abrirPopover`/`fecharPopover` (cai do botão com
+  zoom a partir do canto, sai rápido antes de desmontar), `entrarEmCascata` (ref de callback com `data-ordem`: grupos e
+  cartões entram um após o outro, inclusive quando a lista chega depois), `encherBarra` (barras enchem da esquerda) e
+  `useCountUp` com `inicio` (o % sobe do zero e corre até o número novo após uma consulta). Respeitam "animações" e o
+  reduzir movimento do sistema. Medido no navegador a 60/120/250 ms; teste do painel espera a contagem. 446 front.
+
+### Conta mestra das conversas + tela de Agentes nova (sem release)
+
+- [x] `crates/omni-core/src/mestra.rs`: uma conta mestra por IA (`mestras.json` no engine; sem escolha = primeira
+  criada). `unificar(mestre, copias)`: a versão mais recente vira a da mestra, as outras vão para a **Lixeira**
+  (`SHFileOperationW` + `FOF_ALLOWUNDO`) e voltam como **hard link** — um arquivo físico, um nome por conta. Outro volume
+  cai em cópia. Conferido que o Claude escreve no fim do mesmo arquivo (id NTFS estável), então o link segue
+  compartilhado. Deps: `same-file`, `windows-sys` (`Win32_UI_Shell`), ambas já no lock.
+- [x] `levar_transcript` (`mobile.rs`) não copia mais: chama `unificar` com a mestra. Troca de conta, failover e
+  retomar do histórico passam todos por ali.
+- [x] `armazenamento.rs`: link conta uma vez só (mestra primeiro), na medição e na limpeza. `copias()` /
+  `juntar_copias()` + rotas `GET/POST /copias` (lista refeita no engine, sessões abertas de fora). Card "Conversas em
+  mais de uma conta" em Armazenamento com confirmação. Testes core 84, engine 116.
+- [x] Tauri `contas_mestras` / `definir_mestra` (`profiles.rs`). Estrela na conta em Configurações → Agentes.
+- [x] `AgentConnections.tsx` refeito: KPIs (CLIs, contas conectadas, contas), um cartão por CLI com tom do estado,
+  contas como blocos com estrela, ações leves (`.ag-acao`), remover com confirmação, uso como medidores
+  (`AccountUsage.tsx`). CSS em `src/features/terminal/agentes.css`. Conferido em print com Tauri simulado. 443 front.
+- [x] PRINCIPAL (`9fa46572…`) juntada à mão: cópia do Padrão (297,7 MB, só o "continue" que bateu no limite) foi para
+  a Lixeira, e virou link do arquivo do emailuber. ~298 MB livres.
+- [x] Ajuste da tela de Agentes (21/10): e-mail da conta numa linha própria com reticências (não cobre mais estrela/botão), cartões em colunas CSS (`.ag-colunas`, sem vão à direita) e KPIs novos (`AgKpi` em `AgentConnections.tsx`): agentes prontos com logos, conta com mais folga, mais perto do limite (quando libera) e próximo reset. `AccountUsage` repassa o uso por `onUsage`.
+- [x] Microfone sem o aviso do WebView2 (21/10): `src-tauri/src/microfone.rs` libera o microfone só para as páginas do app (`PermissionRequested`, mesma regra de `eh_do_app`); no lugar do aviso, modal "Usar o microfone?" no Composer, uma vez por computador (`omni-microfone-liberado`). Ondas da voz ao gravar/ouvir (`Ondas` em `src/mobile/Composer.tsx`, AnalyserNode + canvas, cor do tema com brilho neon), no app e na web.
+- [x] Abertura da conversa com etapas (21/10): engine expõe `capabilities.iniciando` (processo do agente ainda não subiu, `interaction.rs`); `AbrindoAgente` em `src/features/conversa/AbaDeAgente.tsx` mostra Abrindo o terminal → Iniciando o <agente> → Carregando a conversa, com ícone animado (anel girando, `mobile.css`), esconde o "trabalhando" falso e o "não reconhecida" até o agente ficar pronto (ou 45 s; só sessão com < 90 s). Teste em `AbaDeAgente.test.tsx`.
+- [x] Vocabulário da voz + títulos curtos (21/10): `voz.rs` guarda `voz/vocabulario.json` (termo + formas ouvidas; rotas `/voz/vocabulario` e `/voz/vocabulario/aprender`), tira nomes de cada projeto (pasta, package.json, tauri.conf, Cargo, README) e põe tudo na dica do whisper. Front: `aplicarVocabulario`/`substituicoes` em `src/mobile/voz.ts`; `useDitado` no Composer troca o ouvido pelo termo ao fim do ditado e, ao enviar ou sair do campo, pergunta (painel único, com todas as trocas) se registra as correções; lista em Configurações → Geral (`src/features/voz/VocabularioCard.tsx`). Títulos: `titulo_curto` (≤3 palavras de conteúdo, sem conectivo/verbo de pedido) e `TitleSource::Ia` — sessão aberta pede ao Haiku (`claude_rapido`) 1–3 substantivos, uma vez por conversa; manual continua vencendo.
+- [x] Diff nas ações de edição (21/10): `feed::Item.diff` (`mais`/`menos` exatos + até 80 linhas `+`/`-`/` `) vindo do `Edit`/`MultiEdit` (LCS de linhas), `Write` (tudo `+`) e `apply_patch` do Codex; vai em `conversations::Message.diff`. `LinhaDeAcao` em `src/mobile/Chat.tsx` mostra `+N` verde / `−N` vermelho e abre o diff no clique (`.acao-diff` em `mobile.css`). Teste `edicao_traz_linhas_adicionadas_e_removidas` e `ChatDesenho.test.tsx`. Próximo: rota sob demanda se a página pesar.
+- [ ] Próximo: rebuild do engine para a troca de conta usar o link; depois "Juntar na mestra" em Armazenamento para
+  as outras 10 duplicadas (~270 MB; 5 divergentes perdem a versão mais velha, que vai para a Lixeira).

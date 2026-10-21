@@ -10,6 +10,8 @@ export interface Conversation {
     enfileirar?: boolean;
     /** Menu da CLI ou pergunta do agente travando o campo: responde-se pelo número. */
     escolha?: Escolha | null;
+    /** O processo do agente ainda não subiu na PTY (engine 0.7.6+; ausente = desconhecido). */
+    iniciando?: boolean;
   } | null;
   /** Há uma sessão aberta no PC ligada a esta conversa (dá para ver o terminal e mandar teclas). */
   live?: boolean;
@@ -38,6 +40,8 @@ export interface Mensagem {
   tool?: string;
   /** Imagens coladas na mensagem; cada uma vem por `GET /conversas/{id}/imagens/{n}/{k}`. */
   imagens?: number;
+  /** O que a edição mudou: contagem exata e as linhas (`+`/`-`/` ` na frente), cortadas no engine. */
+  diff?: { mais: number; menos: number; linhas: string[]; cortado?: boolean };
 }
 export interface Projects {
   /** 0 = o desktop nunca publicou; a lista veio só das conversas já registradas. */

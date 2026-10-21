@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { ATTENTION_LABEL, type AttentionItem } from "./useAttention";
+import { NOME_DO_AGENTE } from "../../mobile/api";
 
 /** Um aviso por evento do engine: cada fim de turno ou diálogo de aprovação sobe o `attentionSeq`. */
 function keyOf(item: AttentionItem): string {
@@ -82,7 +83,7 @@ export function useAttentionNotifier(items: AttentionItem[], enabled: boolean, n
             for (const item of avisar) {
               sendNotification({
                 title: `${item.workspaceName} · ${item.projectName}`,
-                body: `${item.sessionName} — ${ATTENTION_LABEL[item.reason]}`,
+                body: `${item.provider ? `${NOME_DO_AGENTE[item.provider] ?? item.provider} · ` : ""}${item.sessionName} — ${ATTENTION_LABEL[item.reason]}`,
               });
             }
           } else {

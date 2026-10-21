@@ -1,5 +1,6 @@
 import { TitleBar } from "./components/TitleBar";
 import { LayoutPresetPicker } from "./features/workspace/LayoutPresetPicker";
+import { UsoDeTodasAsContas } from "./features/terminal/UsoDeTodasAsContas";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AppBackground } from "./components/backgrounds/AppBackground";
 import { SettingsView } from "./components/SettingsView";
@@ -59,7 +60,7 @@ export function App() {
   // Com as Configurações abertas nenhuma pane está na tela, e com a janela fora de foco ninguém
   // está olhando para ela — nos dois casos nada pode ser marcado como visto.
   const janelaEmFoco = useJanelaEmFoco();
-  const { items: attention, all: allAttention, countByWorkspace, dismiss: dismissAttention } = useAttention(
+  const { items: attention, all: allAttention, dismiss: dismissAttention } = useAttention(
     sessions,
     workspaces,
     activeWorkspaceId,
@@ -212,6 +213,9 @@ export function App() {
     setView("workspace");
   }
 
+  const paneAtiva = activeProject ? findPane(activeProject.layout, activeProject.activePaneId) : null;
+  const sessaoAtiva = paneAtiva?.tabs.find((tab) => tab.id === paneAtiva.activeTabId)?.resourceId ?? null;
+
   return (
     <SessionProvidersContext.Provider value={sessionsById}>
     <div className="flex h-screen flex-col overflow-hidden">
@@ -224,7 +228,10 @@ export function App() {
             : [workspaces.find((item) => item.id === activeWorkspaceId)?.name, activeProject?.name].filter((parte): parte is string => Boolean(parte))
         }
         dica={view === "workspace" ? activeProject?.path : undefined}
-        acoes={view === "workspace" && activeProject ? <LayoutPresetPicker dispatch={dispatch} /> : null}
+        acoes={<>
+          <UsoDeTodasAsContas engineOnline={engineOnline} contaAtiva={sessaoAtiva ? sessionsById[sessaoAtiva]?.profile_id ?? null : null} />
+          {view === "workspace" && activeProject && <LayoutPresetPicker dispatch={dispatch} />}
+        </>}
         onHome={() => setView("workspace")}
         onOpenSettings={(section) => {
           setSettingsSection(section);
@@ -238,17 +245,25 @@ export function App() {
         workspaces={workspaces}
         activeWorkspaceId={activeWorkspaceId}
         onSelectWorkspace={(workspaceId) => dispatch({ type: "SELECT_WORKSPACE", workspaceId })}
-        onCreateWorkspace={() => dispatch({ type: "ADD_WORKSPACE" })}
-        onCloseWorkspace={(workspaceId) => {
+        onCreateWorkspace={(name) => dispatch({ type: "ADD_WORKSPACE", name })}
+        // Fechar só esconde: os agentes continuam rodando e o workspace volta igual.
+        onHideWorkspace={(workspaceId) => dispatch({ type: "HIDE_WORKSPACE", workspaceId })}
+        onShowWorkspace={(workspaceId) => { dispatch({ type: "SHOW_WORKSPACE", workspaceId }); setView("workspace"); }}
+        onDeleteWorkspace={(workspaceId) => {
           const closingWorkspace = workspaces.find((item) => item.id === workspaceId);
           const closing = (closingWorkspace?.projects ?? [])
             .flatMap((project) => collectResourceIds(project.layout))
             .map((id) => closeTerminal(id));
-          void Promise.allSettled(closing).then(() => dispatch({ type: "CLOSE_WORKSPACE", workspaceId }));
+          void Promise.allSettled(closing).then(() => dispatch({ type: "DELETE_WORKSPACE", workspaceId }));
+        }}
+        onMoveWorkspace={(workspaceId, beforeId) => dispatch({ type: "MOVE_WORKSPACE", workspaceId, beforeId })}
+        onRemoveProjectFromWorkspace={(workspaceId, projectId) => {
+          const project = workspaces.find((item) => item.id === workspaceId)?.projects.find((item) => item.id === projectId);
+          const closing = project ? collectResourceIds(project.layout).map((id) => closeTerminal(id)) : [];
+          void Promise.allSettled(closing).then(() => dispatch({ type: "CLOSE_PROJECT_IN_WORKSPACE", workspaceId, projectId }));
         }}
         onRenameWorkspace={(workspaceId, name) => dispatch({ type: "RENAME_WORKSPACE", workspaceId, name })}
         attention={attention}
-        attentionByWorkspace={countByWorkspace}
         onFocusSession={focusSession}
         onDismissAttention={(item) => dismissAttention(item.sessionId)}
         onRunInTerminal={(title, command) => void runInTerminal(title, command).catch(() => undefined)}
@@ -264,10 +279,7 @@ export function App() {
         }}
         // Uma linha por conversa: as tentativas antigas do failover (uma sessão parada por troca
         // de conta) repetiam a mesma conversa dez vezes na lista.
-        activeSessionId={(() => {
-          const pane = activeProject ? findPane(activeProject.layout, activeProject.activePaneId) : null;
-          return pane?.tabs.find((tab) => tab.id === pane.activeTabId)?.resourceId ?? null;
-        })()}
+        activeSessionId={sessaoAtiva}
         terminalSessions={latestPerConversation(
           sessions.filter((session) => session.project_id === workspace.activeProjectId),
         )}
@@ -298,6 +310,7 @@ export function App() {
           const closing = project ? collectResourceIds(project.layout).map((id) => closeTerminal(id)) : [];
           void Promise.allSettled(closing).then(() => dispatch({ type: "CLOSE_PROJECT", projectId }));
         }}
+        onMoveProject={(projectId, beforeId) => dispatch({ type: "MOVE_PROJECT", projectId, beforeId })}
         onAttachTerminal={(sessionId, title) => {
           dispatch({ type: "ATTACH_TERMINAL", sessionId, title });
           setView("workspace");

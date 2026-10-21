@@ -74,6 +74,10 @@ pub struct TerminalSession {
     /// diálogo de aprovação. O desktop notifica quando ele muda — nunca por silêncio ou estado.
     #[serde(default)]
     pub attention_seq: u64,
+    /// Quando o último aviso aconteceu (turno terminado, aprovação, limite/erro novo) — o "há 5 min"
+    /// do Attention Center. Não é `last_activity_at_ms`: esse sobe a cada redesenho da TUI.
+    #[serde(default)]
+    pub attention_at_ms: u64,
     #[serde(default)]
     pub initial_command: Option<String>,
     /// Variáveis de ambiente injetadas no shell da PTY. É por aqui que o isolamento de conta

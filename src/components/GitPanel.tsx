@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { iconForPath } from "../features/files/fileIcons";
+import { iconForPath, iconStyle } from "../features/files/fileIcons";
 import { isRemoteProject } from "../features/projects/targetState";
 import {
   gitCommit,
@@ -232,5 +232,5 @@ function GitFileGroup({
 
 function FileIconDoCaminho({ path }: { path: string }) {
   const Icone = iconForPath(path);
-  return <Icone className="mr-1.5 inline-block h-3 w-3 shrink-0 align-[-2px] text-text-muted" aria-hidden />;
+  return <Icone className="mr-1.5 inline-block h-3 w-3 shrink-0 align-[-2px] text-text-muted" style={iconStyle(path)} aria-hidden />;
 }

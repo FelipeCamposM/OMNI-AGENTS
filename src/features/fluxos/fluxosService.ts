@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { engineApi } from "../terminal/terminalService";
 
-export type TipoDeNo = "entrada" | "agente" | "condicao" | "aprovacao" | "sala" | "pr" | "fim";
+export type TipoDeNo = "entrada" | "agente" | "condicao" | "aprovacao" | "sala" | "pr" | "comando" | "fim";
 
 export interface NoDoFluxo {
   id: string;
@@ -13,7 +13,11 @@ export interface NoDoFluxo {
   y: number;
 }
 export interface Conexao { de: string; para: string; saida?: string }
-export interface Fluxo { id: string; nome: string; descricao: string; nos: NoDoFluxo[]; conexoes: Conexao[] }
+export interface Fluxo {
+  id: string; nome: string; descricao: string; nos: NoDoFluxo[]; conexoes: Conexao[];
+  /** Roda direto na pasta do projeto, sem worktree (leva o que não foi commitado; mexe nos seus arquivos). */
+  na_pasta_do_projeto?: boolean;
+}
 export interface FluxoSalvo extends Fluxo { escopo: "global" | "projeto"; caminho: string }
 
 export type StatusDoNo = "pendente" | "rodando" | "concluido" | "falhou" | "pausado" | "aguardando";
@@ -38,7 +42,7 @@ export interface ItemDoHistorico { kind: "text" | "tool" | "command" | "notice";
 /** Saídas de cada tipo, na ordem em que aparecem no nó ("" = a saída normal). */
 export const SAIDAS: Record<TipoDeNo, string[]> = {
   entrada: [""], agente: [""], sala: [""], pr: [""], fim: [],
-  condicao: ["sim", "nao", "esgotado"], aprovacao: ["sim", "nao"],
+  condicao: ["sim", "nao", "esgotado"], comando: ["sim", "nao", "esgotado"], aprovacao: ["sim", "nao"],
 };
 
 export const TIPOS: { tipo: TipoDeNo; nome: string; dica: string }[] = [
@@ -47,6 +51,7 @@ export const TIPOS: { tipo: TipoDeNo; nome: string; dica: string }[] = [
   { tipo: "aprovacao", nome: "Aprovação", dica: "Para e espera você aprovar — no PC, na web ou no celular" },
   { tipo: "sala", nome: "Time", dica: "Agentes conversando em rodadas até o consenso; sai uma ata" },
   { tipo: "pr", nome: "Pull request", dica: "Commit, push e gh pr create no branch da execução" },
+  { tipo: "comando", nome: "Comando", dica: "Roda um comando (testes, build, script): deu certo → sim; falhou → não" },
   { tipo: "fim", nome: "Fim", dica: "Termina o fluxo" },
 ];
 

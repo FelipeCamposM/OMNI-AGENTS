@@ -1,7 +1,6 @@
 import {
   BookIcon,
   ChatIcon,
-  CheckIcon,
   CircuitIcon,
   ChevronDownIcon,
   CloseIcon,
@@ -16,7 +15,7 @@ import {
   SlidersIcon as Sliders,
   TerminalIcon,
 } from "./ui/PixelIcon";
-import { destaqueDaLinha, EtiquetaDoStatus, IconeDoStatus, ResumoDeAgentes, rotuloDoStatus, statusDaConversa } from "./ConversaStatus";
+import { destaqueDaLinha, EtiquetaDoStatus, haQuantoTempo, IconeDoStatus, ResumoDeAgentes, rotuloDoStatus, statusDaConversa } from "./ConversaStatus";
 import { conversationKey } from "../features/terminal/useAttention";
 import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
@@ -31,7 +30,7 @@ import type { Project, WorkspaceState } from "../types/workspace";
 import type { TerminalSession } from "../features/terminal/terminalService";
 import type { AttentionItem } from "../features/terminal/useAttention";
 import { WorkspaceList } from "./WorkspaceList";
-import { TodoList, useTodos } from "../features/todo/TodoList";
+import { arrastarParaOrdenar } from "../lib/ordenarArrastando";
 import { AttentionPanel } from "./AttentionPanel";
 import { FileTree } from "./FileTree";
 import { GitPanel } from "./GitPanel";
@@ -74,11 +73,14 @@ interface SidebarProps {
   workspaces: WorkspaceState[];
   activeWorkspaceId: string | null;
   onSelectWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: () => void;
-  onCloseWorkspace: (workspaceId: string) => void;
+  onCreateWorkspace: (name: string) => void;
+  onHideWorkspace: (workspaceId: string) => void;
+  onShowWorkspace: (workspaceId: string) => void;
+  onDeleteWorkspace: (workspaceId: string) => void;
+  onMoveWorkspace: (workspaceId: string, beforeId: string | null) => void;
+  onRemoveProjectFromWorkspace: (workspaceId: string, projectId: string) => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
   attention: AttentionItem[];
-  attentionByWorkspace: Record<string, number>;
   onFocusSession: (item: AttentionItem) => void;
   onDismissAttention: (item: AttentionItem) => void;
   /** Terminal novo no projeto ativo rodando `command` (logs/shell de container). */
@@ -105,6 +107,7 @@ interface SidebarProps {
   onAddProject: (path: string) => void;
   onSelectProject: (projectId: string) => void;
   onCloseProject: (projectId: string) => void;
+  onMoveProject: (projectId: string, beforeId: string | null) => void;
   onAttachTerminal: (sessionId: string, title: string) => void;
   onCloseTerminal: (sessionId: string) => void;
   onDuplicateTerminal: (sessionId: string) => void;
@@ -121,10 +124,13 @@ export function Sidebar({
   activeWorkspaceId,
   onSelectWorkspace,
   onCreateWorkspace,
-  onCloseWorkspace,
+  onHideWorkspace,
+  onShowWorkspace,
+  onDeleteWorkspace,
+  onMoveWorkspace,
+  onRemoveProjectFromWorkspace,
   onRenameWorkspace,
   attention,
-  attentionByWorkspace,
   onFocusSession,
   onDismissAttention,
   onRunInTerminal,
@@ -145,6 +151,7 @@ export function Sidebar({
   onAddProject,
   onSelectProject,
   onCloseProject,
+  onMoveProject,
   onAttachTerminal,
   onCloseTerminal,
   onDuplicateTerminal,
@@ -159,7 +166,6 @@ export function Sidebar({
   const naoVistas = new Set(attention.map((item) => item.conversationKey));
 
   const [pickerAberto, setPickerAberto] = useState(false);
-  const todos = useTodos();
   // Nome de cada conta, para a segunda linha da conversa dizer em qual ela roda.
   const [contas, setContas] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -221,17 +227,21 @@ export function Sidebar({
 
       {/* Nav */}
       <nav ref={navRef} className="px-2 py-3 flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-3">
-        <AttentionPanel items={attention} onFocusSession={onFocusSession} onDismiss={onDismissAttention} />
+        <AttentionPanel items={attention} agora={agora} onFocusSession={onFocusSession} onDismiss={onDismissAttention} />
 
         <WorkspaceList
           workspaces={workspaces}
           activeWorkspaceId={activeWorkspaceId}
-          attentionByWorkspace={attentionByWorkspace}
+          attention={attention}
           agentSessions={agentSessions}
           naoVistas={naoVistas}
           onSelect={onSelectWorkspace}
           onCreate={onCreateWorkspace}
-          onClose={onCloseWorkspace}
+          onHide={onHideWorkspace}
+          onShow={onShowWorkspace}
+          onDelete={onDeleteWorkspace}
+          onMove={onMoveWorkspace}
+          onRemoveProject={onRemoveProjectFromWorkspace}
           onRename={onRenameWorkspace}
         />
 
@@ -254,6 +264,8 @@ export function Sidebar({
           ) : (
             projects.map((project) => (
               <div key={project.id}
+                data-ordem="projetos" data-ordem-id={project.id}
+                onPointerDown={(evento) => arrastarParaOrdenar(evento, "projetos", project.id, onMoveProject)}
                 className={`lateral-item group mx-1 flex items-stretch border-l-2 ring-1 ring-inset transition-colors ${
                   project.id === activeProjectId
                     ? "lateral-item-ativo border-accent ring-accent/50"
@@ -265,7 +277,8 @@ export function Sidebar({
                   aria-current={project.id === activeProjectId ? "page" : undefined}
                   onClick={() => onSelectProject(project.id)}
                   className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                  title={project.path}
+                  title={`${project.path}
+Arraste para mudar a ordem`}
                 >
                   <span className="lateral-avatar grid h-8 w-8 shrink-0 place-items-center border border-border-subtle">
                     <FolderIcon className="h-3.5 w-3.5 text-accent" aria-hidden />
@@ -296,11 +309,6 @@ export function Sidebar({
           )}
         </div>
 
-        {/* Suas tarefas, não as do agente (Kanban): valem em qualquer workspace/projeto. */}
-        <SidebarSection label="TAREFAS" icon={CheckIcon} disabled={false} contagem={todos.pendentes}>
-          <TodoList {...todos} />
-        </SidebarSection>
-
         {SECTIONS.map((section) => (
           <SidebarSection key={section} label={section} icon={SECTION_ICON[section]} disabled={!activeProjectId}
             contagem={section === "CHATS" || section === "TERMINALS"
@@ -309,7 +317,10 @@ export function Sidebar({
             {/* CHATS = conversas com um agente de IA; TERMINALS = shells (npm run dev, git…). */}
             {(section === "CHATS" || section === "TERMINALS")
               && terminalSessions.some((session) => Boolean(session.provider) === (section === "CHATS"))
-              ? terminalSessions.filter((session) => Boolean(session.provider) === (section === "CHATS")).map((session) => (
+              ? terminalSessions.filter((session) => Boolean(session.provider) === (section === "CHATS"))
+                  // Conversas: a mexida por último primeiro. Terminais ficam na ordem em que foram abertos.
+                  .sort((a, b) => section === "CHATS" ? (b.last_activity_at_ms ?? 0) - (a.last_activity_at_ms ?? 0) : 0)
+                  .map((session) => (
                   <div key={session.id}
                     className={`lateral-item group relative mx-1 flex items-stretch border-l-2 ring-1 ring-inset transition-colors ${
                       session.id === activeSessionId
@@ -507,15 +518,6 @@ function corDaSituacao(status: ReturnType<typeof statusDaConversa>, state: Termi
   if (status === "interrompido") return "text-danger";
   if (status === "finalizado") return "text-accent";
   return "";
-}
-
-/** "agora", "5 min", "3 h", "2 d" — curto, cabe na segunda linha da lateral. */
-function haQuantoTempo(ms: number, agora: number): string {
-  const minutos = Math.floor(Math.max(0, agora - ms) / 60_000);
-  if (minutos < 1) return "agora";
-  if (minutos < 60) return `${minutos} min`;
-  if (minutos < 24 * 60) return `${Math.floor(minutos / 60)} h`;
-  return `${Math.floor(minutos / (24 * 60))} d`;
 }
 
 function SidebarSection({

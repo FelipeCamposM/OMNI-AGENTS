@@ -145,7 +145,9 @@ pub fn iniciar(state: &Arc<EngineState>, fluxo: Fluxo, projeto: String, projeto_
     let tem_git = git(&projeto, &["rev-parse", "--is-inside-work-tree"]).is_ok_and(|s| s == "true");
     let tem_pr = fluxo.nos.iter().any(|n| n.tipo == TipoDeNo::Pr);
     if tem_pr && !tem_git { return Err(anyhow!("Este fluxo abre um PR, mas o projeto não é um repositório git")); }
-    let (pasta, branch, base) = if tem_git {
+    let (pasta, branch, base) = if tem_git && fluxo.na_pasta_do_projeto {
+        (projeto.clone(), None, Some(git(&projeto, &["rev-parse", "--abbrev-ref", "HEAD"])?))
+    } else if tem_git {
         let base = git(&projeto, &["rev-parse", "--abbrev-ref", "HEAD"])?;
         let branch = format!("omni/{}-{}", fluxo.id, &id[id.len() - 4..]);
         let pasta = state.state_file.with_file_name("worktrees").join(&id);
@@ -248,6 +250,25 @@ fn processar(state: &Arc<EngineState>, v: &Viva, passo: &Passo) -> Result<()> {
         }
         TipoDeNo::Sala => { let ata = rodar_sala(state, v, &no, &ctx, &pasta, &projeto)?; definir_saida(state, v, &no.id, ata); String::new() }
         TipoDeNo::Pr => { let url = abrir_pr(v, &no)?; mexer(state, v, |e| e.pr_url = Some(url.clone())); definir_saida(state, v, &no.id, url); String::new() }
+        TipoDeNo::Comando => {
+            let comando = no.config["comando"].as_str().unwrap_or_default().to_owned();
+            let (ok, saida) = rodar_comando(state, v, &no.id, &comando, &pasta)?;
+            let max = no.config["max_voltas"].as_u64().unwrap_or(3).max(1) as u32;
+            let caminho = mexer(state, v, |e| {
+                let n = e.nos.get_mut(&no.id).expect("no");
+                if ok { "sim" } else { n.voltas += 1; if n.voltas >= max { "esgotado" } else { "nao" } }
+            });
+            // Falhou e ninguém trata essa saída: a execução falha (dá para retomar) em vez de
+            // terminar como "concluída" com o build quebrado.
+            let tratado = v.lock().map(|e| !fluxos::proximos(&e.fluxo, &no.id, caminho).is_empty()).unwrap_or(false);
+            if !ok && !tratado {
+                let ultima = saida.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("sem saída").to_owned();
+                definir_saida(state, v, &no.id, saida);
+                return Err(anyhow!("o comando falhou: {ultima}"));
+            }
+            definir_saida(state, v, &no.id, saida);
+            caminho.to_owned()
+        }
     };
     seguir(state, v, &no.id, &caminho);
     Ok(())
@@ -402,6 +423,56 @@ fn rodar_agente(state: &EngineState, v: &Viva, no: &str, agente: &str, prompt: &
     Ok(final_texto)
 }
 
+/// Etapa Comando: o shell do sistema roda `comando` na pasta da execução, com stdout e stderr juntos
+/// no log da etapa. Devolve se saiu com 0 e o fim da saída (o erro, quando falha). O comando é o que
+/// está salvo no fluxo — nada digitado ao executar entra nele, então não há injeção pela tarefa.
+fn rodar_comando(state: &EngineState, v: &Viva, no: &str, comando: &str, pasta: &str) -> Result<(bool, String)> {
+    #[cfg(windows)]
+    let mut c = { use std::os::windows::process::CommandExt; let mut c = Command::new("cmd"); c.raw_arg(format!("/D /S /C \"{comando}\"")); c };
+    #[cfg(not(windows))]
+    let mut c = { let mut c = Command::new("sh"); c.arg("-c").arg(comando); c };
+    c.current_dir(pasta).env("NO_COLOR", "1").env("FORCE_COLOR", "0").env("CI", "1")
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    sem_janela(&mut c);
+    let mut filho = c.spawn().with_context(|| format!("não consegui rodar: {comando}"))?;
+    let run_id = v.lock().map_err(|_| anyhow!("execucao"))?.id.clone();
+    processos().lock().expect("processos").insert(run_id.clone(), filho.id());
+    mexer(state, v, |e| if let Some(n) = e.nos.get_mut(no) { n.atividade = format!("$ {comando}"); });
+
+    let log = pasta_execucoes(state).join(&run_id);
+    let _ = fs::create_dir_all(&log);
+    let mut arquivo = fs::OpenOptions::new().create(true).append(true).open(log.join(format!("{no}.log")))?;
+    let _ = writeln!(arquivo, "{}", json!({"type": "comando", "text": format!("$ {comando}")}));
+    // As duas saídas num canal só, na ordem em que chegam.
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let leitores: Vec<_> = [filho.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>), filho.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>)]
+        .into_iter().flatten().map(|fonte| {
+            let tx = tx.clone();
+            std::thread::spawn(move || for linha in std::io::BufReader::new(fonte).lines().map_while(std::result::Result::ok) { if tx.send(linha).is_err() { break; } })
+        }).collect();
+    drop(tx);
+    let mut saida = String::new();
+    let mut ultima_tela = std::time::Instant::now();
+    for linha in rx {
+        let _ = writeln!(arquivo, "{}", json!({"type": "saida", "text": linha}));
+        saida.push_str(&linha);
+        saida.push('\n');
+        if saida.len() > 64_000 { saida = fluxos::cauda(&saida, 32_000).to_owned(); }
+        // ponytail: a atividade vai para o JSON da execução em disco — no máximo 2x por segundo.
+        if !linha.trim().is_empty() && ultima_tela.elapsed() >= std::time::Duration::from_millis(500) {
+            ultima_tela = std::time::Instant::now();
+            mexer(state, v, |e| if let Some(n) = e.nos.get_mut(no) { n.atividade = linha.chars().take(200).collect(); });
+        }
+    }
+    for l in leitores { let _ = l.join(); }
+    let status = filho.wait()?;
+    processos().lock().expect("processos").remove(&run_id);
+    if v.lock().map(|e| e.status != "rodando").unwrap_or(true) { return Err(anyhow!(PAUSADO)); }
+    let fim = format!("{}\n{}", fluxos::cauda(&saida, 12_000).trim_end(), if status.success() { "✓ terminou sem erro".to_owned() } else { format!("✗ saiu com código {}", status.code().unwrap_or(-1)) });
+    let _ = writeln!(arquivo, "{}", json!({"type": "comando", "text": fim.lines().last().unwrap_or_default()}));
+    Ok((status.success(), fim))
+}
+
 /// Time conversando: cada participante fala na sua vez, rodada após rodada, até todos concordarem
 /// numa rodada ou acabar o limite. O primeiro participante escreve a ata.
 fn rodar_sala(state: &EngineState, v: &Viva, no: &fluxos::No, ctx: &Contexto, pasta: &str, projeto: &str) -> Result<String> {
@@ -516,6 +587,8 @@ pub fn historico(state: &EngineState, id: &str, no: &str) -> Result<Vec<Value>> 
         let Ok(ev) = serde_json::from_str::<Value>(linha) else { continue };
         match ev["type"].as_str() {
             Some("assistant") | Some("user") => itens.extend(omni_core::feed::items(&ev, "claude").into_iter().map(|i| json!(i))),
+            Some("comando") => itens.push(json!({"kind": "notice", "role": "assistant", "text": ev["text"]})),
+            Some("saida") => itens.push(json!({"kind": "tool", "role": "assistant", "tool": "›", "text": ev["text"]})),
             Some("result") => itens.push(json!({"kind": "notice", "role": "assistant", "text": format!("Terminou em {} turnos · US$ {:.2}", ev["num_turns"], ev["total_cost_usd"].as_f64().unwrap_or(0.0))})),
             Some("item.completed") => {
                 let item = &ev["item"];
@@ -558,6 +631,39 @@ mod tests {
         serde_json::from_value(json!({"id": "t", "nome": "T", "nos": [
             {"id": "e", "tipo": "entrada"}, {"id": "a", "tipo": "aprovacao"}, {"id": "f", "tipo": "fim"}],
             "conexoes": [{"de": "e", "para": "a"}, {"de": "a", "para": "f", "saida": "sim"}]})).unwrap()
+    }
+
+    /// Comando de verdade no shell do sistema: passou → segue por `sim` com a saída gravada; falhou
+    /// sem caminho ligado → a execução falha (não "conclui" com o build quebrado); falhou com `nao`
+    /// ligado → segue por ele e conta a volta.
+    #[test]
+    fn comando_segue_pelo_codigo_de_saida() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(EngineState { persist_lock: Mutex::new(()), mobile: mobile::MobileRuntime::new(dir.path()),
+            token: "t".into(), state_file: dir.path().join("sessions.json"), sessions: Mutex::new(HashMap::new()), id_sequence: AtomicU64::new(1) });
+        let projeto = dir.path().join("proj");
+        fs::create_dir_all(&projeto).unwrap();
+        let fluxo = |comando: &str, com_nao: bool| -> Fluxo {
+            let mut conexoes = vec![json!({"de": "e", "para": "c"}), json!({"de": "c", "para": "f", "saida": "sim"})];
+            if com_nao { conexoes.push(json!({"de": "c", "para": "f", "saida": "nao"})); }
+            serde_json::from_value(json!({"id": "c", "nome": "C", "na_pasta_do_projeto": true, "nos": [
+                {"id": "e", "tipo": "entrada"}, {"id": "c", "tipo": "comando", "config": {"comando": comando}}, {"id": "f", "tipo": "fim"}],
+                "conexoes": conexoes})).unwrap()
+        };
+        let ate_parar = |id: &str| { for _ in 0..250 { let e = obter(id).unwrap(); if e.status != "rodando" { return e; } std::thread::sleep(std::time::Duration::from_millis(20)); } panic!("não parou"); };
+        let rodar = |f: Fluxo| ate_parar(&iniciar(&state, f, projeto.to_string_lossy().into(), "p".into(), "x".into()).unwrap().id);
+
+        let ok = rodar(fluxo("echo ola-do-teste", false));
+        assert_eq!((ok.status.as_str(), ok.nos["c"].caminho.as_deref(), ok.pasta.as_str()), ("concluido", Some("sim"), &*projeto.to_string_lossy()));
+        assert!(ok.nos["c"].saida.contains("ola-do-teste"), "{}", ok.nos["c"].saida);
+        assert!(historico(&state, &ok.id, "c").unwrap().iter().any(|i| i["text"] == "ola-do-teste"));
+
+        let quebrou = rodar(fluxo("exit 3", false));
+        assert_eq!(quebrou.status, "falhou");
+        assert!(quebrou.erro.unwrap_or_default().contains("falhou"));
+
+        let tratado = rodar(fluxo("exit 3", true));
+        assert_eq!((tratado.status.as_str(), tratado.nos["c"].caminho.as_deref(), tratado.nos["c"].voltas), ("concluido", Some("nao"), 1));
     }
 
     /// Sem CLI nenhuma: entrada → aprovação para e espera; aprovar segue até o fim. Estado gravado

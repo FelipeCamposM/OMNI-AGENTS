@@ -116,9 +116,11 @@ function normalizeCollection(raw: unknown): WorkspaceCollection | null {
   // diferente do "tudo ou nada" de isWorkspace, proporcional a uma lista de N itens.
   const workspaces = candidate.workspaces.filter(isWorkspace);
   if (workspaces.length === 0) return { version: 1, workspaces: [emptyWorkspace()], activeWorkspaceId: null };
-  const activeWorkspaceId = workspaces.some((workspace) => workspace.id === candidate.activeWorkspaceId)
+  // Todos escondidos (gravação antiga ou editada à mão): o primeiro volta, senão a lateral fica vazia.
+  if (workspaces.every((workspace) => workspace.hidden)) workspaces[0] = { ...workspaces[0], hidden: false };
+  const activeWorkspaceId = workspaces.some((workspace) => workspace.id === candidate.activeWorkspaceId && !workspace.hidden)
     ? (candidate.activeWorkspaceId as string)
-    : workspaces[0].id;
+    : workspaces.find((workspace) => !workspace.hidden)!.id;
   return { version: 1, workspaces, activeWorkspaceId };
 }
 

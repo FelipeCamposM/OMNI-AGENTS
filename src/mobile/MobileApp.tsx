@@ -1030,7 +1030,7 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
         )}
       </>}
       // Sessão ligada = há `capabilities` (engine antigo não manda `live`).
-      direita={conversation.capabilities && <ModoDoAgente modo={conversation.mode} pronto={Boolean(conversation.capabilities?.prompt) && !busy} onModo={trocarModo} />}
+      direita={conversation.capabilities && <ModoDoAgente provider={conversation.provider} modo={conversation.mode} pronto={Boolean(conversation.capabilities?.prompt) && !busy} onModo={trocarModo} />}
       onParar={trabalhando && conversation.live ? () => { setParando(true); void interromper().finally(() => setParando(false)); } : undefined}
       parando={parando}
       buscarArquivos={buscarArquivos}
@@ -1046,7 +1046,9 @@ function temArquivos(dados: DataTransfer | null): boolean {
 
 /** Plano e automático — o que o `shift+tab` alterna no terminal; os dois do dia a dia. Travado sem
  *  tela reconhecida: tecla no meio de um turno não é para o agente. */
-export function ModoDoAgente({ modo, pronto, onModo }: { modo?: string | null; pronto: boolean; onModo: (alvo: "plan" | "auto") => Promise<void> }) {
+export function ModoDoAgente({ provider, modo, pronto, onModo }: { provider?: string | null; modo?: string | null; pronto: boolean; onModo: (alvo: "plan" | "auto") => Promise<void> }) {
+  // Auto do Codex é o "Approve for me" do `/permissions`: um revisor só pergunta o que for arriscado.
+  const codex = provider === "codex";
   // O terminal leva um instante para confirmar a troca: o botão escolhido acende na hora (e pulsa
   // até a confirmação), em vez de o clique parecer ignorado.
   const [pedido, setPedido] = useState<"plan" | "auto" | null>(null);
@@ -1061,7 +1063,7 @@ export function ModoDoAgente({ modo, pronto, onModo }: { modo?: string | null; p
           setPedido(alvo);
           void onModo(alvo).finally(() => setPedido(null));
         }}
-        title={alvo === "plan" ? "Plano: o agente planeja e pergunta antes de mexer" : "Auto: o agente executa sem pedir aprovação"}>
+        title={alvo === "plan" ? "Plano: o agente planeja e pergunta antes de mexer" : codex ? "Auto: o Codex só pede aprovação do que for arriscado (Approve for me)" : "Auto: o agente executa sem pedir aprovação"}>
         {alvo === "plan" ? <NotesIcon aria-hidden className="h-3.5 w-3.5" /> : <PlayIcon aria-hidden className="h-3.5 w-3.5" />}
         <span>{alvo === "plan" ? "Plano" : "Auto"}</span>
       </button>

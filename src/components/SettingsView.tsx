@@ -12,14 +12,16 @@ import { SkillsManager } from "../features/skills/SkillsManager";
 import { ExtensoesSettings } from "../features/extensoes/ExtensoesSettings";
 import { MobileSettings } from "../features/mobile/MobileSettings";
 import { testarAviso } from "../features/terminal/useAttentionNotifier";
-import { BlocksIcon, BookIcon, BrushIcon, ChartIcon, CloseIcon, SparkleIcon, GearIcon, GlobeIcon, KeyboardIcon, RobotIcon, SlidersIcon, StarIcon } from "./ui/PixelIcon";
+import { BlocksIcon, BookIcon, BrushIcon, ChartIcon, CloseIcon, DatabaseIcon, SparkleIcon, GearIcon, GlobeIcon, KeyboardIcon, RobotIcon, SlidersIcon, StarIcon } from "./ui/PixelIcon";
 import { RelatoriosIa } from "../features/relatorios/RelatoriosIa";
+import { Armazenamento } from "../features/armazenamento/Armazenamento";
 import { ModelosDeAgentes } from "../features/agentes/ModelosDeAgentes";
 import { request } from "../mobile/api";
 import type { EstadoDaVoz } from "../mobile/voz";
+import { VocabularioCard } from "../features/voz/VocabularioCard";
 import { SHORTCUTS, comboFromEvent, setRecordingShortcut, shortcutFor, type ShortcutId } from "../lib/shortcuts";
 
-type SectionId = "geral" | "aparencia" | "agentes" | "modelos" | "extensoes" | "skills" | "mobile" | "relatorios" | "atalhos" | "sobre";
+type SectionId = "geral" | "aparencia" | "agentes" | "modelos" | "extensoes" | "skills" | "mobile" | "relatorios" | "armazenamento" | "atalhos" | "sobre";
 
 type Icone = React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
 
@@ -34,6 +36,7 @@ const SECTIONS: { id: SectionId; label: string; desc: string; icon: Icone }[] = 
   { id: "skills", label: "Skills", desc: "Skills do Claude e do projeto", icon: BookIcon },
   { id: "mobile", label: "Acesso remoto", desc: "Celular e outro computador", icon: GlobeIcon },
   { id: "relatorios", label: "Relatórios", desc: "Uso de IA por dia, contas e commits", icon: ChartIcon },
+  { id: "armazenamento", label: "Armazenamento", desc: "Espaço das conversas por IA e conta", icon: DatabaseIcon },
   { id: "atalhos", label: "Atalhos", desc: "Teclas do app", icon: KeyboardIcon },
   { id: "sobre", label: "Sobre", desc: "Versão, novidades e atualização", icon: StarIcon },
 ];
@@ -143,12 +146,13 @@ export function SettingsView({ settings, onChange, onReset, initialSection, proj
           </div>
           {section === "geral" && <GeralSection settings={settings} onChange={onChange} />}
           {section === "aparencia" && <AparenciaSection settings={settings} onChange={onChange} />}
-          {section === "agentes" && <><AgentConnections /><CompactacaoCard /></>}
+          {section === "agentes" && <div className="settings-grade"><AgentConnections /><div className="settings-largo"><CompactacaoCard /></div></div>}
           {section === "modelos" && <ModelosDeAgentes projectPath={projectPath} />}
           {section === "extensoes" && <ExtensoesSettings projectPath={projectPath} />}
           {section === "skills" && <SkillsManager projectPath={projectPath} />}
           {section === "mobile" && <MobileSettings accent={settings.accent} />}
           {section === "relatorios" && <RelatoriosIa projectPaths={projectPaths} />}
+          {section === "armazenamento" && <Armazenamento />}
           {section === "atalhos" && <AtalhosSection settings={settings} onChange={onChange} />}
           {section === "sobre" && <SobreSection onReset={onReset} />}
         </div>
@@ -385,6 +389,7 @@ function GeralSection({ settings, onChange }: SectionProps) {
       </Card>
 
       <VozCard />
+      <VocabularioCard />
 
     </div>
   );

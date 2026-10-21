@@ -1,0 +1,185 @@
+/* ── Tarefas (barra superior) ────────────────────────────────────────────────
+   Botão com contador, painel por cima da tela e o seletor de prazo (calendário + rodas no
+   formato do timer do iPhone). Curvas curtas e com "assentamento" (cubic-bezier .2,.8,.3,1),
+   iguais aos popovers; a regra global de animações desligadas (index.css) zera tudo isto. */
+.tarefas-botao {
+  position: relative; display: inline-flex; align-items: center; gap: .375rem; height: 26px; padding: 0 .5rem;
+  font-size: .6875rem; color: rgb(var(--c-text-secondary)); background: none; border: 2px solid transparent; cursor: pointer;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+.tarefas-botao:hover { color: rgb(var(--c-text-primary)); background: rgb(var(--c-overlay) / .07); }
+.tarefas-botao:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: -2px; }
+.tarefas-botao-aberto { color: rgb(var(--c-text-primary)); border-color: rgb(var(--c-accent) / .55); background: rgb(var(--c-accent) / .1); }
+/* Com pendência: um halo que respira devagar. Sem balançar: lembrete, não alarme. */
+.tarefas-botao-pendente { color: rgb(var(--c-accent)); animation: tarefas-respira 3.6s ease-in-out infinite; }
+.tarefas-botao-pendente.tarefas-botao-aberto { animation: none; }
+@keyframes tarefas-respira {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(var(--c-accent) / 0); background-color: transparent; }
+  50% { box-shadow: 0 0 14px 0 rgb(var(--c-accent) / .28); background-color: rgb(var(--c-accent) / .08); }
+}
+@media (max-width: 900px) { .tarefas-botao-nome { display: none; } }
+.tarefas-contador {
+  min-width: 16px; height: 16px; padding: 0 4px; font-size: 9px; font-weight: 700; line-height: 16px; text-align: center;
+  color: #fff; background: rgb(var(--c-accent)); animation: tarefas-pula 320ms cubic-bezier(.3, 1.6, .5, 1);
+}
+.tarefas-contador-atrasada { background: rgb(var(--c-danger)); }
+@keyframes tarefas-pula { 0% { transform: scale(.4); opacity: 0; } 60% { transform: scale(1.18); opacity: 1; } 100% { transform: scale(1); } }
+
+.tarefas-painel {
+  z-index: 60; display: flex; flex-direction: column; max-height: min(640px, calc(100vh - 64px));
+  background-color: rgb(var(--c-bg-elevated)); border: 2px solid rgb(var(--c-border));
+  box-shadow: 0 18px 48px -12px rgb(0 0 0 / .55), 4px 4px 0 0 rgb(var(--c-outline) / .6);
+  transform-origin: top right; animation: tarefas-painel-entra 220ms cubic-bezier(.2, .8, .3, 1);
+}
+.tarefas-painel-saindo { animation: tarefas-painel-sai 160ms cubic-bezier(.4, 0, 1, 1) forwards; }
+@keyframes tarefas-painel-entra { from { opacity: 0; transform: translateY(-8px) scale(.96); } to { opacity: 1; transform: none; } }
+@keyframes tarefas-painel-sai { to { opacity: 0; transform: translateY(-6px) scale(.97); } }
+.tarefas-painel-topo { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .875rem 1rem .625rem; border-bottom: 2px solid rgb(var(--c-border-subtle)); }
+.tarefas-painel-resumo { display: block; margin-top: .125rem; font-size: .6875rem; color: rgb(var(--c-text-muted)); }
+.tarefas-fechar { display: grid; place-items: center; width: 26px; height: 26px; color: rgb(var(--c-text-muted)); background: none; border: 0; cursor: pointer; }
+.tarefas-fechar:hover { color: rgb(var(--c-text-primary)); background: rgb(var(--c-overlay) / .08); }
+
+.tarefas-corpo { display: flex; flex-direction: column; min-height: 0; }
+.tarefas-nova { display: flex; gap: .375rem; padding: .75rem 1rem; }
+.tarefas-campo {
+  flex: 1; min-width: 0; padding: .4375rem .625rem; font-size: .75rem; color: rgb(var(--c-text-primary));
+  background: rgb(var(--c-overlay) / .04); border: 2px solid rgb(var(--c-border-subtle)); outline: none; transition: border-color 120ms ease;
+}
+.tarefas-campo::placeholder { color: rgb(var(--c-text-muted)); }
+.tarefas-campo:focus-visible { border-color: rgb(var(--c-accent)); }
+.tarefas-prazo-botao {
+  display: inline-flex; align-items: center; gap: .375rem; height: 100%; min-height: 34px; padding: 0 .625rem; font-size: .6875rem;
+  color: rgb(var(--c-text-muted)); background: rgb(var(--c-overlay) / .04); border: 2px solid rgb(var(--c-border-subtle)); cursor: pointer; white-space: nowrap;
+  transition: color 120ms ease, border-color 120ms ease, background-color 120ms ease;
+}
+.tarefas-prazo-botao:hover, .tarefas-prazo-botao[aria-expanded="true"] { color: rgb(var(--c-text-primary)); border-color: rgb(var(--c-accent) / .6); }
+.tarefas-prazo-botao-ativo { color: rgb(var(--c-accent)); border-color: rgb(var(--c-accent) / .5); background: rgb(var(--c-accent) / .08); }
+
+.tarefas-lista { overflow-y: auto; padding: 0 .5rem .75rem; overscroll-behavior: contain; }
+.tarefas-vazio { padding: 1.75rem 1rem; font-size: .75rem; text-align: center; color: rgb(var(--c-text-muted)); }
+.tarefas-grupo + .tarefas-grupo { margin-top: .5rem; }
+.tarefas-grupo-titulo { display: flex; align-items: center; gap: .5rem; padding: .5rem .5rem .375rem; font-size: .625rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: rgb(var(--c-text-muted)); }
+.tarefas-grupo[data-grupo="atrasadas"] .tarefas-grupo-titulo { color: rgb(var(--c-danger)); }
+.tarefas-grupo[data-grupo="hoje"] .tarefas-grupo-titulo { color: rgb(var(--c-warning)); }
+.tarefas-grupo-conta { padding: 0 .3125rem; font-size: .5625rem; background: rgb(var(--c-overlay) / .08); }
+.tarefas-limpar { margin-left: auto; font-size: .625rem; font-weight: 500; letter-spacing: 0; text-transform: none; color: rgb(var(--c-text-muted)); background: none; border: 0; cursor: pointer; }
+.tarefas-limpar:hover { color: rgb(var(--c-text-primary)); }
+.tarefas-grupo ul { display: flex; flex-direction: column; gap: .25rem; }
+
+.tarefa {
+  display: flex; align-items: center; gap: .25rem; padding-right: .25rem; border-left: 2px solid rgb(var(--c-accent));
+  background: rgb(var(--c-overlay) / .03); box-shadow: inset 0 0 0 1px rgb(var(--c-border-subtle) / .5);
+  animation: tarefa-entra 240ms cubic-bezier(.2, .8, .3, 1);
+  transition: background-color 120ms ease, opacity 200ms ease, box-shadow 120ms ease;
+}
+.tarefa:hover { background: rgb(var(--c-overlay) / .06); box-shadow: inset 0 0 0 1px rgb(var(--c-border-subtle)); }
+.tarefa[data-tom="atrasada"] { border-left-color: rgb(var(--c-danger)); }
+.tarefa[data-tom="hoje"] { border-left-color: rgb(var(--c-warning)); }
+.tarefa-feita { border-left-color: transparent; opacity: .62; }
+.tarefa-saindo { animation: tarefa-sai 200ms cubic-bezier(.4, 0, 1, 1) forwards; pointer-events: none; }
+@keyframes tarefa-entra { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+@keyframes tarefa-sai { to { opacity: 0; transform: translateX(16px); } }
+.tarefa-marca { display: flex; flex: 1; min-width: 0; align-items: flex-start; gap: .5rem; padding: .5rem .5rem .5rem .625rem; cursor: pointer; }
+.tarefa-caixa {
+  display: grid; place-items: center; flex-shrink: 0; width: 15px; height: 15px; margin-top: 1px; color: transparent;
+  border: 2px solid rgb(var(--c-border)); transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms cubic-bezier(.3, 1.6, .5, 1);
+}
+.tarefa-marca:hover .tarefa-caixa { border-color: rgb(var(--c-accent)); }
+.peer:focus-visible + .tarefa-caixa { outline: 2px solid rgb(var(--c-accent)); outline-offset: 1px; }
+.peer:checked + .tarefa-caixa { color: rgb(var(--c-success)); border-color: rgb(var(--c-success)); background: rgb(var(--c-success) / .2); transform: scale(1.12); }
+.peer:checked + .tarefa-caixa svg { animation: tarefa-check 260ms cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes tarefa-check { from { transform: scale(0) rotate(-20deg); } to { transform: none; } }
+.tarefa-texto { min-width: 0; flex: 1; overflow-wrap: anywhere; font-size: .75rem; line-height: 1.125rem; color: rgb(var(--c-text-primary)); transition: color 160ms ease; }
+.tarefa-feita .tarefa-texto { color: rgb(var(--c-text-muted)); text-decoration: line-through; }
+.tarefa-prazo {
+  display: inline-flex; align-items: center; gap: .3125rem; padding: .1875rem .375rem; font-size: .625rem; white-space: nowrap;
+  color: rgb(var(--c-text-secondary)); background: rgb(var(--c-overlay) / .06); border: 0; cursor: pointer; transition: color 120ms ease, background-color 120ms ease, opacity 120ms ease;
+}
+.tarefa-prazo:hover, .tarefa-prazo[aria-expanded="true"] { color: rgb(var(--c-text-primary)); background: rgb(var(--c-overlay) / .12); }
+.tarefa[data-tom="atrasada"] .tarefa-prazo { color: rgb(var(--c-danger)); background: rgb(var(--c-danger) / .12); }
+.tarefa[data-tom="hoje"] .tarefa-prazo { color: rgb(var(--c-warning)); background: rgb(var(--c-warning) / .12); }
+.tarefa-prazo-vazio { opacity: 0; }
+.tarefa:hover .tarefa-prazo-vazio, .tarefa:focus-within .tarefa-prazo-vazio, .tarefa-prazo-vazio[aria-expanded="true"] { opacity: .7; }
+.tarefa-apagar { display: grid; place-items: center; width: 24px; height: 24px; color: rgb(var(--c-text-muted)); background: none; border: 0; cursor: pointer; opacity: 0; transition: opacity 120ms ease, color 120ms ease; }
+.tarefa:hover .tarefa-apagar, .tarefa:focus-within .tarefa-apagar { opacity: .65; }
+.tarefa-apagar:hover { color: rgb(var(--c-danger)); opacity: 1; }
+.tarefa-copiar { display: grid; place-items: center; width: 24px; height: 24px; color: rgb(var(--c-text-muted)); background: none; border: 0; cursor: pointer; opacity: 0; transition: opacity 120ms ease, color 120ms ease; }
+.tarefa:hover .tarefa-copiar, .tarefa:focus-within .tarefa-copiar { opacity: .65; }
+.tarefa-copiar:hover { color: rgb(var(--c-accent)); opacity: 1; }
+.tarefa-copiar:focus-visible { opacity: 1; outline: 2px solid rgb(var(--c-accent)); outline-offset: -2px; }
+.tarefa-copiada, .tarefa:hover .tarefa-copiada { color: rgb(var(--c-success)); opacity: 1; }
+.tarefa-copiada svg { animation: tarefa-check 260ms cubic-bezier(.3, 1.6, .5, 1); }
+.tarefa-apagar:focus-visible, .tarefa-prazo:focus-visible { opacity: 1; outline: 2px solid rgb(var(--c-accent)); outline-offset: -2px; }
+
+/* Seletor de prazo */
+.prazo-pop {
+  z-index: 70; width: 288px; padding: .75rem; background-color: rgb(var(--c-bg-elevated)); border: 2px solid rgb(var(--c-border));
+  box-shadow: 0 18px 40px -10px rgb(0 0 0 / .6), 4px 4px 0 0 rgb(var(--c-outline) / .6);
+  transform-origin: top right; animation: prazo-entra 200ms cubic-bezier(.2, .8, .3, 1);
+}
+.prazo-pop[data-lado="cima"] { transform-origin: bottom right; animation-name: prazo-entra-cima; }
+@keyframes prazo-entra { from { opacity: 0; transform: translateY(-6px) scale(.95); } to { opacity: 1; transform: none; } }
+@keyframes prazo-entra-cima { from { opacity: 0; transform: translateY(6px) scale(.95); } to { opacity: 1; transform: none; } }
+.prazo-atalhos { display: flex; flex-wrap: wrap; gap: .3125rem; margin-bottom: .625rem; }
+.prazo-atalho {
+  padding: .25rem .5rem; font-size: .625rem; color: rgb(var(--c-text-secondary)); background: rgb(var(--c-overlay) / .05);
+  border: 2px solid rgb(var(--c-border-subtle)); cursor: pointer; transition: color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+.prazo-atalho:hover { color: rgb(var(--c-text-primary)); border-color: rgb(var(--c-accent) / .6); }
+.prazo-atalho:active { transform: scale(.96); }
+.prazo-atalho-tirar:hover { border-color: rgb(var(--c-danger) / .6); color: rgb(var(--c-danger)); }
+
+.cal { overflow: hidden; }
+.cal-topo { display: flex; align-items: center; justify-content: space-between; margin-bottom: .375rem; }
+.cal-titulo { font-size: .75rem; font-weight: 600; color: rgb(var(--c-text-primary)); }
+.cal-seta { display: grid; place-items: center; width: 24px; height: 24px; color: rgb(var(--c-text-secondary)); background: none; border: 0; cursor: pointer; transition: color 120ms ease, background-color 120ms ease; }
+.cal-seta:hover:not(:disabled) { color: rgb(var(--c-text-primary)); background: rgb(var(--c-overlay) / .08); }
+.cal-seta:disabled { opacity: .25; cursor: default; }
+.cal-semana, .cal-grade { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.cal-semana span { padding: .125rem 0; font-size: .5625rem; font-weight: 700; text-align: center; color: rgb(var(--c-text-muted)); }
+.cal-grade[data-direcao="frente"], .cal-titulo[data-direcao="frente"] { animation: cal-vem-frente 240ms cubic-bezier(.2, .8, .3, 1); }
+.cal-grade[data-direcao="tras"], .cal-titulo[data-direcao="tras"] { animation: cal-vem-tras 240ms cubic-bezier(.2, .8, .3, 1); }
+@keyframes cal-vem-frente { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+@keyframes cal-vem-tras { from { opacity: 0; transform: translateX(-18px); } to { opacity: 1; transform: none; } }
+.cal-dia {
+  height: 30px; font-size: .6875rem; font-variant-numeric: tabular-nums; color: rgb(var(--c-text-primary)); background: none;
+  border: 2px solid transparent; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, transform 160ms cubic-bezier(.3, 1.6, .5, 1);
+}
+.cal-dia:hover:not(:disabled) { background: rgb(var(--c-overlay) / .08); }
+.cal-dia:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: -2px; }
+.cal-dia-fora { color: rgb(var(--c-text-muted)); }
+.cal-dia:disabled { opacity: .25; cursor: default; }
+.cal-dia-hoje { border-color: rgb(var(--c-accent) / .45); }
+.cal-dia-escolhido { color: #fff; background: rgb(var(--c-accent)) !important; border-color: rgb(var(--c-accent)); transform: scale(1.06); }
+
+/* Rodas: a faixa do meio é o "visor"; os números passam por baixo dela. */
+.rodas { position: relative; display: flex; align-items: center; justify-content: center; gap: .25rem; margin-top: .625rem; padding: 0 .5rem; }
+.rodas-faixa {
+  position: absolute; left: .5rem; right: .5rem; top: 50%; height: 32px; transform: translateY(-50%); pointer-events: none;
+  background: rgb(var(--c-accent) / .1); border-block: 2px solid rgb(var(--c-accent) / .45);
+}
+.rodas-sep { position: relative; font-size: 1.125rem; font-weight: 700; color: rgb(var(--c-accent)); }
+.roda { position: relative; width: 72px; outline: none; }
+.roda:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: 2px; }
+.roda-trilho {
+  position: relative; overflow-y: scroll; scroll-snap-type: y mandatory; scrollbar-width: none; overscroll-behavior: contain; cursor: grab; touch-action: pan-y;
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 32%, #000 68%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 32%, #000 68%, transparent);
+}
+.roda-trilho::-webkit-scrollbar { display: none; }
+.roda-trilho:active { cursor: grabbing; }
+.roda-item {
+  display: grid; place-items: center; scroll-snap-align: center; font-size: 1.125rem; font-variant-numeric: tabular-nums;
+  color: rgb(var(--c-text-secondary)); user-select: none; will-change: transform, opacity; transition: color 120ms ease;
+}
+.roda-item[data-centro="sim"] { color: rgb(var(--c-text-primary)); font-weight: 600; }
+.prazo-rodape { display: flex; align-items: center; justify-content: space-between; gap: .5rem; margin-top: .75rem; }
+.prazo-resumo { font-size: .6875rem; text-transform: capitalize; color: rgb(var(--c-text-secondary)); }
+.prazo-resumo-passou { text-transform: none; color: rgb(var(--c-danger)); }
+.prazo-definir {
+  padding: .375rem .875rem; font-size: .6875rem; font-weight: 600; color: #fff; background: rgb(var(--c-accent));
+  border: 2px solid rgb(var(--c-accent)); cursor: pointer; transition: background-color 120ms ease, transform 120ms ease, opacity 120ms ease;
+}
+.prazo-definir:hover:not(:disabled) { background: rgb(var(--c-accent-hover)); }
+.prazo-definir:active:not(:disabled) { transform: scale(.96); }
+.prazo-definir:disabled { opacity: .4; cursor: default; }

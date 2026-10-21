@@ -51,6 +51,20 @@ export function destaqueDaLinha(status: ConversaStatus): string {
   return VISUAL[status].linha;
 }
 
+/** Fundo e borda na cor do status — o quadrado atrás do ícone. */
+export function seloDoStatus(status: ConversaStatus): string {
+  return VISUAL[status].selo;
+}
+
+/** "agora", "5 min", "3 h", "2 d" — curto, cabe na segunda linha da lateral. */
+export function haQuantoTempo(ms: number, agora: number): string {
+  const minutos = Math.floor(Math.max(0, agora - ms) / 60_000);
+  if (minutos < 1) return "agora";
+  if (minutos < 60) return `${minutos} min`;
+  if (minutos < 24 * 60) return `${Math.floor(minutos / 60)} h`;
+  return `${Math.floor(minutos / (24 * 60))} d`;
+}
+
 export function rotuloDoStatus(status: ConversaStatus): string {
   return VISUAL[status].rotulo;
 }

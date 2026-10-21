@@ -34,6 +34,8 @@ export interface TerminalSession {
   /** Sobe a cada evento que merece aviso: Claude/Codex terminou um turno de verdade ou abriu
    *  diálogo de aprovação. O toast dispara quando ele muda — nunca pelo `state` sozinho. */
   attention_seq?: number;
+  /** Quando o último aviso aconteceu — o "há 5 min" do Attention Center. */
+  attention_at_ms?: number;
   /** Quando a sessão foi criada. Desempata qual sessão representa a conversa (ver `useAttention`). */
   created_at_ms?: number;
   /** Última saída do terminal — o "há 5 min" da lateral. */
@@ -126,6 +128,15 @@ export interface Profile {
 export async function listProfiles() {
   const profiles = await invoke<Profile[]>("list_profiles");
   return Array.isArray(profiles) ? profiles : [];
+}
+
+/** Conta mestra das conversas de cada IA (`provider → id da conta`): o arquivo da conversa mora nela. */
+export async function contasMestras() {
+  return (await invoke<Record<string, string> | null>("contas_mestras")) ?? {};
+}
+
+export async function definirMestra(profileId: string) {
+  await invoke("definir_mestra", { profileId });
 }
 
 export async function createProfile(provider: AgentCliId, name: string) {
@@ -349,7 +360,7 @@ export interface Conversation {
   cwd: string;
   /** Nome de exibição: o que o usuário escreveu, ou o primeiro prompt enquanto ele não escreveu. */
   title: string;
-  title_source: "auto" | "manual";
+  title_source: "auto" | "manual" | "ia";
   created_at_ms: number;
   segments: ConversationSegment[];
 }

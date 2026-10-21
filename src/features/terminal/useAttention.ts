@@ -3,15 +3,15 @@ import type { LayoutNode, Project, WorkspaceState } from "../../types/workspace"
 import type { TerminalSession, TerminalState } from "./terminalService";
 
 /** Motivo pelo qual um agente quer atenção. `usage_limit`/`api_error` vêm do `notice` do engine —
- *  são rótulos melhores pro mesmo estado ocioso, não estados novos (ver `notice` no protocolo). */
+ *  são rótulos melhores pro mesmo estado ocioso, não estados novos (ver `notice` no protocolo).
+ *  `stopped`/`orphan` ficam de fora: toda sessão encerrada virava aviso, e reabrir o app enchia a
+ *  lista de "encerrado" de conversas que ninguém tinha mexido. */
 export type AttentionReason =
   | "approval_required"
   | "usage_limit"
   | "api_error"
   | "crashed"
-  | "orphan"
-  | "answered"
-  | "stopped";
+  | "answered";
 
 /** Ordem do Attention Center (spec §11.3): o que bloqueia o agente primeiro, o que é só aviso
  *  depois. Serve de teste de pertinência E de ordenação — uma lista só, nunca duas fora de sincronia. */
@@ -20,9 +20,7 @@ export const ATTENTION_ORDER: AttentionReason[] = [
   "usage_limit",
   "api_error",
   "crashed",
-  "orphan",
   "answered",
-  "stopped",
 ];
 
 export const ATTENTION_LABEL: Record<AttentionReason, string> = {
@@ -30,9 +28,7 @@ export const ATTENTION_LABEL: Record<AttentionReason, string> = {
   usage_limit: "limite de uso atingido",
   api_error: "erro de API",
   crashed: "travou",
-  orphan: "sessão órfã",
   answered: "terminou",
-  stopped: "parado",
 };
 
 export interface AttentionItem {
@@ -41,9 +37,13 @@ export interface AttentionItem {
    *  conversa com dez sessões — o failover abre uma nova a cada troca de conta — é um aviso só. */
   conversationKey: string;
   sessionName: string;
+  /** Qual CLI (claude, codex…): o aviso mostra a marca, o nome da conversa sozinho não diz. */
+  provider?: string | null;
   reason: AttentionReason;
   state: TerminalState;
   attentionSeq: number;
+  /** Quando o aviso aconteceu (ms). Sessões gravadas antes do campo caem na última saída. */
+  aconteceuEm?: number;
   projectId: string;
   projectName: string;
   workspaceId: string;
@@ -138,7 +138,6 @@ export function useAttention(
 ): {
   items: AttentionItem[];
   all: AttentionItem[];
-  countByWorkspace: Record<string, number>;
   dismiss: (sessionId: string) => void;
 } {
   // ponytail: mapa em memória — recarregar o app rebadgeia tudo que continua pendente, que é o
@@ -209,9 +208,11 @@ export function useAttention(
       sessionId: session.id,
       conversationKey: conversationKey(session),
       sessionName: session.name,
+      provider: session.provider,
       reason,
       state: session.state,
       attentionSeq: session.attention_seq ?? 0,
+      aconteceuEm: session.attention_at_ms || session.last_activity_at_ms,
       projectId: session.project_id,
       projectName: place.projectName,
       workspaceId: place.workspaceId,
@@ -224,11 +225,5 @@ export function useAttention(
 
   items.sort((a, b) => ATTENTION_ORDER.indexOf(a.reason) - ATTENTION_ORDER.indexOf(b.reason));
 
-  // Derivado dos itens finais: badge e lista nunca podem discordar.
-  const countByWorkspace: Record<string, number> = {};
-  for (const item of items) {
-    countByWorkspace[item.workspaceId] = (countByWorkspace[item.workspaceId] ?? 0) + 1;
-  }
-
-  return { items, all, countByWorkspace, dismiss };
+  return { items, all, dismiss };
 }

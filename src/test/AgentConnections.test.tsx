@@ -8,6 +8,8 @@ const listAgentClis = vi.fn();
 const listProfiles = vi.fn();
 const connectAgentCli = vi.fn();
 const createProfile = vi.fn();
+const contasMestras = vi.fn();
+const definirMestra = vi.fn();
 
 vi.mock("../features/terminal/terminalService", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../features/terminal/terminalService")>()),
@@ -16,6 +18,8 @@ vi.mock("../features/terminal/terminalService", async (importOriginal) => ({
   connectAgentCli: (...args: unknown[]) => connectAgentCli(...args),
   createProfile: (...args: unknown[]) => createProfile(...args),
   deleteProfile: vi.fn(),
+  contasMestras: () => contasMestras(),
+  definirMestra: (...args: unknown[]) => definirMestra(...args),
 }));
 
 function agent(overrides: Partial<AgentCliStatus> = {}): AgentCliStatus {
@@ -83,6 +87,8 @@ beforeEach(() => {
   listProfiles.mockReset();
   connectAgentCli.mockReset().mockResolvedValue(undefined);
   createProfile.mockReset();
+  contasMestras.mockReset().mockResolvedValue({});
+  definirMestra.mockReset().mockResolvedValue(undefined);
   listProfiles.mockResolvedValue([]);
 });
 
@@ -107,7 +113,7 @@ describe("AgentConnections", () => {
     expect(screen.getByRole("button", { name: "Entrar" })).toBeEnabled();
     // Provider com isolamento (codex) mostra "+ Conta", desabilitado enquanto a CLI não existe.
     // Escopo na linha do codex: o claude também tem "+ Conta", só que habilitado.
-    const codexRow = screen.getByText("Codex").closest("div.py-3") as HTMLElement;
+    const codexRow = screen.getByRole("region", { name: "Codex" });
     expect(within(codexRow).getByRole("button", { name: "+ Conta" })).toBeDisabled();
   });
 
@@ -168,6 +174,32 @@ describe("AgentConnections", () => {
 
     await waitFor(() => expect(createProfile).toHaveBeenCalledWith("claude", "Cliente X"));
     expect(connectAgentCli).toHaveBeenCalledWith("claude", "cliente-x");
+  });
+
+  it("a estrela marca a conta mestra das conversas e troca por clique", async () => {
+    listAgentClis.mockResolvedValue([agent()]);
+    listProfiles.mockResolvedValue([profile(), profile({ id: "emailuber", name: "EmailUber", builtin: false })]);
+    contasMestras.mockResolvedValue({ claude: "claude-padrao" });
+    render(<AgentConnections />);
+
+    const padrao = await screen.findByRole("button", { name: "Padrão é a mestra das conversas" });
+    expect(padrao).toHaveAttribute("aria-pressed", "true");
+    contasMestras.mockResolvedValue({ claude: "emailuber" });
+    await userEvent.click(screen.getByRole("button", { name: "Tornar EmailUber a mestra das conversas" }));
+    expect(definirMestra).toHaveBeenCalledWith("emailuber");
+    expect(await screen.findByRole("button", { name: "EmailUber é a mestra das conversas" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("remover pede confirmação antes de apagar a pasta da conta", async () => {
+    const remover = vi.mocked((await import("../features/terminal/terminalService")).deleteProfile);
+    listAgentClis.mockResolvedValue([agent()]);
+    listProfiles.mockResolvedValue([profile(), profile({ id: "trabalho", name: "Trabalho", builtin: false })]);
+    render(<AgentConnections />);
+    const conta = (await screen.findByText("Trabalho")).closest("li") as HTMLElement;
+    await userEvent.click(within(conta).getByRole("button", { name: "Remover" }));
+    expect(remover).not.toHaveBeenCalled();
+    await userEvent.click(within(conta).getByRole("button", { name: "Remover conta" }));
+    expect(remover).toHaveBeenCalledWith("trabalho");
   });
 
   it("falha na consulta vira alerta visível", async () => {

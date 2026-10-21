@@ -1,22 +1,31 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { Button } from "../../components/ui";
+import { ReloadIcon } from "../../components/ui/PixelIcon";
 
 export interface UsageWindow { used_percent: number; resets_at: number | null; reset_label: string | null }
 export interface Usage { status: string; observed_at_ms: number | null; primary: UsageWindow | null; secondary: UsageWindow | null; reason: string | null }
 
+/** Uma janela de uso como medidor: a barra esquenta perto do limite. */
 function WindowUsage({ label, window }: { label: string; window: UsageWindow | null }) {
-  return <div className="min-w-0">
-    <span className="text-text-secondary">{label}: </span>
-    <span>{window ? `${window.used_percent.toLocaleString("pt-BR")}% consumido` : "indisponível"}</span>
-    {window && <p className="text-text-muted">{window.resets_at ? `Reseta em ${new Date(window.resets_at * 1000).toLocaleString("pt-BR")}` : window.reset_label}</p>}
+  const pct = window ? Math.min(100, Math.max(0, window.used_percent)) : 0;
+  const tom = pct >= 90 ? "danger" : pct >= 70 ? "warning" : "accent";
+  return <div className="ag-medidor" data-tom={tom}>
+    <span className="ag-medidor-topo">
+      <span className="text-text-secondary">{label}</span>
+      <span className="ag-medidor-valor">{window ? `${window.used_percent.toLocaleString("pt-BR")}% consumido` : "indisponível"}</span>
+    </span>
+    <span className="ag-medidor-trilho" aria-hidden><span style={{ width: `${pct}%` }} /></span>
+    {window && <span className="ag-medidor-sub">{window.resets_at ? `Reseta em ${new Date(window.resets_at * 1000).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : window.reset_label}</span>}
   </div>;
 }
 
-export function AccountUsage({ profileId, provider }: { profileId: string; provider: string }) {
+export function AccountUsage({ profileId, provider, onUsage }: { profileId: string; provider: string; onUsage?: (usage: Usage | null) => void }) {
   const [usage, setUsage] = useState<Usage | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Os KPIs de Agentes leem daqui; quem chama guarda por id, então só o valor importa.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { onUsage?.(usage); }, [usage]);
   useEffect(() => {
     let cancelled = false;
     setUsage(null); setError(null);
@@ -32,11 +41,17 @@ export function AccountUsage({ profileId, provider }: { profileId: string; provi
     finally { setBusy(false); }
   }
   const stale = usage?.status === "stale" || [usage?.primary, usage?.secondary].some(w => w?.resets_at && w.resets_at * 1000 <= Date.now());
-  return <div className="w-full border-l-2 border-border-subtle pl-3 text-[11px] space-y-1" aria-label={`Uso ${profileId}`}>
-    <p className="text-text-muted">{provider === "codex" ? "Medido no registro do Codex" : provider === "antigravity" ? "Última consulta do Antigravity (quanto já foi usado)" : "Última consulta do Claude Code"}</p>
-    <div className="grid gap-2 sm:grid-cols-2"><WindowUsage label="5 horas" window={usage?.primary ?? null} /><WindowUsage label="Semana" window={usage?.secondary ?? null} /></div>
-    {usage?.observed_at_ms && <p className="text-text-muted">Observado em {new Date(usage.observed_at_ms).toLocaleString("pt-BR")}{stale ? " · desatualizado" : ""}</p>}
-    {(error || usage?.reason) && <p role={error ? "alert" : undefined} className="text-text-muted">{error ? `Indisponível: ${error}` : usage?.reason}</p>}
-    <Button size="sm" variant="ghost" disabled={busy} onClick={() => void refresh()}>{busy ? "Consultando…" : provider === "claude" || provider === "antigravity" ? "Consultar /usage" : "Atualizar uso"}</Button>
+  return <div className="ag-uso" aria-label={`Uso ${profileId}`}>
+    <div className="ag-medidores"><WindowUsage label="5 horas" window={usage?.primary ?? null} /><WindowUsage label="Semana" window={usage?.secondary ?? null} /></div>
+    <div className="ag-uso-rodape">
+      <span className="min-w-0">
+        {provider === "codex" ? "Medido no registro do Codex" : provider === "antigravity" ? "Última consulta do Antigravity (quanto já foi usado)" : "Última consulta do Claude Code"}
+        {usage?.observed_at_ms && <> · {new Date(usage.observed_at_ms).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}{stale ? " · desatualizado" : ""}</>}
+      </span>
+      <button type="button" className="ag-acao" disabled={busy} onClick={() => void refresh()}>
+        <ReloadIcon aria-hidden className={`h-3 w-3${busy ? " anexo-girando" : ""}`} />{busy ? "Consultando…" : provider === "claude" || provider === "antigravity" ? "Consultar /usage" : "Atualizar uso"}
+      </button>
+    </div>
+    {(error || usage?.reason) && <p role={error ? "alert" : undefined} className="ag-uso-motivo">{error ? `Indisponível: ${error}` : usage?.reason}</p>}
   </div>;
 }

@@ -25,6 +25,9 @@ pub enum TipoDeNo {
     Sala,
     /// Commit, push e `gh pr create` no branch da execução.
     Pr,
+    /// Roda `config.comando` na pasta da execução: saiu com 0 → `sim`; falhou → `nao`; falhou de novo
+    /// depois de `max_voltas` → `esgotado`. É o que liga um fluxo a testes, builds e scripts.
+    Comando,
     Fim,
 }
 
@@ -71,6 +74,10 @@ pub struct Fluxo {
     pub descricao: String,
     pub nos: Vec<No>,
     pub conexoes: Vec<Conexao>,
+    /// Roda direto na pasta do projeto, sem worktree. Para fluxos que precisam do que ainda não foi
+    /// commitado (uma release, por exemplo) — e que por isso mexem nos seus arquivos de verdade.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub na_pasta_do_projeto: bool,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -86,6 +93,15 @@ pub const FLUXOS_PRONTOS: [(&str, &str); 2] = [
     ("time-de-agentes", include_str!("../fluxos-prontos/time-de-agentes.json")),
 ];
 
+/// Últimos `max` bytes de um texto, sem cortar caractere no meio — a saída de um comando pode ter
+/// megas de log, e só o fim (o erro) interessa para a tela e para o agente que vai corrigir.
+pub fn cauda(texto: &str, max: usize) -> &str {
+    if texto.len() <= max { return texto; }
+    let mut i = texto.len() - max;
+    while !texto.is_char_boundary(i) { i += 1; }
+    &texto[i..]
+}
+
 pub fn pasta_global() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME"))
         .map(|home| PathBuf::from(home).join(".omni").join("fluxos"))
@@ -98,7 +114,7 @@ pub fn pasta_do_projeto(projeto: &Path) -> PathBuf {
 /// Saídas que cada tipo de nó oferece no canvas.
 pub fn saidas(tipo: &TipoDeNo) -> &'static [&'static str] {
     match tipo {
-        TipoDeNo::Condicao => &["sim", "nao", "esgotado"],
+        TipoDeNo::Condicao | TipoDeNo::Comando => &["sim", "nao", "esgotado"],
         TipoDeNo::Aprovacao => &["sim", "nao"],
         TipoDeNo::Fim => &[],
         _ => &[""],
@@ -114,6 +130,8 @@ pub fn validar(f: &Fluxo) -> Result<(), String> {
     for n in &f.nos {
         if n.tipo == TipoDeNo::Agente && n.agente.trim().is_empty() { return Err(format!("O nó “{}” precisa de um modelo de agente", rotulo(n))); }
         if n.tipo == TipoDeNo::Sala && participantes(n).len() < 2 { return Err(format!("A sala “{}” precisa de pelo menos dois participantes", rotulo(n))); }
+        if n.tipo == TipoDeNo::Comando && n.config["comando"].as_str().is_none_or(|c| c.trim().is_empty()) { return Err(format!("O comando “{}” está vazio", rotulo(n))); }
+        if n.tipo == TipoDeNo::Pr && f.na_pasta_do_projeto { return Err("Pull request precisa de worktree: desligue “rodar na pasta do projeto” ou troque o PR por um comando".into()); }
     }
     for c in &f.conexoes {
         let (Some(de), true) = (f.nos.iter().find(|n| n.id == c.de), ids.contains(c.para.as_str())) else { return Err("Conexão aponta para um nó que não existe".into()) };
@@ -309,6 +327,32 @@ mod tests {
         }
         let n: No = serde_json::from_str(r#"{"id":"a","tipo":"fim","config":null}"#).unwrap();
         assert!(n.config.is_object());
+    }
+
+    #[test]
+    fn comando_valida_e_nao_combina_com_pr_na_pasta_do_projeto() {
+        let mut f: Fluxo = serde_json::from_value(serde_json::json!({"id": "r", "nome": "R", "nos": [
+            {"id": "e", "tipo": "entrada"}, {"id": "c", "tipo": "comando", "config": {"comando": "npm test"}}, {"id": "f", "tipo": "fim"}],
+            "conexoes": [{"de": "e", "para": "c"}, {"de": "c", "para": "f", "saida": "sim"}, {"de": "c", "para": "f", "saida": "esgotado"}]})).unwrap();
+        assert!(!f.na_pasta_do_projeto, "fluxo antigo, sem o campo, continua com worktree");
+        validar(&f).unwrap();
+        f.nos[1].config = serde_json::json!({"comando": "  "});
+        assert!(validar(&f).unwrap_err().contains("vazio"));
+        f.nos[1].tipo = TipoDeNo::Pr;
+        f.na_pasta_do_projeto = true;
+        f.conexoes.retain(|c| c.saida.is_empty());
+        assert!(validar(&f).unwrap_err().contains("worktree"));
+        assert_eq!(cauda("aé", 1), "", "não corta no meio do é");
+        assert_eq!(cauda("abcdef", 3), "def");
+    }
+
+    /// O fluxo de release do próprio OMNI (`.omni/fluxos/release.json`) tem que continuar válido.
+    #[test]
+    fn fluxo_de_release_do_omni_valida() {
+        let f: Fluxo = serde_json::from_str(include_str!("../../../.omni/fluxos/release.json")).unwrap();
+        validar(&f).unwrap();
+        assert!(f.na_pasta_do_projeto, "a release leva o que não foi commitado");
+        assert!(f.nos.iter().filter(|n| n.tipo == TipoDeNo::Aprovacao).count() >= 2, "publicar e liberar pedem aprovação");
     }
 
     #[test]

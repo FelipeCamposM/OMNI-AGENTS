@@ -13,7 +13,7 @@ use serde_json::Value;
 use std::{
     collections::HashMap,
     fs::File,
-    io::{Read, Seek, SeekFrom},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom},
     path::{Path, PathBuf},
 };
 
@@ -42,6 +42,86 @@ pub struct Item {
     /// só `[Image #N]` no texto; o conteúdo vem sob demanda por [`imagem`].
     #[serde(skip_serializing_if = "sem_imagens")]
     pub imagens: usize,
+    /// O que uma edição mudou (`Edit`, `Write`, `apply_patch`…): contagem exata e as linhas.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<Diff>,
+}
+
+/// Linhas com `+`, `-` ou ` ` na frente, como um patch. `mais`/`menos` contam tudo; `linhas` para em
+/// [`DIFF_LINHAS`] (`cortado` avisa).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Diff {
+    pub mais: usize,
+    pub menos: usize,
+    pub linhas: Vec<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub cortado: bool,
+}
+
+// ponytail: as linhas vão junto com a página da conversa; rota sob demanda (como as imagens) se pesar.
+const DIFF_LINHAS: usize = 80;
+const DIFF_LINHA_MAX: usize = 200;
+/// Acima disso o LCS (n×m) fica caro: vira "tudo saiu, tudo entrou".
+const DIFF_LCS_MAX: usize = 4_000_000;
+
+impl Diff {
+    fn de_linhas(linhas: impl IntoIterator<Item = String>) -> Option<Diff> {
+        let mut diff = Diff { mais: 0, menos: 0, linhas: Vec::new(), cortado: false };
+        for linha in linhas {
+            match linha.as_bytes().first() { Some(b'+') => diff.mais += 1, Some(b'-') => diff.menos += 1, _ => {} }
+            if diff.linhas.len() < DIFF_LINHAS { diff.linhas.push(linha.chars().take(DIFF_LINHA_MAX).collect()) } else { diff.cortado = true }
+        }
+        (diff.mais + diff.menos > 0).then_some(diff)
+    }
+}
+
+/// Diff de linhas entre o trecho antigo e o novo (LCS), com o contexto em comum.
+fn diff_de_trechos(pares: &[(&str, &str)]) -> Option<Diff> {
+    let mut saida = Vec::new();
+    for (antes, depois) in pares {
+        let a: Vec<&str> = antes.lines().collect();
+        let b: Vec<&str> = depois.lines().collect();
+        if a.len() * b.len() > DIFF_LCS_MAX {
+            saida.extend(a.iter().map(|l| format!("-{l}")));
+            saida.extend(b.iter().map(|l| format!("+{l}")));
+            continue;
+        }
+        // tabela[i][j] = LCS de a[i..] e b[j..]
+        let mut tabela = vec![vec![0u32; b.len() + 1]; a.len() + 1];
+        for i in (0..a.len()).rev() {
+            for j in (0..b.len()).rev() {
+                tabela[i][j] = if a[i] == b[j] { tabela[i + 1][j + 1] + 1 } else { tabela[i + 1][j].max(tabela[i][j + 1]) };
+            }
+        }
+        let (mut i, mut j) = (0, 0);
+        while i < a.len() || j < b.len() {
+            if i < a.len() && j < b.len() && a[i] == b[j] { saida.push(format!(" {}", a[i])); i += 1; j += 1; }
+            else if i < a.len() && (j == b.len() || tabela[i + 1][j] >= tabela[i][j + 1]) { saida.push(format!("-{}", a[i])); i += 1; }
+            else { saida.push(format!("+{}", b[j])); j += 1; }
+        }
+    }
+    Diff::de_linhas(saida)
+}
+
+fn diff_claude(nome: &str, input: &Value) -> Option<Diff> {
+    let texto = |v: &Value, k: &str| v[k].as_str().unwrap_or("").to_owned();
+    match nome {
+        "Edit" => diff_de_trechos(&[(&texto(input, "old_string"), &texto(input, "new_string"))]),
+        "MultiEdit" => {
+            let pares: Vec<(String, String)> = input["edits"].as_array()?.iter()
+                .map(|e| (texto(e, "old_string"), texto(e, "new_string"))).collect();
+            diff_de_trechos(&pares.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect::<Vec<_>>())
+        }
+        "Write" => Diff::de_linhas(input["content"].as_str()?.lines().map(|l| format!("+{l}"))),
+        _ => None,
+    }
+}
+
+/// Patch do Codex (`*** Begin Patch`): as linhas `+`/`-`/` ` já vêm prontas.
+fn diff_de_patch(patch: &str) -> Option<Diff> {
+    Diff::de_linhas(patch.lines()
+        .filter(|l| !l.starts_with("***") && !l.starts_with("@@") && matches!(l.as_bytes().first(), Some(b'+' | b'-' | b' ')))
+        .map(str::to_owned))
 }
 
 fn sem_imagens(n: &usize) -> bool { *n == 0 }
@@ -284,7 +364,7 @@ pub fn imagem(fontes: &[(PathBuf, String, Option<u64>)], n: usize, k: usize, cac
 }
 
 fn item(kind: Kind, role: &str, text: String, tool: Option<String>, value: &Value) -> Item {
-    Item { kind, role: role.into(), text, tool, timestamp: value["timestamp"].as_str().map(str::to_owned), imagens: 0 }
+    Item { kind, role: role.into(), text, tool, timestamp: value["timestamp"].as_str().map(str::to_owned), imagens: 0, diff: None }
 }
 
 /// Itens de uma linha do transcript, na ordem em que aparecem nela.
@@ -329,7 +409,8 @@ pub fn items(value: &Value, provider: &str) -> Vec<Item> {
                                 saida.push(item(Kind::Text, "assistant", texto.to_owned(), None, value));
                             },
                         Some("tool_use") => if let Some((nome, detalhe)) = ferramenta_claude(bloco["name"].as_str().unwrap_or(""), &bloco["input"]) {
-                            saida.push(item(Kind::Tool, "assistant", detalhe, Some(nome), value));
+                            let diff = diff_claude(&nome, &bloco["input"]);
+                            saida.push(Item { diff, ..item(Kind::Tool, "assistant", detalhe, Some(nome), value) });
                         },
                         _ => {}
                     }
@@ -355,7 +436,8 @@ pub fn items(value: &Value, provider: &str) -> Vec<Item> {
                 if texto.trim().is_empty() || (role == "user" && injetado(&texto)) { return saida; }
                 saida.push(item(Kind::Text, role, texto, None, value));
             } else if let Some((nome, detalhe)) = ferramenta_codex(payload) {
-                saida.push(item(Kind::Tool, "assistant", detalhe, Some(nome), value));
+                let diff = (nome == "Edit").then(|| payload["input"].as_str().and_then(diff_de_patch)).flatten();
+                saida.push(Item { diff, ..item(Kind::Tool, "assistant", detalhe, Some(nome), value) });
             }
         }
         "codex" if value["type"] == "event_msg" && value["payload"]["type"] == "turn_aborted" => {
@@ -420,8 +502,15 @@ fn hash(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf29ce484222325_u64, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x100000001b3))
 }
 
+/// Claude Code 2.1.3xx grava cada chamada à API inteira no transcript (`api-request`, `-blob`,
+/// `-shape`): mais da metade de um `.jsonl` de 300 MB, e nada disso vai para a conversa. A CLI põe o
+/// `type` primeiro, então dá para pular a linha sem parsear o JSON.
+fn chamada_da_api(linha: &[u8]) -> bool {
+    linha.starts_with(br#"{"type":"api-request"#)
+}
+
 fn entradas(linha: &[u8], provider: &str) -> Vec<Entry> {
-    if linha.iter().all(u8::is_ascii_whitespace) { return Vec::new(); }
+    if linha.iter().all(u8::is_ascii_whitespace) || chamada_da_api(linha) { return Vec::new(); }
     let Ok(value) = serde_json::from_slice::<Value>(linha) else { return Vec::new() };
     let base = value["uuid"].as_str().map(str::to_owned).unwrap_or_else(|| format!("{:016x}", hash(linha)));
     items(&value, provider).into_iter().enumerate()
@@ -470,19 +559,26 @@ impl FeedCache {
             let provisorios = std::mem::take(&mut feed.provisorios);
             feed.entries.truncate(feed.entries.len() - provisorios);
             file.seek(SeekFrom::Start(feed.offset))?;
-            let mut novo = Vec::with_capacity((tamanho - feed.offset) as usize);
-            file.take(tamanho - feed.offset).read_to_end(&mut novo)?;
-            let completo = novo.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-            for linha in novo[..completo].split(|b| *b == b'\n') {
-                feed.entries.extend(entradas(linha, provider));
+            // Linha a linha: a primeira leitura de um transcript de centenas de MB não vai inteira
+            // para a memória.
+            let mut leitor = BufReader::new(file.take(tamanho - feed.offset));
+            let mut linha = Vec::new();
+            loop {
+                linha.clear();
+                if leitor.read_until(b'\n', &mut linha)? == 0 { break; }
+                if linha.last() != Some(&b'\n') {
+                    // Sem `\n` no fim a última linha pode estar no meio da escrita — ou o arquivo
+                    // simplesmente terminou assim. Se já é um JSON inteiro ela aparece, mas fica
+                    // provisória: a próxima leitura recomeça dela, então nada duplica quando a CLI
+                    // completar a linha.
+                    let resto = entradas(&linha, provider);
+                    feed.provisorios = resto.len();
+                    feed.entries.extend(resto);
+                    break;
+                }
+                feed.entries.extend(entradas(&linha[..linha.len() - 1], provider));
+                feed.offset += linha.len() as u64;
             }
-            feed.offset += completo as u64;
-            // Sem `\n` no fim a última linha pode estar no meio da escrita — ou o arquivo
-            // simplesmente terminou assim. Se já é um JSON inteiro ela aparece, mas fica provisória:
-            // a próxima leitura recomeça dela, então nada duplica quando a CLI completar a linha.
-            let resto = entradas(&novo[completo..], provider);
-            feed.provisorios = resto.len();
-            feed.entries.extend(resto);
         }
         Ok(&self.feeds[path].entries)
     }
@@ -510,6 +606,21 @@ mod tests {
         let itens = items(&linha, "claude");
         assert_eq!(itens[0].imagens, 2);
         assert_eq!(caminhos_de_imagem("versao 1.2.png ou http://x.com/a.png ou abc/def.png"), Vec::<PathBuf>::new());
+    }
+
+    #[test]
+    fn edicao_traz_linhas_adicionadas_e_removidas() {
+        let edit = items(&claude("assistant", json!([{"type": "tool_use", "name": "Edit", "input": {
+            "file_path": "C:/a.ts", "old_string": "a\nb\nc", "new_string": "a\nB\nc\nd"}}])), "claude");
+        let diff = edit[0].diff.as_ref().unwrap();
+        assert_eq!((diff.mais, diff.menos), (2, 1));
+        assert_eq!(diff.linhas, [" a", "-b", "+B", " c", "+d"]);
+        let write = items(&claude("assistant", json!([{"type": "tool_use", "name": "Write", "input": {"file_path": "C:/b.ts", "content": "x\ny"}}])), "claude");
+        assert_eq!(write[0].diff.as_ref().map(|d| (d.mais, d.menos)), Some((2, 0)));
+        let read = items(&claude("assistant", json!([{"type": "tool_use", "name": "Read", "input": {"file_path": "C:/b.ts"}}])), "claude");
+        assert!(read[0].diff.is_none());
+        let patch = diff_de_patch("*** Begin Patch\n*** Update File: a.rs\n@@\n-velho\n+novo\n contexto\n*** End Patch").unwrap();
+        assert_eq!((patch.mais, patch.menos), (1, 1));
     }
 
     fn claude(role: &str, content: Value) -> Value {
@@ -604,6 +715,21 @@ mod tests {
         let ambiente = json!({"type": "response_item", "payload": {"type": "message", "role": "user",
             "content": [{"type": "input_text", "text": "<environment_context>x</environment_context>"}]}});
         assert!(items(&ambiente, "codex").is_empty());
+    }
+
+    /// Linhas reais do Claude Code 2.1.3xx: a chamada à API (até 1 MB cada) fica fora da conversa.
+    #[test]
+    fn chamada_da_api_no_transcript_nao_vira_mensagem() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let linhas = [
+            json!({"type": "user", "uuid": "a", "message": {"role": "user", "content": "ola"}}).to_string(),
+            r#"{"type":"api-request","sessionId":"s","id":"x","body":{"messages":[{"role":"user","content":"ola"}]}}"#.into(),
+            r#"{"type":"api-request-blob","sessionId":"s","hash":"h","content":[{"type":"text","text":"x"}]}"#.into(),
+        ];
+        std::fs::write(&path, linhas.join("\n") + "\n").unwrap();
+        let itens = FeedCache::default().read(&path, "claude").unwrap().iter().map(|e| e.item.text.clone()).collect::<Vec<_>>();
+        assert_eq!(itens, ["ola"]);
     }
 
     #[test]

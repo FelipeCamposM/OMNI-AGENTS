@@ -85,7 +85,6 @@ describe("useAttentionNotifier", () => {
         item({ sessionId: "antigo" }),
         item({ sessionId: "shell", attentionSeq: 0 }),
         item({ sessionId: "travou", reason: "crashed", state: "crashed" }),
-        item({ sessionId: "parado", reason: "stopped", state: "stopped" }),
       ],
     });
     await new Promise((resolve) => setTimeout(resolve, 10));

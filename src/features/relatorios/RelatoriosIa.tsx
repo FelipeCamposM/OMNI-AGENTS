@@ -45,7 +45,7 @@ function guardar(dias: number, dados: RelatorioIa) {
 }
 
 /** Barra horizontal com rótulo e valor: as listas por conta, modelo e projeto. */
-function Barras({ itens, total, vazio }: { itens: { chave: string; nome: React.ReactNode; valor: number; texto: React.ReactNode; titulo?: string }[]; total: number; vazio: string }) {
+export function Barras({ itens, total, vazio }: { itens: { chave: string; nome: React.ReactNode; valor: number; texto: React.ReactNode; titulo?: string }[]; total: number; vazio: string }) {
   if (itens.length === 0) return <p className="text-xs text-text-muted">{vazio}</p>;
   return (
     <ul className="rel-barras">
@@ -60,11 +60,11 @@ function Barras({ itens, total, vazio }: { itens: { chave: string; nome: React.R
   );
 }
 
-function Titulo({ icone: Icone, children }: { icone: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>; children: React.ReactNode }) {
+export function Titulo({ icone: Icone, children }: { icone: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>; children: React.ReactNode }) {
   return <span className="inline-flex items-center gap-2"><Icone className="h-3.5 w-3.5 text-accent" aria-hidden />{children}</span>;
 }
 
-function Kpi({ tom, icone: Icone, rotulo, valor, sub }: {
+export function Kpi({ tom, icone: Icone, rotulo, valor, sub }: {
   tom: "accent" | "info" | "success" | "warning" | "danger";
   icone: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
   rotulo: string; valor: React.ReactNode; sub: React.ReactNode;

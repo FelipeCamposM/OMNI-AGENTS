@@ -59,6 +59,8 @@ export interface WorkspaceState {
   projects: Project[];
   activeProjectId: string | null;
   updatedAt: string;
+  /** Fechado pela lateral: some da lista, mas projetos, layout e agentes continuam — reabre igual. */
+  hidden?: boolean;
 }
 
 /** Vários workspaces independentes — cada um com seus próprios projects/layout. */
@@ -73,6 +75,8 @@ export type WorkspaceAction =
   | { type: "ADD_PROJECT"; path: string; id?: string }
   | { type: "SELECT_PROJECT"; projectId: string }
   | { type: "CLOSE_PROJECT"; projectId: string }
+  /** Arrastar na lateral: vai para antes de `beforeId` (`null` = fim). */
+  | { type: "MOVE_PROJECT"; projectId: string; beforeId: string | null }
   | { type: "FOCUS_PANE"; paneId: string }
   | { type: "SELECT_TAB"; paneId: string; tabId: string }
   | { type: "CREATE_TAB"; paneId: string; kind?: PaneKind; title?: string; resourceId?: string }
@@ -114,7 +118,16 @@ export type LayoutPreset =
 export type WorkspacesAction =
   | { type: "ADD_WORKSPACE"; name?: string }
   | { type: "SELECT_WORKSPACE"; workspaceId: string }
-  | { type: "CLOSE_WORKSPACE"; workspaceId: string }
+  /** Fechar na lateral: só esconde. Os agentes seguem rodando. */
+  | { type: "HIDE_WORKSPACE"; workspaceId: string }
+  /** Reabrir um escondido: volta para a lista e vira o ativo. */
+  | { type: "SHOW_WORKSPACE"; workspaceId: string }
+  /** Apagar de vez (quem chama encerra os terminais antes). */
+  | { type: "DELETE_WORKSPACE"; workspaceId: string }
+  /** Arrastar na lateral: vai para antes de `beforeId` (`null` = fim). */
+  | { type: "MOVE_WORKSPACE"; workspaceId: string; beforeId: string | null }
+  /** Tirar um projeto de um workspace qualquer, inclusive escondido (gerenciar workspaces). */
+  | { type: "CLOSE_PROJECT_IN_WORKSPACE"; workspaceId: string; projectId: string }
   | { type: "RENAME_WORKSPACE"; workspaceId: string; name: string }
   /** Pula pra uma sessão que pode estar em OUTRO workspace: troca o ativo, seleciona o projeto
    *  e abre a aba. Precisa viver aqui, no nível da coleção — as ações de `WorkspaceAction` são

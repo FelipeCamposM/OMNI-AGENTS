@@ -14,6 +14,7 @@ mod extensoes;
 mod relatorio;
 mod agentes;
 mod fluxos;
+mod microfone;
 
 pub fn run() {
     #[cfg(unix)]
@@ -41,6 +42,7 @@ pub fn run() {
                     }
                     false
                 })
+                .on_webview_ready(|webview| microfone::liberar(&webview))
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
@@ -81,6 +83,8 @@ pub fn run() {
             profiles::create_profile,
             profiles::rename_profile,
             profiles::delete_profile,
+            profiles::contas_mestras,
+            profiles::definir_mestra,
             git_client::git_status,
             docker_client::docker_containers,
             docker_client::docker_container_action,
@@ -108,6 +112,7 @@ pub fn run() {
             git_client::git_log_graph,
             git_client::git_conta,
             relatorio::relatorio_ia,
+            relatorio::armazenamento,
             agentes::agentes_listar,
             agentes::agentes_salvar,
             agentes::agentes_apagar,

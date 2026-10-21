@@ -7,7 +7,7 @@ import "@xyflow/react/dist/style.css";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { Button, Field, Input, Select, Textarea } from "../../components/ui";
 import { AgentIcon } from "../../components/ui/AgentIcon";
-import { BookIcon, CloseIcon, CopyIcon, FolderIcon, PlayIcon, ReloadIcon, SparkleIcon, StopIcon, TrashIcon } from "../../components/ui/PixelIcon";
+import { BookIcon, ChevronDownIcon, ClipboardNoteIcon, CloseIcon, CopyIcon, FolderIcon, PlayIcon, ReloadIcon, SlidersIcon, SparkleIcon, StopIcon, TrashIcon } from "../../components/ui/PixelIcon";
 import {
   criarComIa, listarAgentes, listarModelos, nomeDeArquivo, ROTULO_ESFORCO, salvarAgente,
   type AgenteSalvo, type CliDoAgente, type ModeloDaCli,
@@ -27,7 +27,7 @@ const tiposDeAresta = { omni: ArestaDoFluxo };
 const erroDe = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const STATUS_EXEC: Record<string, string> = { rodando: "Rodando", pausado: "Pausado", aguardando: "Esperando você", concluido: "Concluído", falhou: "Falhou", cancelado: "Cancelado" };
 const COR_SAIDA: Record<string, string> = { sim: "#22c55e", nao: "#ef4444", esgotado: "#eab308" };
-const NOME_TIPO: Record<TipoDeNo, string> = { entrada: "Entrada", agente: "Agente", condicao: "Condição", aprovacao: "Aprovação", sala: "Time", pr: "Pull request", fim: "Fim" };
+const NOME_TIPO: Record<TipoDeNo, string> = { entrada: "Entrada", agente: "Agente", condicao: "Condição", aprovacao: "Aprovação", sala: "Time", pr: "Pull request", comando: "Comando", fim: "Fim" };
 const duracao = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}min ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}min`; };
 
 interface Props {
@@ -50,6 +50,31 @@ export function FluxosView(props: Props) {
 
 interface MenuRapido { x: number; y: number; de: string; saida?: string }
 
+/** Botão que abre um menu por baixo — o que antes ficava espalhado em volta do canvas. Fecha ao
+ *  clicar fora, no Esc ou quando a opção chama `fechar`. */
+function Suspenso({ rotulo, titulo, alinhar = "esquerda", children }: {
+  rotulo: React.ReactNode; titulo: string; alinhar?: "esquerda" | "direita"; children: (fechar: () => void) => React.ReactNode;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const caixa = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!aberto) return;
+    const fora = (e: PointerEvent) => { if (!caixa.current?.contains(e.target as Node)) setAberto(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setAberto(false); };
+    document.addEventListener("pointerdown", fora);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", fora); document.removeEventListener("keydown", esc); };
+  }, [aberto]);
+  return (
+    <div ref={caixa} className="fx-suspenso">
+      <button type="button" className="fx-suspenso-botao" aria-haspopup="menu" aria-expanded={aberto} title={titulo} onClick={() => setAberto((a) => !a)}>
+        {rotulo}<ChevronDownIcon aria-hidden className={`h-3 w-3 transition-transform${aberto ? " rotate-180" : ""}`} />
+      </button>
+      {aberto && <div className={`fx-suspenso-menu is-${alinhar}`} role="menu" aria-label={titulo}>{children(() => setAberto(false))}</div>}
+    </div>
+  );
+}
+
 function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
   const [fluxos, setFluxos] = useState<FluxoSalvo[]>([]);
   const [agentes, setAgentes] = useState<AgenteSalvo[]>([]);
@@ -68,7 +93,8 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
   const [dialogo, setDialogo] = useState<"executar" | "ia" | "json" | null>(null);
   const [manual, setManual] = useState(false);
   const [menu, setMenu] = useState<MenuRapido | null>(null);
-  const { screenToFlowPosition, fitView } = useReactFlow();
+  const [detalhes, setDetalhes] = useState(false);
+  const { screenToFlowPosition, flowToScreenPosition, fitView, getNode, getZoom, setCenter } = useReactFlow();
   const canvas = useRef<HTMLDivElement>(null);
 
   const recarregar = useCallback(async () => {
@@ -189,7 +215,7 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
   }, [emExecucao]);
 
   function abrirFluxo(f: Fluxo | null, info?: { escopo: "global" | "projeto"; id?: string }) {
-    const base = f ? { id: f.id, nome: f.nome, descricao: f.descricao, nos: f.nos, conexoes: f.conexoes } : fluxoVazio();
+    const base = f ? { id: f.id, nome: f.nome, descricao: f.descricao, nos: f.nos, conexoes: f.conexoes, na_pasta_do_projeto: f.na_pasta_do_projeto } : fluxoVazio();
     setRascunho(structuredClone(base));
     setOrigem(info ?? null);
     setEscopo(info?.escopo ?? "global");
@@ -207,7 +233,7 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
     const novo: NoDoFluxo = {
       id: `${tipo}-${n}`, tipo, titulo: NOME_TIPO[tipo], x: Math.round(centro.x - 110), y: Math.round(centro.y - 40),
       agente: tipo === "agente" ? nomes[0] ?? "" : undefined,
-      config: tipo === "condicao" ? { max_voltas: 3 } : tipo === "sala" ? { participantes: nomes.slice(0, 3), rodadas: 3, objetivo: "{{entrada}}" } : tipo === "aprovacao" ? { pergunta: "Continuar?" } : {},
+      config: tipo === "condicao" ? { max_voltas: 3 } : tipo === "comando" ? { comando: "", max_voltas: 3 } : tipo === "sala" ? { participantes: nomes.slice(0, 3), rodadas: 3, objetivo: "{{entrada}}" } : tipo === "aprovacao" ? { pergunta: "Continuar?" } : {},
     };
     mudarRascunho((r) => ({ ...r, nos: [...r.nos, novo] }));
     setSelecionado(novo.id);
@@ -242,7 +268,7 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
       const fluxo = { ...rascunho, id: rascunho.id || nomeDeArquivo(rascunho.nome) };
       await validarFluxo(fluxo);
       const x = await iniciarExecucao(fluxo, projectId, entrada);
-      setDialogo(null); setExecucaoId(x.id); setExecucao(x); setSelecionado(null);
+      setDialogo(null); setExecucaoId(x.id); setExecucao(x); setSelecionado(null); setDetalhes(true);
       setExecucoes(await listarExecucoes().catch(() => execucoes));
     } catch (e) { setErro(erroDe(e)); } finally { setIniciando(false); }
   }
@@ -257,46 +283,68 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
   }
 
   const noSelecionado = fluxoNaTela?.nos.find((n) => n.id === selecionado) ?? null;
+  // O painel da direita só ocupa espaço quando tem o que mostrar: uma etapa selecionada, ou o resumo
+  // pedido pelo "Detalhes" (que já vem aberto numa execução — é lá que está o andamento).
+  const painelAberto = Boolean(noSelecionado) || (detalhes && Boolean(fluxoNaTela));
+  const algumaRodando = execucoes.some((x) => x.status === "rodando" || x.status === "aguardando");
+  // Abrir o painel encolhe o canvas: se a etapa selecionada ficou atrás dele (ou fora da tela),
+  // a vista desliza até ela, sem mudar o zoom.
+  useEffect(() => {
+    if (!selecionado) return;
+    const t = window.setTimeout(() => {
+      const no = getNode(selecionado);
+      const caixa = canvas.current?.getBoundingClientRect();
+      if (!no || !caixa) return;
+      const largura = no.measured?.width ?? 220, altura = no.measured?.height ?? 80;
+      const inicio = flowToScreenPosition(no.position);
+      const fim = flowToScreenPosition({ x: no.position.x + largura, y: no.position.y + altura });
+      const visivel = inicio.x >= caixa.left && fim.x <= caixa.right && inicio.y >= caixa.top && fim.y <= caixa.bottom;
+      if (!visivel) void setCenter(no.position.x + largura / 2, no.position.y + altura / 2, { zoom: getZoom(), duration: 250 });
+    }, 60);
+    return () => window.clearTimeout(t);
+  }, [selecionado, painelAberto, getNode, flowToScreenPosition, setCenter, getZoom]);
+  const abrirExecucao = (id: string) => { setExecucaoId(id); setSelecionado(null); setMenu(null); setDetalhes(true); };
 
   return (
-    <div className="fx-tela">
-      <aside className="fx-lateral">
-        <div className="fx-lateral-topo">
-          <h2 className="pixel-text">Fluxos</h2>
-          <button type="button" className="fx-icone-botao" onClick={onClose} aria-label="Fechar fluxos" title="Fechar"><CloseIcon aria-hidden className="h-4 w-4" /></button>
-        </div>
-        <div className="fx-lateral-acoes">
-          <Button variant="primary" size="sm" onClick={() => abrirFluxo(null)}>+ Novo</Button>
-          <Button variant="ghost" size="sm" onClick={() => setDialogo("ia")}><SparkleIcon aria-hidden className="h-3.5 w-3.5" />Com IA</Button>
-        </div>
-        <button type="button" className="fx-lateral-link" onClick={() => setManual(true)}><BookIcon aria-hidden className="h-3.5 w-3.5" />Como usar fluxos e agentes</button>
-        <p className="fx-rotulo">Salvos</p>
-        <ul className="fx-lista">
-          {fluxos.map((f) => (
-            <li key={`${f.escopo}:${f.id}`}>
-              <button type="button" onClick={() => abrirFluxo(f, { escopo: f.escopo, id: f.id })} className={`fx-item${!execucao && origem?.id === f.id && origem.escopo === f.escopo ? " is-ativo" : ""}`} title={f.descricao}>
-                <span className="fx-item-nome">{f.nome}</span>
-                <span className="fx-item-sub">{f.escopo === "global" ? "Global" : "Projeto"} · {f.nos.length} etapas</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-        <p className="fx-rotulo">Execuções</p>
-        <ul className="fx-lista">
-          {execucoes.length === 0 && <li className="fx-vazio">Nenhuma ainda.</li>}
-          {execucoes.slice(0, 30).map((x) => (
-            <li key={x.id}>
-              <button type="button" onClick={() => { setExecucaoId(x.id); setSelecionado(null); setMenu(null); }} className={`fx-item${execucaoId === x.id ? " is-ativo" : ""}`} title={x.entrada}>
-                <span className="fx-item-nome"><span className={`fx-ponto st-${x.status}`} />{x.fluxo}</span>
-                <span className="fx-item-sub">{STATUS_EXEC[x.status]} · {new Date(x.criado_ms).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </aside>
-
-      <section className="fx-centro">
-        <header className="fx-barra">
+    <div className={`fx-tela${painelAberto ? " com-painel" : ""}`}>
+      {/* A barra atravessa canvas e painel: abrir o painel não espreme os botões. */}
+      <header className="fx-barra">
+          <Suspenso titulo="Fluxos e execuções" rotulo={<><FolderIcon aria-hidden className="h-3.5 w-3.5" />Fluxos{algumaRodando && <span className="fx-ponto st-rodando" aria-label="Execução em andamento" />}</>}>
+            {(fechar) => (
+              <div className="fx-menu-fluxos">
+                <div className="fx-menu-fluxos-acoes">
+                  <Button variant="primary" size="sm" onClick={() => { fechar(); abrirFluxo(null); }}>+ Novo</Button>
+                  <Button variant="ghost" size="sm" onClick={() => { fechar(); setDialogo("ia"); }}><SparkleIcon aria-hidden className="h-3.5 w-3.5" />Com IA</Button>
+                  <Button variant="ghost" size="sm" title="Como usar fluxos e agentes" onClick={() => { fechar(); setManual(true); }}><BookIcon aria-hidden className="h-3.5 w-3.5" />Manual</Button>
+                </div>
+                <p className="fx-rotulo">Salvos</p>
+                <ul className="fx-lista">
+                  {fluxos.length === 0 && <li className="fx-vazio">Nenhum ainda.</li>}
+                  {fluxos.map((f) => (
+                    <li key={`${f.escopo}:${f.id}`}>
+                      <button type="button" role="menuitem" onClick={() => { fechar(); abrirFluxo(f, { escopo: f.escopo, id: f.id }); }} className={`fx-item${!execucao && origem?.id === f.id && origem.escopo === f.escopo ? " is-ativo" : ""}`} title={f.descricao}>
+                        <span className="fx-item-nome">{f.nome}</span>
+                        <span className="fx-item-sub">{f.escopo === "global" ? "Global" : "Projeto"} · {f.nos.length} etapas</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="fx-rotulo">Execuções</p>
+                <ul className="fx-lista">
+                  {execucoes.length === 0 && <li className="fx-vazio">Nenhuma ainda.</li>}
+                  {execucoes.slice(0, 30).map((x) => (
+                    <li key={x.id}>
+                      <button type="button" role="menuitem" onClick={() => { fechar(); abrirExecucao(x.id); }} className={`fx-item${execucaoId === x.id ? " is-ativo" : ""}`} title={x.entrada}>
+                        <span className="fx-item-nome"><span className={`fx-ponto st-${x.status}`} />{x.fluxo}</span>
+                        <span className="fx-item-sub">{STATUS_EXEC[x.status]} · {new Date(x.criado_ms).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </Suspenso>
+          <span className="fx-barra-divisor" aria-hidden />
           {execucao ? (
             <>
               <span className={`fx-status st-${execucao.status}`}>{STATUS_EXEC[execucao.status]}</span>
@@ -307,37 +355,71 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
               {execucao.pr_url && <a className="fx-link" href={execucao.pr_url} target="_blank" rel="noreferrer">Ver PR</a>}
               {execucao.status === "rodando" && <Button size="sm" variant="ghost" onClick={() => void acaoNaExecucao(execucao.id, "pausar").catch((e) => setErro(erroDe(e)))}><StopIcon aria-hidden className="h-3.5 w-3.5" />Pausar</Button>}
               {(execucao.status === "pausado" || execucao.status === "falhou") && <Button size="sm" variant="primary" onClick={() => void acaoNaExecucao(execucao.id, "retomar").catch((e) => setErro(erroDe(e)))}><PlayIcon aria-hidden className="h-3.5 w-3.5" />Retomar</Button>}
-              {["rodando", "pausado", "aguardando", "falhou"].includes(execucao.status) && <Button size="sm" variant="ghost" onClick={() => void acaoNaExecucao(execucao.id, "cancelar").catch((e) => setErro(erroDe(e)))}>Cancelar</Button>}
-              <Button size="sm" variant="ghost" onClick={() => { setExecucaoId(null); setSelecionado(null); }}>Editor</Button>
+              {["rodando", "pausado", "aguardando", "falhou"].includes(execucao.status) && (
+                <Suspenso titulo="Mais opções da execução" alinhar="direita" rotulo="Opções">
+                  {(fechar) => (
+                    <button type="button" role="menuitem" className="fx-opcao is-perigo" onClick={() => { fechar(); void acaoNaExecucao(execucao.id, "cancelar").catch((e) => setErro(erroDe(e))); }}>
+                      <StopIcon aria-hidden className="h-3.5 w-3.5" /><span><b>Cancelar execução</b><small>Para todos os agentes. O worktree fica para você conferir.</small></span>
+                    </button>
+                  )}
+                </Suspenso>
+              )}
+              <Button size="sm" variant="ghost" onClick={() => { setExecucaoId(null); setSelecionado(null); setDetalhes(false); }}>Editor</Button>
             </>
           ) : rascunho ? (
             <>
               <Input value={rascunho.nome} onChange={(e) => mudarRascunho((r) => ({ ...r, nome: e.target.value }))} aria-label="Nome do fluxo" className="fx-nome" size="sm" />
-              <div className="w-32"><Select size="sm" value={escopo} onChange={(v) => { setEscopo(v); setSujo(true); }}
-                options={[{ value: "global", label: "Global" }, { value: "projeto", label: "Projeto", disabled: !projectPath }]} /></div>
+              {sujo && <span className="fx-sujo" title="Alterações não salvas">não salvo</span>}
               <span className="flex-1" />
-              {sujo && <span className="fx-barra-sub">não salvo</span>}
-              <Button size="sm" variant="ghost" title="Colar o JSON de um fluxo" onClick={() => setDialogo("json")}>Importar</Button>
-              <Button size="sm" variant="ghost" title="Copiar o JSON deste fluxo"
-                onClick={() => void navigator.clipboard.writeText(JSON.stringify({ ...rascunho, id: rascunho.id || nomeDeArquivo(rascunho.nome) }, null, 2)).then(() => setAviso("JSON copiado."))}>
-                <CopyIcon aria-hidden className="h-3.5 w-3.5" />JSON
-              </Button>
-              {origem?.id && <Button size="sm" variant="ghost" aria-label="Apagar fluxo" title="Apagar fluxo" onClick={() => void apagarFluxo(origem.escopo, projectPath, origem.id!).then(() => { setRascunho(null); setOrigem(null); return recarregar(); }).catch((e) => setErro(erroDe(e)))}><TrashIcon aria-hidden className="h-3.5 w-3.5" /></Button>}
+              <Suspenso titulo="Adicionar etapa" alinhar="direita" rotulo="+ Etapa">
+                {(fechar) => TIPOS.map((t) => (
+                  <button key={t.tipo} type="button" role="menuitem" className={`fx-opcao is-${t.tipo}`} onClick={() => { fechar(); criarNo(t.tipo); }}>
+                    <span className="fx-paleta-cor" /><span><b>{t.nome}</b><small>{t.dica}</small></span>
+                  </button>
+                ))}
+              </Suspenso>
+              <Suspenso titulo="Mais opções do fluxo" alinhar="direita" rotulo="Opções">
+                {(fechar) => (
+                  <>
+                    <p className="fx-suspenso-rotulo">Salvar em</p>
+                    <div className="fx-suspenso-segmento" role="group" aria-label="Onde salvar">
+                      {(["global", "projeto"] as const).map((e) => (
+                        <button key={e} type="button" aria-pressed={escopo === e} disabled={e === "projeto" && !projectPath}
+                          title={e === "global" ? "Vale para todos os projetos" : projectPath ? "Só neste projeto" : "Abra um projeto"}
+                          onClick={() => { setEscopo(e); setSujo(true); }}>{e === "global" ? "Global" : "Projeto"}</button>
+                      ))}
+                    </div>
+                    <button type="button" role="menuitem" className="fx-opcao" onClick={() => { fechar(); setDialogo("json"); }}>
+                      <ClipboardNoteIcon aria-hidden className="h-3.5 w-3.5" /><span><b>Importar JSON</b><small>Colar o JSON de um fluxo.</small></span>
+                    </button>
+                    <button type="button" role="menuitem" className="fx-opcao" onClick={() => { fechar(); void navigator.clipboard.writeText(JSON.stringify({ ...rascunho, id: rascunho.id || nomeDeArquivo(rascunho.nome) }, null, 2)).then(() => setAviso("JSON copiado.")); }}>
+                      <CopyIcon aria-hidden className="h-3.5 w-3.5" /><span><b>Copiar JSON</b><small>Para compartilhar ou versionar.</small></span>
+                    </button>
+                    {origem?.id && (
+                      <button type="button" role="menuitem" className="fx-opcao is-perigo" onClick={() => { fechar(); void apagarFluxo(origem.escopo, projectPath, origem.id!).then(() => { setRascunho(null); setOrigem(null); return recarregar(); }).catch((e) => setErro(erroDe(e))); }}>
+                        <TrashIcon aria-hidden className="h-3.5 w-3.5" /><span><b>Apagar fluxo</b><small>Remove o arquivo salvo. As execuções ficam.</small></span>
+                      </button>
+                    )}
+                  </>
+                )}
+              </Suspenso>
               <Button size="sm" variant="ghost" onClick={() => void salvar()}>Salvar</Button>
               <Button size="sm" variant="primary" disabled={!projectId} title={projectId ? "Rodar este fluxo no projeto aberto" : "Abra um projeto para executar"} onClick={() => setDialogo("executar")}>
                 <PlayIcon aria-hidden className="h-3.5 w-3.5" />Executar
               </Button>
             </>
-          ) : <span className="fx-barra-sub">Escolha um fluxo à esquerda, crie um novo ou peça um para a IA.</span>}
+          ) : <span className="fx-barra-sub flex-1">Abra um fluxo em “Fluxos”, crie um novo ou peça um para a IA.</span>}
+          {fluxoNaTela && (
+            <button type="button" className="fx-icone-botao" aria-pressed={painelAberto} aria-label="Detalhes" title={painelAberto ? "Esconder detalhes" : "Mostrar detalhes"}
+              onClick={() => { if (painelAberto) { setDetalhes(false); setSelecionado(null); } else setDetalhes(true); }}>
+              <SlidersIcon aria-hidden className="h-4 w-4" />
+            </button>
+          )}
+          <button type="button" className="fx-icone-botao" onClick={onClose} aria-label="Fechar fluxos" title="Fechar"><CloseIcon aria-hidden className="h-4 w-4" /></button>
         </header>
+      <section className="fx-centro">
         {erro && <p role="alert" className="fx-erro">{erro}<button type="button" onClick={() => setErro(null)} aria-label="Fechar aviso">×</button></p>}
         {aviso && !erro && <p role="status" className="fx-aviso" onAnimationEnd={() => setAviso(null)}>{aviso}</p>}
-
-        {rascunho && !execucao && (
-          <div className="fx-paleta" role="toolbar" aria-label="Adicionar etapa">
-            {TIPOS.map((t) => <button key={t.tipo} type="button" title={t.dica} className={`is-${t.tipo}`} onClick={() => criarNo(t.tipo)}><span className="fx-paleta-cor" />{t.nome}</button>)}
-          </div>
-        )}
 
         <div className="fx-canvas" ref={canvas}>
           {fluxoNaTela ? (
@@ -372,7 +454,7 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
         </div>
       </section>
 
-      <aside className="fx-painel">
+      {painelAberto && <aside className="fx-painel" aria-label="Detalhes">
         {!noSelecionado ? (
           execucao ? <ResumoDaExecucao execucao={execucao} onSelecionar={setSelecionado} />
             : rascunho ? <ResumoDoFluxo fluxo={rascunho} onMudar={(parte) => mudarRascunho((r) => ({ ...r, ...parte }))} />
@@ -383,7 +465,7 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
           <PainelDoNo no={noSelecionado} agentes={agentes} modelos={modelos} projectPath={projectPath} onAgenteCriado={recarregar} onErro={setErro}
             onMudar={(no) => mudarRascunho((r) => ({ ...r, nos: r.nos.map((n) => (n.id === no.id ? no : n)) }))} />
         ) : null}
-      </aside>
+      </aside>}
 
       {dialogo === "executar" && rascunho && (
         <DialogoDeExecucao fluxo={rascunho} agentes={agentes} projeto={projectPath} iniciando={iniciando} onCancelar={() => setDialogo(null)} onIniciar={(t) => void executar(t)} />
@@ -404,6 +486,10 @@ function ResumoDoFluxo({ fluxo, onMudar }: { fluxo: Fluxo; onMudar: (parte: Part
       <Field label="Descrição" htmlFor="fx-desc" description="Aparece no cartão de início e na lista de fluxos.">
         <Textarea id="fx-desc" rows={3} value={fluxo.descricao} onChange={(e) => onMudar({ descricao: e.target.value })} />
       </Field>
+      <label className="fx-opcao-fluxo">
+        <input type="checkbox" checked={Boolean(fluxo.na_pasta_do_projeto)} onChange={(e) => onMudar({ na_pasta_do_projeto: e.target.checked })} />
+        <span><b>Rodar direto na pasta do projeto</b><small>Sem worktree: leva o que ainda não foi commitado e mexe nos seus arquivos de verdade. Para releases e scripts. Não combina com Pull request.</small></span>
+      </label>
       <p className="fx-rotulo">Caminho principal</p>
       <ol className="fx-etapas">
         {etapas.map((n, i) => <li key={n.id}><span className={`fx-etapa-num is-${n.tipo}`}>{i + 1}</span><span><b>{n.titulo || NOME_TIPO[n.tipo]}</b>{n.agente ? <em> · {n.agente}</em> : null}</span></li>)}
@@ -505,6 +591,17 @@ function PainelDoNo({ no, agentes, modelos, projectPath, onMudar, onAgenteCriado
           <Field label="Objetivo da reunião" htmlFor="fx-objetivo" description="Use {{entrada}} para a tarefa digitada.">
             <Textarea id="fx-objetivo" rows={4} value={String(no.config.objetivo ?? "{{entrada}}")} onChange={(e) => cfg({ objetivo: e.target.value })} />
           </Field>
+        </>
+      )}
+      {no.tipo === "comando" && (
+        <>
+          <Field label="Comando" htmlFor="fx-comando" description="Roda na pasta da execução, no shell do sistema (cmd no Windows). Saiu com 0 → sim; deu erro → não. A tarefa digitada não entra no comando.">
+            <Textarea id="fx-comando" rows={3} className="font-mono text-xs" placeholder="npm test" value={String(no.config.comando ?? "")} onChange={(e) => cfg({ comando: e.target.value })} />
+          </Field>
+          <Field label="Tentativas (máximo)" htmlFor="fx-tentativas" description="Depois de falhar tantas vezes, sai por “esgotou” em vez de “não”.">
+            <Input id="fx-tentativas" type="number" min={1} max={10} size="sm" value={Number(no.config.max_voltas ?? 3)} onChange={(e) => cfg({ max_voltas: Math.max(1, Math.min(10, Number(e.target.value) || 1)) })} />
+          </Field>
+          <p className="fx-dica">Ligue o “não” a um agente que corrige e volte para cá: vira um loop de “testa → corrige → testa”. Sem nada no “não”, uma falha para a execução.</p>
         </>
       )}
       {no.tipo === "pr" && (
@@ -646,7 +743,7 @@ function DialogoDeExecucao({ fluxo, agentes, projeto, iniciando, onCancelar, onI
   const [texto, setTexto] = useState("");
   const etapas = etapasDoFluxo(fluxo);
   const temPr = fluxo.nos.some((n) => n.tipo === "pr");
-  const loops = fluxo.nos.filter((n) => n.tipo === "condicao");
+  const loops = fluxo.nos.filter((n) => n.tipo === "condicao" || n.tipo === "comando");
   return (
     <div className="fx-dialogo-fundo" onMouseDown={(e) => { if (e.target === e.currentTarget) onCancelar(); }}>
       <div className="fx-dialogo is-largo" role="dialog" aria-modal="true" aria-label={`Executar ${fluxo.nome}`}>
@@ -658,11 +755,11 @@ function DialogoDeExecucao({ fluxo, agentes, projeto, iniciando, onCancelar, onI
             {etapas.map((n, i) => {
               const a = agentes.find((x) => x.name === n.agente);
               const detalhe = n.tipo === "agente" ? a?.description : n.tipo === "condicao" ? `Se reprovar, volta para corrigir (até ${String(n.config.max_voltas ?? 3)} vezes).`
-                : n.tipo === "aprovacao" ? "Para e espera você aprovar." : n.tipo === "sala" ? "Os agentes discutem em rodadas até o consenso." : n.tipo === "pr" ? "Commit, push e pull request no GitHub." : n.tipo === "entrada" ? "Você descreve a tarefa abaixo." : "";
+                : n.tipo === "aprovacao" ? "Para e espera você aprovar." : n.tipo === "comando" ? `Roda: ${String(n.config.comando ?? "")}` : n.tipo === "sala" ? "Os agentes discutem em rodadas até o consenso." : n.tipo === "pr" ? "Commit, push e pull request no GitHub." : n.tipo === "entrada" ? "Você descreve a tarefa abaixo." : "";
               return <li key={n.id}><span className={`fx-etapa-num is-${n.tipo}`}>{i + 1}</span><span><b>{n.titulo || NOME_TIPO[n.tipo]}</b>{n.agente ? <em> · {n.agente}</em> : null}{detalhe && <small>{detalhe}</small>}</span></li>;
             })}
           </ol>
-          <p className="fx-dica">Projeto <b>{projeto?.split(/[\\/]/).filter(Boolean).pop() ?? "—"}</b> · os agentes trabalham num git worktree com branch nova, sem mexer na sua pasta{loops.length ? " · loops com limite de voltas" : ""}{temPr ? " · no fim, um pull request no GitHub (depois da sua aprovação)" : ""}.</p>
+          <p className="fx-dica">Projeto <b>{projeto?.split(/[\\/]/).filter(Boolean).pop() ?? "—"}</b> · {fluxo.na_pasta_do_projeto ? <><b>direto na pasta do projeto</b>, com o que não foi commitado</> : "os agentes trabalham num git worktree com branch nova, sem mexer na sua pasta"}{loops.length ? " · loops com limite de voltas" : ""}{temPr ? " · no fim, um pull request no GitHub (depois da sua aprovação)" : ""}.</p>
         </div>
         <Textarea autoFocus rows={5} value={texto} onChange={(e) => setTexto(e.target.value)} placeholder="Descreva a tarefa com o critério de pronto — ex.: “Adicionar exportação CSV no relatório de vendas, com testes; pronto quando o botão baixar o arquivo com as colunas da tabela.”" aria-label="Tarefa" />
         <div className="flex justify-end gap-2">

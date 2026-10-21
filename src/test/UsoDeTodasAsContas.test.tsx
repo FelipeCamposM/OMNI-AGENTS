@@ -5,7 +5,7 @@ import { UsoDeTodasAsContas } from "../features/terminal/UsoDeTodasAsContas";
 
 const janela = (used: number) => ({ used_percent: used, resets_at: null, reset_label: null });
 
-it("botão do rodapé abre o uso de todas as contas e atualiza uma por vez", async () => {
+it("botão Uso da barra de cima abre o uso de todas as contas e atualiza uma por vez", async () => {
   vi.mocked(invoke).mockReset().mockImplementation(async (command, args) => {
     if (command === "list_profiles") return [
       { id: "a", provider: "claude", name: "Pessoal" },
@@ -22,7 +22,7 @@ it("botão do rodapé abre o uso de todas as contas e atualiza uma por vez", asy
   await userEvent.click(screen.getByRole("button", { name: "Uso de todas as contas" }));
   const painel = await screen.findByRole("dialog", { name: "Uso das contas" });
   await waitFor(() => expect(within(painel).getByText("12%")).toBeInTheDocument());
-  expect(within(painel).getByText("30%")).toBeInTheDocument();
+  expect(await within(painel).findByText("30%")).toBeInTheDocument();
   expect(within(painel).getByText("Pessoal")).toBeInTheDocument();
   // Todas as IAs aparecem; o Cursor sem medidor (a CLI não informa consumo) e sem consulta.
   expect(within(painel).getByRole("region", { name: "Cursor" })).toHaveTextContent("não informa o consumo");
@@ -36,5 +36,5 @@ it("botão do rodapé abre o uso de todas as contas e atualiza uma por vez", asy
   expect(within(painel).getByText("12%")).toBeInTheDocument();
 
   await userEvent.keyboard("{Escape}");
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 });

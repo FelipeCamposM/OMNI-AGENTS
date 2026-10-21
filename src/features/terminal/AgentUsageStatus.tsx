@@ -9,7 +9,6 @@ import { resetShort, usageTone } from "../../lib/uso";
 export { resetShort, usageTone };
 import { useSession } from "./sessionProviders";
 import { listProfiles, type Profile } from "./terminalService";
-import { UsoDeTodasAsContas } from "./UsoDeTodasAsContas";
 import { AGENTES_COM_USO, NOME_DO_AGENTE } from "../../mobile/api";
 
 export function timeAgo(ms: number, now: number) {
@@ -31,9 +30,9 @@ function UsageBar({ used, label }: { used: number; label: string }) {
       aria-valuenow={Math.round(used)}
       aria-valuemin={0}
       aria-valuemax={100}
-      className="relative block h-1.5 w-8 shrink-0 bg-overlay/[0.16] lg:w-12"
+      className="rodape-barra"
     >
-      <span className={`absolute inset-y-0 left-0 ${usageTone(used).bar}`} style={{ width: `${preenchido}%` }} />
+      <span className={usageTone(used).bar} style={{ width: `${preenchido}%` }} />
     </span>
   );
 }
@@ -45,10 +44,10 @@ function Window({ label, window }: { label: string; window: UsageWindow | null }
   const reset = resetShort(window);
   const tone = window ? usageTone(window.used_percent).text : "text-accent";
   return <span className="flex items-center gap-1.5 whitespace-nowrap">
-    {label}
+    <span className="text-[10px] font-bold tracking-wider text-text-secondary">{label}</span>
     {window && <UsageBar used={window.used_percent} label={`${label} consumido`} />}
     <span className={`font-bold ${tone}`}>{percent(window)}</span>
-    {reset && <span className="hidden xl:inline text-text-secondary font-normal"> · reseta {reset}</span>}
+    {reset && <span className="hidden xl:inline text-text-muted font-normal"> · reseta {reset}</span>}
   </span>;
 }
 
@@ -203,10 +202,10 @@ export function AgentUsageStatus({ engineOnline, activeSessionId }: AgentUsageSt
     reason,
   ].filter(Boolean).join("\n");
   return (
-    <span className="flex min-w-0 items-center gap-2 lg:gap-3 overflow-hidden text-[11px] font-semibold text-text-primary" title={title || undefined} aria-label={`Uso do ${rotulo}${conta ? ` — conta ${conta.name}` : ""}`}>
-      <UsoDeTodasAsContas engineOnline={engineOnline} contaAtiva={profileId} />
+    <span className="rodape-uso" title={title || undefined} aria-label={`Uso do ${rotulo}${conta ? ` — conta ${conta.name}` : ""}`}>
       <AgentIcon provider={provider} size={12} className="shrink-0" />
-      <span className="hidden md:inline text-accent">{rotulo}</span>
+      <span className="hidden md:inline rodape-uso-agente">{rotulo}</span>
+      <span className="rodape-uso-div" aria-hidden />
       {conta && (
         <span className="max-w-32 truncate font-normal text-text-primary" title={`Conta: ${conta.name}${conta.email ? ` (${conta.email})` : ""}`} aria-label={`Conta ${conta.name}`}>
           {conta.name}
@@ -219,8 +218,9 @@ export function AgentUsageStatus({ engineOnline, activeSessionId }: AgentUsageSt
       )}
       {mede ? <>
         <Window label="5H" window={usage?.primary ?? null} />
+        <span className="rodape-uso-div" aria-hidden />
         <Window label="SEMANA" window={usage?.secondary ?? null} />
-        <span className="hidden lg:inline whitespace-nowrap text-text-secondary font-normal">{checked}</span>
+        <span className="hidden 2xl:inline whitespace-nowrap text-text-muted font-normal">{checked}</span>
         {reason && <span className="text-warning">!</span>}
       </> : <span className="whitespace-nowrap font-normal text-text-muted">sem medidor de uso</span>}
       {mede && <button

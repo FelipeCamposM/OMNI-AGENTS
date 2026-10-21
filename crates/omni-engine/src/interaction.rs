@@ -36,6 +36,9 @@ pub struct Capabilities {
     /// Menu de escolha da própria CLI na tela (ex.: "Teach auto mode about your environment?"): sem
     /// responder, o campo fica travado. A conversa mostra as opções e manda o número.
     pub escolha: Option<Escolha>,
+    /// O processo do agente ainda não está rodando na PTY (o shell acabou de abrir e o
+    /// `claude --resume` está sendo digitado). A conversa mostra "abrindo" em vez de "não reconhecida".
+    pub iniciando: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
@@ -227,10 +230,23 @@ pub fn ready(screen: &vt100::Screen, provider: &str) -> bool {
     // history (confirmed against a real running session — the idle composer never re-shows it).
     // The structural checks below are strict enough on their own to recognize the composer.
     // Antigravity: "? for shortcuts" no rodapé só existe parado; trabalhando vira "esc to cancel".
-    let brand = match provider { "claude" => true, "codex" => text.contains("OpenAI Codex"), "antigravity" => text.contains("? for shortcuts"), _ => false };
+    // Codex: o cabeçalho "OpenAI Codex" também sai da tela depois de uma resposta comprida (conferido
+    // no 0.154.0 — a conversa travava em "não reconhecida"); quem garante que é o Codex é o `provider_running`.
+    let brand = match provider { "claude" | "codex" => true, "antigravity" => text.contains("? for shortcuts"), _ => false };
     brand && screen.bracketed_paste() && composer_vazio(screen)
-        && !text.contains("Esc to cancel") && !text.contains("esc to interrupt") && !text.contains("esc to cancel")
+        && !text.contains("Esc to cancel") && !area_do_turno(&text).contains("esc to interrupt") && !text.contains("esc to cancel")
         && approval(&text,provider).is_none()
+}
+
+/// Onde a CLI escreve o "esc to interrupt": a linha de status logo acima do campo (`✻ Mulling… (esc
+/// to interrupt)`, `• Working (3s • esc to interrupt)`) e o rodapé embaixo dele. Procurar na tela
+/// inteira pegava o texto da conversa — um diff de código com `"esc to interrupt"` deixava a sessão
+/// "trabalhando" para sempre, mesmo parada no `done`. Sem campo à vista, as últimas linhas.
+pub fn area_do_turno(texto: &str) -> String {
+    let linhas: Vec<&str> = texto.lines().collect();
+    let campo = linhas.iter().rposition(|l| { let l = l.trim_start(); l.starts_with('❯') || l.starts_with('›') });
+    let inicio = campo.map_or(linhas.len().saturating_sub(8), |i| i.saturating_sub(4));
+    linhas[inicio..].join("\n")
 }
 
 /// Turno em andamento com o campo livre: o Claude Code (e o Codex) aceitam digitar e mandar
@@ -238,9 +254,9 @@ pub fn ready(screen: &vt100::Screen, provider: &str) -> bool {
 /// do `ready`, só que com o "esc to interrupt" na tela em vez de proibido por ele.
 pub fn pode_enfileirar(screen: &vt100::Screen, provider: &str) -> bool {
     let text = screen.contents();
-    let brand = match provider { "claude" => true, "codex" => text.contains("OpenAI Codex"), _ => false };
+    let brand = matches!(provider, "claude" | "codex");
     brand && screen.bracketed_paste() && composer_vazio(screen)
-        && text.to_lowercase().contains("esc to interrupt")
+        && area_do_turno(&text).to_lowercase().contains("esc to interrupt")
         && approval(&text,provider).is_none()
 }
 
@@ -335,15 +351,15 @@ pub fn approval(text: &str, provider: &str) -> Option<(String, String, String)> 
         _ => return None,
     };
     let normalize = |line: &str| line.trim_start_matches(['❯','›',' ']).to_string();
-    let selected = lines.iter().filter(|line| line.starts_with('❯') || line.starts_with('›')).count();
-    if selected != 1 { return None; }
-    if lines.iter().filter(|l| **l == question).count() != 1
-        || lines.iter().filter(|l| normalize(l) == yes).count() != 1
-        || lines.iter().filter(|l| normalize(l) == no).count() != 1 { return None; }
-    let start = lines.iter().position(|l| *l == question)?;
-    // The question and choices must be one contiguous dialog, not old scrollback.
+    // The question and choices must be one contiguous dialog, not old scrollback. Everything is
+    // counted from the question down: the user's own message above it also starts with `❯`/`›`, and
+    // counting the whole screen made every real dialog look like it had two selections.
+    let start = lines.iter().rposition(|l| *l == question)?;
     let dialog = &lines[start..];
-    if dialog.len() > 24 || !dialog.iter().any(|l| normalize(l) == yes) || !dialog.iter().any(|l| normalize(l) == no) { return None; }
+    let selected = dialog.iter().filter(|line| line.starts_with('❯') || line.starts_with('›')).count();
+    if dialog.len() > 24 || selected != 1
+        || dialog.iter().filter(|l| normalize(l) == yes).count() != 1
+        || dialog.iter().filter(|l| normalize(l) == no).count() != 1 { return None; }
     Some((if provider == "codex" { "y" } else { "1\r" }.into(),
         if provider == "codex" { "\x1b" } else { "3\r" }.into(),text.trim().to_owned()))
 }
@@ -449,7 +465,8 @@ pub fn capabilities(session: &Arc<LiveSession>) -> Capabilities {
     let context = session.interaction.lock().expect("screen poisoned");
     let meta = session.meta.lock().expect("metadata poisoned");
     let provider = meta.provider.as_deref().unwrap_or("");
-    let available = !session.reserved.load(Ordering::SeqCst) && provider_running(meta.pid,provider);
+    let rodando = provider_running(meta.pid,provider);
+    let available = !session.reserved.load(Ordering::SeqCst) && rodando;
     let dialog = approval(&context.parser.screen().contents(),provider);
     let approve = available && dialog.is_some();
     let prompt = available && ready(context.parser.screen(),provider);
@@ -461,7 +478,7 @@ pub fn capabilities(session: &Arc<LiveSession>) -> Capabilities {
         "antigravity" => motivo_antigravity(context.parser.screen(), available, session.reserved.load(Ordering::SeqCst)),
         _ => "Entrada do CLI não reconhecida ou sessão ocupada".into(),
     });
-    Capabilities { prompt, approve, revision: context.revision(session), approval_text: dialog.map(|d|d.2), reason, enfileirar, escolha }
+    Capabilities { prompt, approve, revision: context.revision(session), approval_text: dialog.map(|d|d.2), reason, enfileirar, escolha, iniciando: !rodando }
 }
 
 /// Por que o campo do Antigravity não foi reconhecido, em palavras: qual das condições do `ready`
@@ -717,6 +734,67 @@ const CICLAR_MODO_ALTERNATIVO: &[u8] = b"\x1bm";
 /// Quantas vezes vale apertar: o ciclo tem quatro estados, e uma volta inteira é o suficiente.
 const VOLTAS_DO_CICLO: usize = 4;
 
+/// Relê até `pronto` valer ou o tempo acabar.
+fn esperar(pronto: &dyn Fn() -> bool, tempo: Duration) -> bool {
+    let limite = Instant::now() + tempo;
+    while Instant::now() < limite {
+        if pronto() { return true; }
+        std::thread::sleep(Duration::from_millis(80));
+    }
+    pronto()
+}
+
+/// Rótulo do preset do `/permissions` do Codex que equivale ao auto do Claude: um revisor decide e só
+/// pergunta o que for arriscado. Os outros: "Read Only", "Ask for approval", "Full Access".
+const AUTO_DO_CODEX: &str = "Approve for me";
+
+/// Menu do `/permissions` (Codex 0.154.0, tela real):
+/// `  Update Model Permissions` / `› 3. Approve for me (current)  Only ask…` / `Press enter to confirm…`.
+/// Devolve (número marcado agora, número do preset auto).
+fn menu_de_permissoes(texto: &str, rotulo: &str) -> Option<(u8, u8)> {
+    if !texto.contains("Update Model Permissions") { return None; }
+    let opcao = |linha: &str| -> Option<(bool, u8, String)> {
+        let marcada = linha.trim_start().starts_with('›');
+        let resto = linha.trim().trim_start_matches('›').trim();
+        let (numero, rotulo) = resto.split_once(". ")?;
+        Some((marcada, numero.parse().ok()?, rotulo.to_owned()))
+    };
+    let opcoes: Vec<_> = texto.lines().filter_map(opcao).collect();
+    let marcada = opcoes.iter().find(|o| o.0)?.1;
+    let alvo = opcoes.iter().find(|o| o.2.starts_with(rotulo))?.1;
+    Some((marcada, alvo))
+}
+
+/// Abre o `/permissions` no campo vazio, anda até "Approve for me" e confirma. Erro com motivo se o
+/// menu não abrir ou não fechar — nunca aperta às cegas.
+fn permissoes_do_codex(rotulo: &str, tela: &dyn Fn() -> String, pronto: &dyn Fn() -> bool, escrever: &dyn Fn(&[u8]) -> Result<()>) -> Result<()> {
+    if !esperar(pronto, Duration::from_millis(1_500)) {
+        return Err(anyhow!("O Codex não está com o campo livre para trocar as permissões"));
+    }
+    escrever(b"/permissions")?;
+    std::thread::sleep(Duration::from_millis(300));
+    escrever(b"\r")?;
+    if !esperar(&|| menu_de_permissoes(&tela(), rotulo).is_some(), Duration::from_millis(3_000)) {
+        let _ = escrever(b"\x1b");
+        return Err(anyhow!("O menu de permissões do Codex não abriu"));
+    }
+    let (marcada, alvo) = menu_de_permissoes(&tela(), rotulo).ok_or_else(|| anyhow!("Menu de permissões sem \"{rotulo}\""))?;
+    let seta: &[u8] = if alvo > marcada { b"\x1b[B" } else { b"\x1b[A" };
+    for _ in 0..marcada.abs_diff(alvo) {
+        escrever(seta)?;
+        std::thread::sleep(Duration::from_millis(60));
+    }
+    if !esperar(&|| menu_de_permissoes(&tela(), rotulo).is_some_and(|(m, a)| m == a), Duration::from_millis(1_000)) {
+        let _ = escrever(b"\x1b");
+        return Err(anyhow!("Não consegui marcar \"{rotulo}\" no menu do Codex"));
+    }
+    escrever(b"\r")?;
+    if !esperar(&|| menu_de_permissoes(&tela(), rotulo).is_none(), Duration::from_millis(2_000)) {
+        return Err(anyhow!("O menu de permissões do Codex não fechou"));
+    }
+    Ok(())
+}
+
 /// Modo de permissão que o rodapé do Claude Code está mostrando.
 ///
 /// O rodapé é a fonte **imediata**: o transcript também registra a troca, mas com atraso, e este
@@ -725,7 +803,8 @@ const VOLTAS_DO_CICLO: usize = 4;
 /// rodapé, então a ausência das outras marcas é o que o identifica.
 pub fn modo_atual(screen: &vt100::Screen) -> Option<&'static str> {
     let texto = screen.contents().to_lowercase();
-    if texto.contains("plan mode on") {
+    // Codex: "Plan mode (shift+tab to cycle)" à direita do rodapé (0.154.0, conferido na CLI real).
+    if texto.contains("plan mode on") || texto.contains("plan mode (shift+tab") {
         return Some("plan");
     }
     if texto.contains("auto mode on") {
@@ -741,8 +820,18 @@ pub fn modo_atual(screen: &vt100::Screen) -> Option<&'static str> {
 
 /// Modo de uma sessão viva, lido da tela dela. `None` quando o rodapé não está visível.
 pub fn modo_da_sessao(session: &Arc<LiveSession>) -> Option<&'static str> {
+    let provider = session.meta.lock().ok()?.provider.clone().unwrap_or_default();
     let context = session.interaction.lock().ok()?;
-    modo_atual(context.parser.screen())
+    modo_com_provider(context.parser.screen(), &provider)
+}
+
+/// O shift+tab do Codex só alterna Padrão ↔ Plan, e o Padrão não escreve nada no rodapé: com o
+/// campo à vista e sem a marca do Plan, conta como "auto" — o preset que a conta já abre ("Approve
+/// for me") e o que o botão Auto escolhe no `/permissions`.
+// ponytail: o preset atual não aparece na tela; quem trocar à mão para "Ask for approval" continua
+// vendo Auto aceso. Ler o `approval_policy` do rollout da sessão se isso confundir.
+fn modo_com_provider(screen: &vt100::Screen, provider: &str) -> Option<&'static str> {
+    modo_atual(screen).or_else(|| (provider == "codex" && ready(screen, provider)).then_some("auto"))
 }
 
 /// Alterna o modo de permissão até chegar em `alvo` (`plan` ou `auto`), como o shift+tab faz no
@@ -751,9 +840,10 @@ pub fn modo_da_sessao(session: &Arc<LiveSession>) -> Option<&'static str> {
 /// Mesmo formato do `trust_dialog_keys`: manda tecla, relê a tela, repete. Falha honesta — se o
 /// rodapé não reagir, devolve erro com motivo em vez de seguir apertando às cegas.
 pub fn alternar_modo(state: &Arc<EngineState>, session: &Arc<LiveSession>, alvo: &str) -> Result<String> {
+    let provider = session.meta.lock().map_err(|_| anyhow!("metadata poisoned"))?.provider.clone().unwrap_or_default();
     let ler_modo = || -> Result<Option<&'static str>> {
         let context = session.interaction.lock().map_err(|_| anyhow!("screen poisoned"))?;
-        Ok(modo_atual(context.parser.screen()))
+        Ok(modo_com_provider(context.parser.screen(), &provider))
     };
     let escrever = |bytes: &[u8]| -> Result<()> {
         let mut context = session.interaction.lock().map_err(|_| anyhow!("screen poisoned"))?;
@@ -773,6 +863,17 @@ pub fn alternar_modo(state: &Arc<EngineState>, session: &Arc<LiveSession>, alvo:
     };
 
     let inicial = ler_modo()?;
+    // Codex: o "auto" dele mora no `/permissions` ("Approve for me"), não no shift+tab. Sai do Plan
+    // (se estiver) pelo laço abaixo e depois escolhe o preset no menu.
+    if provider == "codex" && alvo == "auto" {
+        if inicial == Some("plan") {
+            escrever(CICLAR_MODO)?;
+            esperar(&|| ler_modo().ok().flatten() == Some("auto"), Duration::from_millis(2_000));
+        }
+        let tela = || session.interaction.lock().map(|c| c.parser.screen().contents()).unwrap_or_default();
+        let pronto = || session.interaction.lock().map(|c| ready(c.parser.screen(), "codex")).unwrap_or(false);
+        return permissoes_do_codex(AUTO_DO_CODEX, &tela, &pronto, &escrever).map(|_| alvo.to_string());
+    }
     if inicial == Some(alvo) {
         return Ok(alvo.to_string());
     }
@@ -946,6 +1047,7 @@ mod tests {
         assert_eq!(modo_atual(tela("⏵ accept edits on").parser.screen()), Some("acceptEdits"));
         // Sem marca nenhuma não dá para afirmar o modo: pode ser só um rodapé fora da tela.
         assert_eq!(modo_atual(tela("nada aqui").parser.screen()), None);
+        assert_eq!(modo_atual(tela("  gpt-5.6-sol high · D:/proj          Plan mode (shift+tab to cycle)").parser.screen()), Some("plan"));
     }
 
     /// Tela **real** do Claude Code ocioso, capturada de uma sessão aberta pelo celular (30×120).
@@ -1120,5 +1222,127 @@ Ready to submit your answers?
         assert!(approval("Allow? (y/n)","claude").is_none());
         assert!(approval("Do you want to proceed?\n1. Always allow\n3. No","claude").is_none());
         assert_eq!(approval("Do you want to proceed?\n❯ 1. Yes\n2. Yes, always\n3. No","claude").unwrap().0,"1\r");
+    }
+
+    /// Telas reais (Claude Code 2.1.305 e Codex 0.154.0, capturadas pela `sonda_aprovacao`): a mensagem
+    /// da pessoa fica visível acima com o mesmo `❯`/`›` da opção marcada, e nada era reconhecido.
+    /// Tela real do `/permissions` (Codex 0.154.0), aberta em Read Only e no padrão da conta.
+    #[test] fn menu_de_permissoes_do_codex() {
+        let menu = |marcada: u8| {
+            let rotulos = ["Read Only", "Ask for approval", "Approve for me", "Full Access"];
+            let linhas: Vec<String> = rotulos.iter().enumerate().map(|(i, r)| {
+                let n = i as u8 + 1;
+                format!("{} {n}. {r}{}  descrição", if n == marcada { "›" } else { " " }, if n == marcada { " (current)" } else { "" })
+            }).collect();
+            format!("  Update Model Permissions\n\n{}\n\n  Press enter to confirm or esc to go back\n", linhas.join("\n"))
+        };
+        assert_eq!(menu_de_permissoes(&menu(1), AUTO_DO_CODEX), Some((1, 3)));
+        assert_eq!(menu_de_permissoes(&menu(3), AUTO_DO_CODEX), Some((3, 3)));
+        assert_eq!(menu_de_permissoes("› Ask Codex to do anything", AUTO_DO_CODEX), None);
+    }
+
+    #[test] fn aprovacao_real_com_a_mensagem_visivel() {
+        let claude = "❯ Run exactly this shell command and nothing else: cmd /c ver\n  ⎿  $ cmd /c ver\n────────\n PowerShell command\n Show Windows version\n cmd /c ver\n This command requires approval\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don’t ask again for: cmd /c ver\n   3. No\n Esc to cancel · Tab to amend\n";
+        assert_eq!(approval(claude, "claude").map(|a| (a.0, a.1)), Some(("1\r".into(), "3\r".into())));
+        let codex = "› Test of the approval UI: run the shell command 'cmd /c echo oi'\n• Running cmd /c echo oi\n  Would you like to run the following command?\n  Environment: local\n  Reason: validar a interface\n  $ cmd /c echo oi\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `cmd /c echo oi` (p)\n  3. No, and tell Codex what to do differently (esc)\n  Press enter to confirm or esc to cancel\n";
+        assert_eq!(approval(codex, "codex").map(|a| (a.0, a.1)), Some(("y".into(), "\x1b".into())));
+    }
+}
+
+/// Sonda manual: abre a CLI de verdade numa PTY, pede um comando inofensivo e imprime a tela de
+/// aprovação e o que `approval` reconhece. `OMNI_SONDA=claude|codex cargo test -p omni-engine sonda_aprovacao -- --ignored --nocapture`
+#[cfg(test)]
+mod sonda {
+    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+    use std::io::{Read, Write};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+    use super::composer_vazio;
+
+    #[test]
+    #[ignore = "abre a CLI real e gasta um pouco de uso da conta"]
+    fn sonda_aprovacao() {
+        let cli = std::env::var("OMNI_SONDA").unwrap_or_else(|_| "claude".into());
+        let pty = native_pty_system().openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let pedido = std::env::var("OMNI_SONDA_PEDIDO").unwrap_or_else(|_| "Run exactly this shell command and nothing else: cmd /c ver".into());
+        let mut comando = CommandBuilder::new(std::env::var("OMNI_SONDA_BIN").unwrap_or_else(|_| format!("{cli}.exe")));
+        if cli == "codex" { comando.arg("-c"); comando.arg("check_for_update_on_startup=false"); if let Ok(extra) = std::env::var("OMNI_SONDA_ARGS") { for a in extra.split('|').filter(|a| !a.is_empty()) { comando.arg(a); } } }
+        if cli == "claude" { for a in ["--permission-mode", "default"] { comando.arg(a); } }
+        if !pedido.is_empty() { comando.arg(&pedido); }
+        comando.cwd(std::env::var("OMNI_SONDA_CWD").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned()));
+        let mut filho = pty.slave.spawn_command(comando).unwrap();
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(40, 120, 0)));
+        let mut leitor = pty.master.try_clone_reader().unwrap();
+        let mut escritor = pty.master.take_writer().unwrap();
+        let p = parser.clone();
+        let pedidos = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let total = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (pd, tt) = (pedidos.clone(), total.clone());
+        std::thread::spawn(move || { let mut buf = [0u8; 8192]; while let Ok(n) = leitor.read(&mut buf) { if n == 0 { break; }
+            tt.fetch_add(n, std::sync::atomic::Ordering::SeqCst);
+            // ConPTY pergunta a posição do cursor (ESC[6n) e espera resposta, como o xterm daria.
+            pd.fetch_add(buf[..n].windows(4).filter(|w| *w == b"\x1b[6n").count(), std::sync::atomic::Ordering::SeqCst);
+            p.lock().unwrap().process(&super::sem_substituto(&buf[..n])); } });
+        let mut respondidos = 0;
+        let limite = Instant::now() + Duration::from_secs(120);
+        let mut confiou = false;
+        let tela = loop {
+            std::thread::sleep(Duration::from_millis(500));
+            let agora = pedidos.load(std::sync::atomic::Ordering::SeqCst);
+            for _ in respondidos..agora { let _ = escritor.write_all(b"\x1b[1;1R"); }
+            respondidos = agora;
+            let tela = parser.lock().unwrap().screen().contents();
+            // Pasta nova: aceita a confiança uma vez (só leitura de `ver`).
+            if !confiou && (tela.contains("trust") && (tela.contains("1. Yes") || tela.contains("Yes, I trust"))) { let _ = escritor.write_all(b"\r"); confiou = true; continue; }
+            if tela.contains("Do you want") || tela.contains("Would you like") || Instant::now() > limite { break tela; }
+            // Troca para o auto do Codex com a mesma função do engine e reabre o menu para conferir.
+            if std::env::var("OMNI_SONDA_AUTO").is_ok() && (pedido.is_empty() || tela.lines().any(|l| l.trim() == "• ok")) && super::ready(parser.lock().unwrap().screen(), &cli) {
+                let esc = std::cell::RefCell::new(&mut escritor);
+                let rotulo = std::env::var("OMNI_SONDA_ROTULO").unwrap_or_else(|_| super::AUTO_DO_CODEX.into());
+                let resultado = super::permissoes_do_codex(&rotulo, &|| parser.lock().unwrap().screen().contents(),
+                    &|| super::ready(parser.lock().unwrap().screen(), "codex"),
+                    &|b: &[u8]| { esc.borrow_mut().write_all(b)?; Ok(()) });
+                println!("=== permissoes_do_codex: {resultado:?}");
+                std::thread::sleep(Duration::from_secs(1));
+                println!("=== DEPOIS DO ENTER ===\n{}\n=== FIM", parser.lock().unwrap().screen().contents());
+                let _ = esc.borrow_mut().write_all(b"/permissions");
+                std::thread::sleep(Duration::from_millis(300));
+                let _ = esc.borrow_mut().write_all(b"\r");
+                std::thread::sleep(Duration::from_secs(3));
+                break parser.lock().unwrap().screen().contents();
+            }
+            // Pedido sem aprovação: espera o turno acabar (campo vazio de novo, sem "esc to interrupt").
+            if std::env::var("OMNI_SONDA_ATE_PRONTO").is_ok() && tela.contains("\n60") && !tela.to_lowercase().contains("esc to interrupt")
+                && composer_vazio(parser.lock().unwrap().screen()) { break tela; }
+            // Digita um comando (ex.: `/permissions`) no campo e mostra a tela que ele abre.
+            if let Ok(digitar) = std::env::var("OMNI_SONDA_DIGITAR") {
+                if tela.contains("Ask Codex to do anything") || composer_vazio(parser.lock().unwrap().screen()) {
+                    std::thread::sleep(Duration::from_secs(1));
+                    let _ = escritor.write_all(digitar.as_bytes());
+                    std::thread::sleep(Duration::from_millis(600));
+                    let _ = escritor.write_all(b"\r");
+                    std::thread::sleep(Duration::from_secs(3));
+                    break parser.lock().unwrap().screen().contents();
+                }
+                continue;
+            }
+            // Sem pedido: só abre, aperta shift+tab N vezes e mostra o rodapé de cada uma.
+            if pedido.is_empty() && (tela.contains("? for shortcuts") || tela.contains("shift+tab") || Instant::now() + Duration::from_secs(100) > limite) {
+                for i in 0..3 {
+                    std::thread::sleep(Duration::from_secs(2));
+                    let rodape: Vec<String> = parser.lock().unwrap().screen().contents().lines().rev().filter(|l| !l.trim().is_empty()).take(3).map(str::to_owned).collect();
+                    println!("--- shift+tab x{i}: {rodape:?} modo_atual={:?}", super::modo_atual(parser.lock().unwrap().screen()));
+                    let _ = escritor.write_all(b"\x1b[Z");
+                }
+                break parser.lock().unwrap().screen().contents();
+            }
+        };
+        std::thread::sleep(Duration::from_secs(1));
+        let tela = { let t = parser.lock().unwrap().screen().contents(); if t.trim().is_empty() { tela } else { t } };
+        println!("bytes={}", total.load(std::sync::atomic::Ordering::SeqCst));
+        println!("=== TELA ({cli}) ===\n{tela}\n=== approval: {:?}", super::approval(&tela, &cli).map(|a| (a.0, a.1)));
+        { let p = parser.lock().unwrap(); println!("=== ready: {} · modo: {:?}", super::ready(p.screen(), &cli), super::modo_com_provider(p.screen(), &cli)); }
+        let _ = escritor.write_all(b"\x1b"); std::thread::sleep(Duration::from_millis(500));
+        let _ = filho.kill();
     }
 }

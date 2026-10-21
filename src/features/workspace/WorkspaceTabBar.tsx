@@ -6,7 +6,7 @@ import { AGENT_ICON } from "../../components/ui/AgentIcon";
 import { useSession, useSessionProvider } from "../terminal/sessionProviders";
 import { EditableLabel } from "../../components/ui/EditableLabel";
 import { renameSession } from "../terminal/terminalService";
-import { iconForPath } from "../files/fileIcons";
+import { iconForPath, iconStyle } from "../files/fileIcons";
 import type { PaneKind, PaneNode, WorkspaceAction } from "../../types/workspace";
 import { startTabDrag } from "./tabPointerDrag";
 
@@ -240,6 +240,11 @@ function TabIcon({ item, className }: { item: PaneNode["tabs"][number]; classNam
   const doKind = daMarca ?? ICONE_POR_KIND[item.kind];
   // git-diff carrega `staged::<caminho>` no resourceId, e não um caminho puro — usar o ícone do
   // kind nesses casos evita inventar extensão a partir de um prefixo.
-  const Icone = doKind ?? iconForPath(item.resourceId ?? item.title);
-  return <Icone className={className} aria-hidden />;
+  if (doKind) {
+    const Marca = doKind;
+    return <Marca className={className} aria-hidden />;
+  }
+  const caminho = item.resourceId ?? item.title;
+  const Icone = iconForPath(caminho);
+  return <Icone className={className} style={iconStyle(caminho)} aria-hidden />;
 }

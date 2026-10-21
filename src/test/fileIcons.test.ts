@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as PixelIcon from "../components/ui/PixelIcon";
-import { MAPAS_DE_ICONE, iconForEntry, iconForPath } from "../features/files/fileIcons";
+import * as AgentIcon from "../components/ui/AgentIcon";
+import { MAPAS_DE_COR, MAPAS_DE_ICONE, colorForEntry, iconForEntry, iconForPath, iconStyle } from "../features/files/fileIcons";
 
 describe("iconForEntry", () => {
   it("usa a extensão, ignorando caixa", () => {
@@ -28,6 +29,9 @@ describe("iconForEntry", () => {
   it("pasta conhecida tem ícone próprio; o resto é pasta comum", () => {
     expect(iconForEntry("node_modules", true)).toBe(PixelIcon.PackageIcon);
     expect(iconForEntry("src", true)).toBe(PixelIcon.CodeIcon);
+    expect(iconForEntry(".claude", true)).toBe(AgentIcon.ClaudeIcon);
+    expect(iconForEntry(".cursor", true)).toBe(AgentIcon.CursorIcon);
+    expect(colorForEntry("apps", true)).not.toBe(colorForEntry("qualquer", true));
     expect(iconForEntry("qualquer-coisa", true)).toBe(PixelIcon.FolderIcon);
   });
 
@@ -49,7 +53,8 @@ describe("iconForEntry", () => {
 describe("integridade dos mapas", () => {
   it("todo ícone referenciado existe de fato em PixelIcon", () => {
     // Um nome de export digitado errado vira `undefined` e só explode ao renderizar a árvore.
-    const exportados = new Set(Object.values(PixelIcon));
+    // Pixel do pacote ou marca de agente (`.claude`, `.cursor`) — nada de fora desses dois.
+    const exportados = new Set([...Object.values(PixelIcon), ...Object.values(AgentIcon)]);
     for (const [nomeDoMapa, mapa] of Object.entries(MAPAS_DE_ICONE)) {
       for (const [chave, icone] of Object.entries(mapa)) {
         expect(icone, `${nomeDoMapa}["${chave}"] aponta para um ícone inexistente`).toBeTypeOf(
@@ -83,5 +88,29 @@ describe("integridade dos mapas", () => {
       ...[...distintos].map((icone) => usados.filter((usado) => usado === icone).length)
     );
     expect(maisComum / usados.length).toBeLessThan(0.15);
+  });
+});
+
+describe("cores do Material", () => {
+  it("todo ícone mapeado tem cor, e toda cor é de um ícone mapeado", () => {
+    for (const nome of ["PASTAS", "NOMES", "EXTENSOES"] as const) {
+      const icones = Object.keys(MAPAS_DE_ICONE[nome]).sort();
+      expect(Object.keys(MAPAS_DE_COR[nome]).sort(), `${nome}: chaves de cor e de ícone divergem`).toEqual(icones);
+      for (const [chave, cor] of Object.entries(MAPAS_DE_COR[nome])) {
+        expect(cor, `${nome}["${chave}"]`).toMatch(/^#[0-9a-f]{6}$/);
+      }
+    }
+  });
+
+  it("nome exato vence a extensão; pasta sem regra tem a cor padrão; arquivo desconhecido fica sem cor", () => {
+    expect(colorForEntry("App.TSX", false)).toBe("#00bcd4");
+    expect(colorForEntry("package.json", false)).not.toBe(colorForEntry("dados.json", false));
+    expect(colorForEntry("qualquer-coisa", true)).toBe("#90a4ae");
+    expect(colorForEntry("coisa.xyzabc", false)).toBeUndefined();
+    expect(iconStyle("coisa.xyzabc")).toBeUndefined();
+  });
+
+  it("iconStyle usa o último segmento do caminho e escurece pelo tema", () => {
+    expect(iconStyle("C:\\dev\\src\\main.rs")?.color).toBe("color-mix(in oklab, #ff7043 var(--mistura-arquivo, 100%), black)");
   });
 });

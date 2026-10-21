@@ -302,6 +302,25 @@ pub fn delete_profile(profile_id: String) -> Result<(), String> {
     save(&store)
 }
 
+/// Conta mestra das conversas de cada IA (`omni_core::mestra`): `provider → id da conta`, já com
+/// a padrão (a primeira criada) onde o usuário não escolheu.
+#[tauri::command(async)]
+pub fn contas_mestras() -> Result<std::collections::HashMap<String, String>, String> {
+    let dir = crate::engine_client::engine_dir()?;
+    let perfis = list_profiles();
+    Ok(SUPPORTED_PROVIDERS.iter()
+        .filter_map(|provider| omni_core::mestra::mestra(&dir, &perfis, provider).map(|p| ((*provider).to_owned(), p.id.clone())))
+        .collect())
+}
+
+/// Troca a mestra. Só muda onde as próximas conversas passam a morar; as já ligadas seguem um
+/// arquivo só, e as cópias antigas se juntam em Armazenamento.
+#[tauri::command(async)]
+pub fn definir_mestra(profile_id: String) -> Result<(), String> {
+    let perfil = find(&profile_id).ok_or("Perfil não encontrado")?;
+    omni_core::mestra::escolher(&crate::engine_client::engine_dir()?, &perfil.provider, &perfil.id).map_err(|e| e.to_string())
+}
+
 pub fn touch(profile_id: &str) {
     let mut store = with_defaults(load());
     if let Some(profile) = store.profiles.iter_mut().find(|profile| profile.id == profile_id) {

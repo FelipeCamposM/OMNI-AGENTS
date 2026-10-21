@@ -14,6 +14,22 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.6",
+    date: "2026-10-21",
+    changes: [
+      "Novo: Configurações → Armazenamento mostra quanto espaço as conversas ocupam no PC (total, por agente e por conta) e sugere limpar as que você não usa há 30 ou 60 dias.",
+      "Novo: conta mestra das conversas. Marque com a estrela em Configurações → Agentes; ao trocar de conta, a conversa continua num arquivo só, sem ocupar espaço em dobro.",
+      "Tela de Agentes refeita, com resumo de quais contas estão prontas, qual tem mais folga e quando o limite volta.",
+      "Novo: tarefas na barra de cima, com prazo, seletor de hora e de data, e botão para copiar o texto da tarefa.",
+      "Ao arrastar projetos e workspaces na lateral, o item segue o mouse.",
+      "O microfone pede permissão numa janela do próprio app e mostra ondas na cor do tema enquanto você fala.",
+      "Novo: vocabulário da voz em Configurações → Geral. Nomes dos seus projetos entram sozinhos e, quando você corrige um ditado, o app pergunta se deve aprender a palavra.",
+      "Títulos das conversas mais curtos: até 3 palavras que resumem o assunto.",
+      "Ao abrir uma conversa fechada, o app mostra cada etapa até o agente ficar pronto, sem o falso \"trabalhando\".",
+      "Na conversa, cada edição de arquivo mostra quantas linhas entraram e saíram; clique para ver o que mudou.",
+    ],
+  },
+  {
     version: "0.7.5",
     date: "2026-10-20",
     changes: [

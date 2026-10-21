@@ -24,3 +24,16 @@ it("comando aparece com $ e leitura de arquivo com ícone próprio", () => {
   expect(screen.getByText("Leu")).toBeInTheDocument();
   expect(container.querySelectorAll("svg.acao-icone").length).toBeGreaterThan(0);
 });
+
+it("edição mostra +/− e abre as linhas alteradas ao clicar", async () => {
+  const { container } = render(<BlocoDeAcoes aoVivo acoes={[
+    { id: "1", role: "assistant", text: "src/a.ts", provider: "claude", kind: "tool", tool: "Edit",
+      diff: { mais: 2, menos: 1, linhas: [" a", "-b", "+B", "+d"] } },
+  ]} />);
+  expect(screen.getByText("+2")).toHaveClass("diff-mais");
+  expect(screen.getByText("−1")).toHaveClass("diff-menos");
+  expect(container.querySelector(".acao-diff")).toBeNull();
+  screen.getByRole("button", { name: /\+2/ }).click();
+  expect(await screen.findByLabelText("Alterações")).toBeInTheDocument();
+  expect(screen.getByText("-b")).toHaveClass("diff-linha-menos");
+});

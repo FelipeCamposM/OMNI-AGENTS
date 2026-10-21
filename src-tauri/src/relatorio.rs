@@ -68,3 +68,9 @@ pub fn relatorio_ia(dias: u32, fuso_min: i32, projetos: Vec<String>) -> Result<R
         Ok(RelatorioIa { uso, commits })
     })
 }
+
+/// Configurações → Armazenamento: quanto do disco as conversas ocupam, por conta.
+#[tauri::command(async)]
+pub fn armazenamento() -> Result<omni_core::armazenamento::Armazenamento, String> {
+    Ok(omni_core::armazenamento::medir(&crate::engine_client::engine_dir()?))
+}

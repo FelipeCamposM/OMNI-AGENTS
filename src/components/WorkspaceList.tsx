@@ -1,19 +1,29 @@
+import { SelosDeAtencao } from "./AttentionPanel";
+import type { AttentionItem } from "../features/terminal/useAttention";
 import { useState } from "react";
-import { BoxIcon, CloseIcon, EditIcon, FolderPlusIcon } from "./ui/PixelIcon";
+import { BoxIcon, CloseIcon, EditIcon, FolderPlusIcon, SlidersIcon } from "./ui/PixelIcon";
 import { ResumoDeAgentes } from "./ConversaStatus";
+import { AbrirWorkspace, GerenciarWorkspaces } from "./WorkspaceModais";
+import { arrastarParaOrdenar } from "../lib/ordenarArrastando";
 import type { TerminalSession } from "../features/terminal/terminalService";
 import type { WorkspaceState } from "../types/workspace";
 
 interface WorkspaceListProps {
   workspaces: WorkspaceState[];
   activeWorkspaceId: string | null;
-  attentionByWorkspace: Record<string, number>;
+  attention: AttentionItem[];
   /** Conversas de agente de todos os projetos (resumo por workspace). */
   agentSessions?: TerminalSession[];
   naoVistas?: Set<string>;
   onSelect: (workspaceId: string) => void;
-  onCreate: () => void;
-  onClose: (workspaceId: string) => void;
+  onCreate: (name: string) => void;
+  /** Fechar na lateral só esconde: reabre pelo "+" ou pelo Gerenciar. */
+  onHide: (workspaceId: string) => void;
+  onShow: (workspaceId: string) => void;
+  /** Excluir de vez (Gerenciar → confirmação). */
+  onDelete: (workspaceId: string) => void;
+  onMove: (workspaceId: string, beforeId: string | null) => void;
+  onRemoveProject: (workspaceId: string, projectId: string) => void;
   onRename: (workspaceId: string, name: string) => void;
 }
 
@@ -29,15 +39,21 @@ interface WorkspaceListProps {
 export function WorkspaceList({
   workspaces,
   activeWorkspaceId,
-  attentionByWorkspace,
+  attention,
   agentSessions = [],
   naoVistas = new Set(),
   onSelect,
   onCreate,
-  onClose,
+  onHide,
+  onShow,
+  onDelete,
+  onMove,
+  onRemoveProject,
   onRename,
 }: WorkspaceListProps) {
   const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [modal, setModal] = useState<"abrir" | "gerenciar" | null>(null);
+  const visiveis = workspaces.filter((workspace) => !workspace.hidden);
 
   function confirmarRename(workspaceId: string, valor: string) {
     setEditandoId(null);
@@ -49,20 +65,43 @@ export function WorkspaceList({
     <div className="space-y-1">
       <div className="flex items-center justify-between px-3 pt-1">
         <p className="text-text-muted text-[10px] font-medium uppercase tracking-wider">Workspaces</p>
-        <button
-          data-nav-item
-          type="button"
-          onClick={onCreate}
-          aria-label="Criar workspace"
-          title="Criar workspace"
-          className="text-text-muted hover:text-text-primary rounded-none p-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-        >
-          <FolderPlusIcon className="w-3.5 h-3.5" aria-hidden="true" />
-        </button>
+        <span className="flex items-center gap-1">
+          <button
+            data-nav-item
+            type="button"
+            onClick={() => setModal("gerenciar")}
+            aria-label="Gerenciar workspaces"
+            title="Gerenciar workspaces"
+            className="text-text-muted hover:text-text-primary rounded-none p-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <SlidersIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+          <button
+            data-nav-item
+            type="button"
+            onClick={() => setModal("abrir")}
+            aria-label="Abrir workspace"
+            title="Abrir workspace: um novo ou um já existente"
+            className="text-text-muted hover:text-text-primary rounded-none p-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            <FolderPlusIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        </span>
       </div>
 
-      {workspaces.map((workspace) => {
-        const pendentes = attentionByWorkspace[workspace.id] ?? 0;
+      {modal === "abrir" && (
+        <AbrirWorkspace workspaces={workspaces} onFechar={() => setModal(null)}
+          onNovo={(nome) => { onCreate(nome); setModal(null); }}
+          onReabrir={(id) => { onShow(id); setModal(null); }} />
+      )}
+      {modal === "gerenciar" && (
+        <GerenciarWorkspaces workspaces={workspaces} activeWorkspaceId={activeWorkspaceId} agentSessions={agentSessions}
+          onFechar={() => setModal(null)} onAbrir={(id) => { onShow(id); setModal(null); }}
+          onExcluir={onDelete} onRemoverProjeto={onRemoveProject} />
+      )}
+
+      {visiveis.map((workspace) => {
+        const pendentes = attention.filter((item) => item.workspaceId === workspace.id);
         const ativo = workspace.id === activeWorkspaceId;
 
         if (editandoId === workspace.id) {
@@ -90,6 +129,8 @@ export function WorkspaceList({
 
         return (
           <div key={workspace.id}
+            data-ordem="workspaces" data-ordem-id={workspace.id}
+            onPointerDown={(evento) => arrastarParaOrdenar(evento, "workspaces", workspace.id, onMove)}
             className={`lateral-item group mx-1 flex items-stretch border-l-2 ring-1 ring-inset transition-colors ${
               ativo ? "lateral-item-ativo border-accent ring-accent/50" : "border-transparent ring-border-subtle/40 hover:ring-border-subtle"
             }`}>
@@ -102,7 +143,7 @@ export function WorkspaceList({
                 event.stopPropagation();
                 setEditandoId(workspace.id);
               }}
-              title="Clique duplo para renomear"
+              title="Clique duplo para renomear · arraste para mudar a ordem"
               className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <span className="lateral-avatar grid h-8 w-8 shrink-0 place-items-center border border-border-subtle">
@@ -119,14 +160,7 @@ export function WorkspaceList({
                   />
                 </span>
               </span>
-              {pendentes > 0 && (
-                <span
-                  aria-label={`${pendentes} ${pendentes === 1 ? "agente esperando" : "agentes esperando"} em ${workspace.name}`}
-                  className="badge-pulse grid h-4 min-w-4 shrink-0 place-items-center bg-danger px-1 text-[10px] font-bold leading-none text-bg-primary"
-                >
-                  {pendentes > 9 ? "9+" : pendentes}
-                </span>
-              )}
+              <SelosDeAtencao items={pendentes} onde={`em ${workspace.name}`} />
             </button>
             <button
               type="button"
@@ -143,8 +177,8 @@ export function WorkspaceList({
             <button
               type="button"
               aria-label={`Fechar workspace ${workspace.name}`}
-              title="Fechar workspace"
-              onClick={() => onClose(workspace.id)}
+              title="Fechar workspace (fica guardado: reabra pelo + ou em Gerenciar)"
+              onClick={() => onHide(workspace.id)}
               className="grid w-7 shrink-0 place-items-center text-text-muted opacity-60 hover:text-danger hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
               <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />

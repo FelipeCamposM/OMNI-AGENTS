@@ -71,6 +71,25 @@ describe("AbaDeAgente", () => {
     expect(await screen.findByText("Resposta anterior")).toBeInTheDocument();
   });
 
+  // Reabrindo uma conversa fechada o `claude --resume` ainda está sendo digitado: antes a conversa
+  // dizia "trabalhando" e depois "entrada não reconhecida". Agora mostra as etapas até o agente subir.
+  it("sessão recém-aberta mostra as etapas até o agente ficar pronto", async () => {
+    let pronto = false;
+    engine.listTerminalSessions.mockResolvedValue([{ id: "s1", conversation_id: "conv-1", created_at_ms: Date.now() }]);
+    engine.engineApi.mockImplementation(async (_method: string, path: string) => ({
+      type: "api", status: 200,
+      body: JSON.stringify(path.includes("/timeline") ? { ...TIMELINE, conversation: { ...CONVERSA, state: "working",
+        capabilities: { ...CONVERSA.capabilities, prompt: pronto, iniciando: !pronto, reason: pronto ? null : "Entrada do CLI não reconhecida" } } } : {}),
+    }));
+    render(<AbaDeAgente agentView="conversa" sessionId="s1"><p>TERMINAL</p></AbaDeAgente>);
+
+    expect(await screen.findByText("Iniciando o Claude")).toBeInTheDocument();
+    expect(screen.queryByText("Resposta anterior")).not.toBeInTheDocument();
+    expect(screen.queryByText(/não reconhecida/)).not.toBeInTheDocument();
+    pronto = true;
+    expect(await screen.findByText("Resposta anterior", undefined, { timeout: 3000 })).toBeInTheDocument();
+  });
+
   it("no modo Terminal e antes de existir sessão, só o terminal", () => {
     const { rerender } = render(<AbaDeAgente agentView="terminal" sessionId="s1"><p>TERMINAL</p></AbaDeAgente>);
     expect(screen.queryByRole("button", { name: /Ver / })).not.toBeInTheDocument();

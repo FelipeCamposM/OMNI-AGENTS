@@ -2784,7 +2784,7 @@ dependencies = [
 
 [[package]]
 name = "omni-agents"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "omni-core",
  "omni-protocol",
@@ -2803,6 +2803,8 @@ dependencies = [
  "tokio",
  "toml 0.9.12+spec-1.1.0",
  "uuid",
+ "webview2-com",
+ "windows-core 0.61.2",
 ]
 
 [[package]]
@@ -2812,11 +2814,13 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "rusqlite",
+ "same-file",
  "serde",
  "serde_json",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
  "toml_edit 0.25.13+spec-1.1.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

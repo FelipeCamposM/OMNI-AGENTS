@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { ApiError, actionKey, request, type Timeline, type Conversation } from "../../mobile/api";
 import { AjustesDaConversa, type Ajustes } from "../../mobile/AjustesDaConversa";
 import { usePoll } from "../../mobile/usePoll";
-import { ChatIcon, TerminalIcon } from "../../components/ui/PixelIcon";
+import { CheckIcon, ChatIcon, TerminalIcon } from "../../components/ui/PixelIcon";
 import { AgentIcon } from "../../components/ui/AgentIcon";
 import { EtiquetaDoStatus, statusDaConversa } from "../../components/ConversaStatus";
 import type { TerminalSession } from "../terminal/terminalService";
@@ -11,7 +11,7 @@ import { ConversationDetail } from "../../mobile/MobileApp";
 import { listTerminalSessions } from "../terminal/terminalService";
 import { useSessionProvider } from "../terminal/sessionProviders";
 import { GitBranchStatus } from "../git/GitBranchStatus";
-import { temConversa } from "../../mobile/api";
+import { NOME_DO_AGENTE, temConversa } from "../../mobile/api";
 import type { AgentView } from "../../types/settings";
 import "../../mobile/mobile.css";
 import "../../web/web.css";
@@ -63,14 +63,14 @@ export function AbaDeAgente({
 
 /** Conversa (id e estado) da sessão desta aba. Relida a cada poucos segundos: o "pronto" (agente
  *  parado) decide se dá para trocar agora. */
-function useConversaDaSessao(sessionId: string) {
+function useConversaDaSessao(sessionId: string, intervaloMs = 3_000) {
   const [conversa, setConversa] = useState<Conversation | null>(null);
   usePoll(async () => {
     const sessao = (await listTerminalSessions()).find((item) => item.id === sessionId);
     if (!sessao?.conversation_id) return;
     const dados = await request<Timeline>(`/conversas/${encodeURIComponent(sessao.conversation_id)}/timeline`);
     if (dados.conversation) setConversa(dados.conversation);
-  }, () => undefined, [sessionId], 3_000);
+  }, () => undefined, [sessionId], intervaloMs);
   return conversa;
 }
 
@@ -203,8 +203,21 @@ function ChatDaSessao({ sessionId, onVerTerminal }: { sessionId: string; onVerTe
   const [pasta, setPasta] = useState<string | null>(null);
   const area = useRef<HTMLDivElement>(null);
   useSoltarArquivos(area);
+  /** Quando a sessão nasceu: só sessão recém-aberta mostra a tela de abertura. */
+  const [criadaEm, setCriadaEm] = useState<number | null>(null);
+  /** Trava: depois que o agente ficou pronto (ou o tempo acabou), a abertura não volta. */
+  const [aberta, setAberta] = useState(false);
   // O estado no topo acompanha o agente (a conversa acima é lida uma vez, para montar o chat).
-  const aoVivo = useConversaDaSessao(sessionId);
+  // Abrindo, relê a cada segundo para as etapas andarem junto com o terminal.
+  const aoVivo = useConversaDaSessao(sessionId, aberta ? 3_000 : 1_000);
+  const caps = (aoVivo ?? conversa)?.capabilities;
+  const pronto = Boolean(caps && (caps.prompt || caps.approve || caps.escolha || caps.enfileirar));
+  useEffect(() => { if (pronto) setAberta(true); }, [pronto]);
+  // ponytail: 45 s fixos; o agente que não sobe nesse tempo cai na conversa com o motivo de sempre.
+  useEffect(() => { const desiste = window.setTimeout(() => setAberta(true), 45_000); return () => window.clearTimeout(desiste); }, []);
+  const recente = criadaEm === null || Date.now() - criadaEm < 90_000;
+  const abrindo = !aberta && !pronto && !erro && recente;
+  const etapa = !conversa ? 0 : !caps || caps.iniciando ? 1 : 2;
 
   const carregar = useCallback(async () => {
     // Sessão recém-aberta: o engine pode ainda estar subindo o processo (wsl.exe frio leva ~3 s) ou
@@ -216,6 +229,7 @@ function ChatDaSessao({ sessionId, onVerTerminal }: { sessionId: string; onVerTe
       try {
         const sessao = (await listTerminalSessions()).find((item) => item.id === sessionId);
         if (sessao?.cwd) setPasta(sessao.cwd);
+        if (sessao?.created_at_ms) setCriadaEm(sessao.created_at_ms);
         if (!sessao?.conversation_id) {
           ultimoErro = "Esta aba ainda não tem uma conversa registrada. Mande a primeira mensagem pelo terminal.";
           continue;
@@ -243,10 +257,13 @@ function ChatDaSessao({ sessionId, onVerTerminal }: { sessionId: string; onVerTe
       <div className="aba-agente-topo">
         <AbasDoAgente vendo="conversa" onTrocar={(aba) => { if (aba === "terminal") onVerTerminal(); }} />
         <span className="flex-1" />
-        {(aoVivo ?? conversa) && <ResumoDaConversa conversa={(aoVivo ?? conversa)!} />}
+        {!abrindo && (aoVivo ?? conversa) && <ResumoDaConversa conversa={(aoVivo ?? conversa)!} />}
         {pasta && <GitBranchStatus projectPath={pasta} />}
       </div>
-      {conversa ? (
+      {abrindo ? (
+        <AbrindoAgente provider={(aoVivo ?? conversa)?.provider ?? null} etapa={etapa}
+          onVerTerminal={onVerTerminal} onPular={() => setAberta(true)} />
+      ) : conversa ? (
         <div className="w-painel-central">
           <ConversationDetail key={conversa.id} conversation={conversa} refresh={carregar} />
         </div>
@@ -260,6 +277,45 @@ function ChatDaSessao({ sessionId, onVerTerminal }: { sessionId: string; onVerTe
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Conversa fechada sendo reaberta: o terminal sobe, o `--resume` é digitado e o agente lê o histórico.
+ * Antes disso a conversa dizia "trabalhando" (saída do shell) e depois "entrada não reconhecida"
+ * (o agente ainda não existia). Aqui cada etapa aparece, com o ícone do agente animado.
+ */
+function AbrindoAgente({ provider, etapa, onVerTerminal, onPular }: {
+  provider: string | null; etapa: number; onVerTerminal: () => void; onPular: () => void;
+}) {
+  const nome = (provider && NOME_DO_AGENTE[provider]) || "agente";
+  const etapas = [
+    ["Abrindo o terminal", "Preparando a sessão neste computador"],
+    [`Iniciando o ${nome}`, "O comando de retomar a conversa está sendo digitado no terminal"],
+    ["Carregando a conversa", "O agente está lendo o histórico; conversas longas demoram mais"],
+  ];
+  return (
+    <div className="abrindo-agente" role="status" aria-live="polite">
+      <div className="abrindo-agente-icone" aria-hidden>
+        <span className="abrindo-agente-orbita" />
+        {provider ? <AgentIcon provider={provider} size={30} /> : <TerminalIcon className="h-7 w-7" />}
+      </div>
+      <ol className="abrindo-agente-etapas">
+        {etapas.map(([titulo, detalhe], i) => (
+          <li key={titulo} data-estado={i < etapa ? "feito" : i === etapa ? "agora" : "depois"}>
+            <span className="abrindo-agente-marca" aria-hidden>{i < etapa ? <CheckIcon className="h-3 w-3" /> : i + 1}</span>
+            <span>
+              <span className="abrindo-agente-titulo">{titulo}{i === etapa && <span className="abrindo-agente-reticencias" />}</span>
+              {i === etapa && <span className="abrindo-agente-detalhe">{detalhe}</span>}
+            </span>
+          </li>
+        ))}
+      </ol>
+      <div className="flex gap-2">
+        <button type="button" onClick={onVerTerminal} className="btn btn-ghost min-h-0 px-2 py-1 text-xs">Ver terminal</button>
+        <button type="button" onClick={onPular} className="btn btn-ghost min-h-0 px-2 py-1 text-xs">Mostrar a conversa</button>
+      </div>
     </div>
   );
 }

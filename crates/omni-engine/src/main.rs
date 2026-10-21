@@ -67,7 +67,7 @@ fn screen_tracked(provider: Option<&str>) -> bool {
 /// ferramenta) e tiram quando acabam. O Antigravity (1.4.2) troca o rodapé "? for shortcuts" por
 /// "esc to cancel" enquanto trabalha — e também enquanto espera você responder uma pergunta dele.
 fn in_turn(screen_text: &str, provider: &str) -> bool {
-    let texto = screen_text.to_ascii_lowercase();
+    let texto = interaction::area_do_turno(screen_text).to_ascii_lowercase();
     match provider {
         "antigravity" => texto.contains("esc to cancel"),
         _ => texto.contains("esc to interrupt"),
@@ -109,6 +109,7 @@ fn settle(session: &LiveSession) -> TerminalSession {
         interaction.turn_active = false;
         interaction.aprovacao_contada = false;
         meta.attention_seq += 1;
+        meta.attention_at_ms = now_ms();
     }
     meta.state = state;
     meta.clone()
@@ -187,6 +188,7 @@ async fn main() -> Result<()> {
         .with_context(|| format!("engine already running or port {port} unavailable"))?;
 
     mobile::start(state.clone());
+    mobile::limpeza_automatica(state.clone());
     fluxos::carregar(&state);
 
     loop {
@@ -320,13 +322,40 @@ fn list_sessions(state: &EngineState) -> Result<EngineResponse> {
         let Some(id) = session.conversation_id.as_deref() else { continue };
         if let Some(conversa) = conversas.iter().find(|item| item.id == id) {
             session.name = omni_core::conversations::display_title(conversa);
+            if let Some(dir) = state.state_file.parent() { titular_com_ia(dir, conversa); }
         }
     }
     sessions.sort_by_key(|session| session.created_at_ms);
     Ok(EngineResponse::Sessions { sessions })
 }
 
-type PtySpawn = (Option<u32>, Box<dyn Write + Send>, Box<dyn MasterPty + Send>, Box<dyn Child + Send + Sync>, Box<dyn Read + Send>);
+const INSTRUCOES_DO_TITULO: &str = "Você dá nome a conversas com um agente de programação. Leia o primeiro pedido da pessoa e responda com um título de 1 a 3 palavras que diga o assunto, usando substantivos (o sistema, a tela, a funcionalidade, o problema) e nunca conectivos, artigos ou verbos de pedido como \"corrigir\" ou \"quero\". Mantenha nomes próprios e siglas como foram escritos. Em português. Responda só o título, sem aspas, sem ponto final.";
+
+/// Título de até 3 palavras pela IA, só para conversa com sessão aberta (as do histórico ficam com o
+/// automático, sem gastar uso). Uma tentativa por conversa a cada execução do engine, em segundo
+/// plano: até lá vale o `titulo_curto`.
+fn titular_com_ia(dir: &Path, conversa: &omni_core::conversations::Conversation) {
+    static TENTADAS: std::sync::OnceLock<Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    // Teste não chama a CLI de verdade (gastaria uso da conta de quem roda).
+    if cfg!(test) || conversa.title_source != omni_core::conversations::TitleSource::Auto { return; }
+    if !TENTADAS.get_or_init(Default::default).lock().map(|mut t| t.insert(conversa.id.clone())).unwrap_or(false) { return; }
+    let Some(pedido) = omni_core::conversations::primeiro_prompt(conversa) else {
+        // Ninguém falou ainda: libera para tentar de novo na próxima listagem.
+        if let Ok(mut t) = TENTADAS.get_or_init(Default::default).lock() { t.remove(&conversa.id); }
+        return;
+    };
+    let (dir, id) = (dir.to_path_buf(), conversa.id.clone());
+    std::thread::spawn(move || {
+        let Some(resposta) = voz::claude_rapido(&dir, INSTRUCOES_DO_TITULO, &pedido) else { return };
+        let titulo = resposta.lines().next().unwrap_or("").trim().trim_matches(['"', '\'', '.', '*', '`']).trim();
+        let titulo = titulo.split_whitespace().take(omni_core::conversations::TITULO_PALAVRAS).collect::<Vec<_>>().join(" ");
+        if !titulo.is_empty() && titulo.chars().count() <= 60 {
+            let _ = omni_core::conversations::definir_titulo_ia(&dir, &id, &titulo);
+        }
+    });
+}
+
+type PtySpawn =(Option<u32>, Box<dyn Write + Send>, Box<dyn MasterPty + Send>, Box<dyn Child + Send + Sync>, Box<dyn Read + Send>);
 
 /// Variáveis que dizem **qual** engine é este (porta, pasta de dados, binário). Valem para o
 /// processo do engine e para mais ninguém.
@@ -597,8 +626,20 @@ fn variaveis_do_alvo(
     variaveis
 }
 
+/// O Codex abre com uma tela de "Update available" (em inglês, esperando 1/2/3) quando há versão nova:
+/// a conversa não reconhece o composer e trava em "Entrada do CLI não reconhecida". Desliga a checagem
+/// só nas sessões do OMNI; o `codex` digitado à mão no terminal segue igual.
+fn sem_aviso_de_update(comando: &str) -> String {
+    let (binario, resto) = comando.split_once(' ').map_or((comando, ""), |(b, r)| (b, r));
+    let nome = binario.trim_matches('"').rsplit(['/', '\\']).next().unwrap_or("").to_ascii_lowercase();
+    let eh_codex = matches!(nome.as_str(), "codex" | "codex.exe" | "codex.cmd" | "codex.ps1");
+    if !eh_codex || comando.contains("check_for_update_on_startup") { return comando.to_owned(); }
+    format!("{binario} -c check_for_update_on_startup=false{}{resto}", if resto.is_empty() { "" } else { " " })
+}
+
 fn spawn_initial_command_thread(session: Arc<LiveSession>, initial_command: Option<String>) {
     if let Some(initial_command) = initial_command.filter(|command| !command.trim().is_empty()) {
+        let initial_command = sem_aviso_de_update(&initial_command);
         std::thread::spawn(move || {
             // ConPTY/PowerShell performs a cursor-position handshake during startup.
             // Let xterm answer it before injecting the selected agent command.
@@ -722,6 +763,7 @@ pub(crate) fn spawn_terminal_inner(
         input_locked: false,
         notice: None,
         attention_seq: 0,
+        attention_at_ms: 0,
         env: origin.env,
         provider: origin.provider,
         profile_id: origin.profile_id,
@@ -1203,6 +1245,10 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
             if tracked_provider.is_some() && next == SessionState::ApprovalRequired && meta.state != next && !interaction.aprovacao_contada {
                 interaction.aprovacao_contada = true;
                 meta.attention_seq += 1;
+                meta.attention_at_ms = now_ms();
+            }
+            if notice.is_some() && meta.notice != notice {
+                meta.attention_at_ms = now_ms();
             }
             meta.state = next;
             meta.notice = notice;
@@ -1474,6 +1520,16 @@ mod tests {
     /// Engine aberto de dentro de uma sessão do Claude: o terminal não pode herdar as marcas dela
     /// (o Claude ali pararia de gravar transcript) nem a pasta de conta dela (rodaria na conta errada).
     #[test]
+    fn codex_abre_sem_tela_de_update() {
+        assert_eq!(sem_aviso_de_update("codex"), "codex -c check_for_update_on_startup=false");
+        assert_eq!(sem_aviso_de_update("codex resume abc"), "codex -c check_for_update_on_startup=false resume abc");
+        assert_eq!(sem_aviso_de_update(r"C:\bin\codex.cmd fork x"), r"C:\bin\codex.cmd -c check_for_update_on_startup=false fork x");
+        let pronto = sem_aviso_de_update("codex resume abc");
+        assert_eq!(sem_aviso_de_update(&pronto), pronto, "reiniciar não repete a opção");
+        assert_eq!(sem_aviso_de_update("claude --resume x"), "claude --resume x");
+    }
+
+    #[test]
     fn terminal_nao_herda_a_sessao_do_claude_que_abriu_o_engine() {
         assert!(herdou_sessao_do_claude(|nome| nome == "CLAUDECODE"));
         assert!(!herdou_sessao_do_claude(|_| false));
@@ -1545,7 +1601,7 @@ mod tests {
         state.sessions.lock().unwrap().insert("s".into(), SessionEntry::Historical(session));
 
         let EngineResponse::Sessions { sessions } = list_sessions(&state).unwrap() else { panic!("sessions expected") };
-        assert_eq!(sessions[0].name, "Criar relatório financeiro");
+        assert_eq!(sessions[0].name, "Relatório Financeiro");
         let conversations = omni_core::conversations::read_index(dir);
         assert_eq!(conversations[0].segments[0].external_session_id.as_deref(), Some("codex-1"));
         assert!(conversations[0].segments[0].transcript_path.is_some());
@@ -1912,6 +1968,14 @@ mod tests {
         // Ocioso sem turno (acabou de abrir, pessoa digitando no composer): sem aviso.
         assert_eq!(settle_state(&SessionState::Working, idle, true, false, false), (SessionState::Answered, false));
         assert!(in_turn("✻ Thinking… (esc to interrupt)", "claude") && in_turn("Working (5s • Esc to interrupt)", "codex"));
+        // Diff na conversa com o próprio texto do código: parado no `done`, não está trabalhando.
+        let borda = "─".repeat(40);
+        let parado = format!("● Update(interaction.rs)\n  245  && text.contains(\"esc to interrupt\")\n  246  }}\n● Pronto.\n\n✻ Sautéed for 14s · done 21:57\n\n{borda}\n❯ \n{borda}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n");
+        assert!(!in_turn(&parado, "claude"));
+        // Claude Code 2.1.305 trabalhando: o aviso vai no rodapé, embaixo do campo.
+        let trabalhando = format!("✶ Mulling… (51s · ↓ 3.4k tokens)\n\n{borda}\n❯ \n{borda}\n  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt\n");
+        assert!(in_turn(&trabalhando, "claude"));
+        assert!(in_turn("• Working (3s • esc to interrupt)\n› Ask Codex to do anything\n\n  gpt-5.6-sol xhigh · D:/proj", "codex"));
         assert!(in_turn("⣿  Working...
 >
 esc to cancel      Gemini 4 Argon · medium", "antigravity"));

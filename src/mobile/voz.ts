@@ -211,3 +211,61 @@ export async function corrigir(conversa: string, texto: string): Promise<string>
   });
   return resposta.texto;
 }
+
+/** Palavra que a voz erra: o certo e as formas como ela já foi ouvida errado (`voz.rs`). */
+export interface Palavra { termo: string; ouvido: string[]; origem?: string }
+export interface Vocabulario { itens: Palavra[]; projetos: { nome: string; termos: string[] }[] }
+
+const JSON_POST = { method: "POST", headers: { "Content-Type": "application/json" } } as const;
+export const lerVocabulario = () => request<Vocabulario>("/voz/vocabulario");
+export const salvarVocabulario = (itens: Palavra[]) =>
+  request<Vocabulario>("/voz/vocabulario", { ...JSON_POST, body: JSON.stringify({ itens }) });
+export const aprenderPalavras = (itens: Palavra[]) =>
+  request<Vocabulario>("/voz/vocabulario/aprender", { ...JSON_POST, body: JSON.stringify({ itens }) });
+
+/** Troca cada forma ouvida pelo termo certo. Sem diferenciar caixa, e hífen vale espaço: o whisper
+ *  escreve "abra-se e a plus" numa vez e "abra se e a plus" na outra. */
+export function aplicarVocabulario(texto: string, itens: Palavra[]): string {
+  let saida = texto;
+  for (const { termo, ouvido } of itens) {
+    for (const forma of ouvido) {
+      const partes = forma.trim().split(/[\s-]+/).filter(Boolean).map((p) => p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      if (partes.length === 0) continue;
+      saida = saida.replace(new RegExp(`(?<![\\p{L}\\p{N}])${partes.join("[\\s-]+")}(?![\\p{L}\\p{N}])`, "giu"), termo);
+    }
+  }
+  return saida;
+}
+
+/** Trechos que a pessoa trocou no texto ditado ("abra-se e a plus" → "SIAPLUS"): diff por palavra.
+ *  Só trocas curtas viram sugestão — reescrever uma frase inteira não é palavra mal ouvida. */
+export function substituicoes(ditado: string, final: string): Palavra[] {
+  const a = ditado.split(/\s+/).filter(Boolean), b = final.split(/\s+/).filter(Boolean);
+  if (a.length > 400 || b.length > 400) return [];
+  // Caixa conta para alinhar ("domus" → "Domus" faz parte da correção); só a pontuação das pontas não.
+  const norm = (p: string) => p.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+  const limpa = (ps: string[]) => ps.join(" ").replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+  // LCS de trás para frente: lcs[i][j] = maior trecho comum de a[i..] e b[j..].
+  const lcs = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+  for (let i = a.length - 1; i >= 0; i--) for (let j = b.length - 1; j >= 0; j--)
+    lcs[i][j] = norm(a[i]) === norm(b[j]) ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+  const trocas: Palavra[] = [];
+  let i = 0, j = 0, saiu: string[] = [], entrou: string[] = [];
+  const fecha = () => {
+    const ouvido = limpa(saiu), termo = limpa(entrou);
+    if (saiu.length && entrou.length && saiu.length <= 6 && entrou.length <= 4 && termo.length >= 2
+      && ouvido.replace(/[\s-]+/g, "").toLowerCase() !== termo.replace(/[\s-]+/g, "").toLowerCase()
+      && !trocas.some((t) => t.termo === termo && t.ouvido[0] === ouvido)) trocas.push({ termo, ouvido: [ouvido] });
+    saiu = []; entrou = [];
+  };
+  // Igual só vira par se pular não custar nada: "abra-se e a plus e ver" contra "SIAPLUS e ver"
+  // casa o segundo "e", e a troca inteira fica junta em vez de partida no primeiro.
+  while (i < a.length || j < b.length) {
+    const atual = lcs[i][j];
+    if (i < a.length && lcs[i + 1][j] === atual) saiu.push(a[i++]);
+    else if (j < b.length && lcs[i][j + 1] === atual) entrou.push(b[j++]);
+    else { fecha(); i++; j++; } // pular qualquer um perderia: as duas palavras são iguais
+  }
+  fecha();
+  return trocas;
+}

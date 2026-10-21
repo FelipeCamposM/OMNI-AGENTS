@@ -161,11 +161,79 @@ fn amostras(pcm: &[u8]) -> Vec<f32> {
     pcm.chunks_exact(2).map(|par| i16::from_le_bytes([par[0], par[1]]) as f32 / 32768.0).collect()
 }
 
-/// Dica de vocabulário: o nome do projeto e o que está na raiz dele. O whisper usa o `initial_prompt`
-/// como contexto e passa a acertar nome de arquivo e termo técnico que ele trocaria por palavra comum.
-pub fn vocabulario(pasta_do_projeto: &Path) -> String {
-    let mut termos = vec!["Claude".to_owned(), "Codex".to_owned(), "Gemini".to_owned(), "commit".to_owned(), "deploy".to_owned()];
-    if let Some(nome) = pasta_do_projeto.file_name() { termos.insert(0, nome.to_string_lossy().into_owned()); }
+/// Palavra que a voz erra: o certo (`termo`) e como ela já foi ouvida errado (`ouvido`). O app troca o
+/// ouvido pelo termo depois de ditar; o whisper e a correção recebem os termos como dica.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Palavra { pub termo: String, pub ouvido: Vec<String>, pub origem: String }
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct Vocabulario { itens: Vec<Palavra> }
+
+pub fn palavras(state: &EngineState) -> Vec<Palavra> {
+    fs::read(pasta(state).join("vocabulario.json")).ok()
+        .and_then(|b| serde_json::from_slice::<Vocabulario>(&b).ok()).map(|v| v.itens).unwrap_or_default()
+}
+
+/// Grava a lista inteira (tela de Configurações). Junta repetidos pelo termo, sem diferenciar caixa.
+pub fn salvar_palavras(state: &EngineState, itens: Vec<Palavra>) -> Result<Vec<Palavra>> {
+    let mut limpos: Vec<Palavra> = Vec::new();
+    for item in itens {
+        let termo = item.termo.trim().to_owned();
+        if termo.is_empty() || termo.len() > 80 { continue; }
+        let ouvido = item.ouvido.into_iter().map(|o| o.trim().to_owned())
+            .filter(|o| !o.is_empty() && o.len() <= 120 && !o.eq_ignore_ascii_case(&termo)).collect::<Vec<_>>();
+        match limpos.iter_mut().find(|p| p.termo.to_lowercase() == termo.to_lowercase()) {
+            Some(existente) => for o in ouvido { if !existente.ouvido.iter().any(|x| x.to_lowercase() == o.to_lowercase()) { existente.ouvido.push(o); } },
+            None => limpos.push(Palavra { termo, ouvido, origem: if item.origem.is_empty() { "manual".into() } else { item.origem } }),
+        }
+    }
+    fs::create_dir_all(pasta(state))?;
+    atomic_write_json(&pasta(state).join("vocabulario.json"), &Vocabulario { itens: limpos.clone() })?;
+    Ok(limpos)
+}
+
+/// Correção feita no campo depois de ditar: soma à lista sem apagar nada.
+pub fn aprender(state: &EngineState, novas: Vec<Palavra>) -> Result<Vec<Palavra>> {
+    let mut itens = palavras(state);
+    itens.extend(novas.into_iter().map(|p| Palavra { origem: "correcao".into(), ..p }));
+    salvar_palavras(state, itens)
+}
+
+/// Nomes próprios do projeto que a voz não conhece: a pasta, o nome do pacote (npm, Tauri, Cargo) e o
+/// título do README. É o que aparece como "automático" na lista e entra na dica do whisper.
+pub fn termos_do_projeto(pasta_do_projeto: &Path) -> Vec<String> {
+    let mut termos: Vec<String> = Vec::new();
+    let mut por = |t: &str| {
+        let t = t.trim().trim_matches(['"', '\'', '`']).trim();
+        if !t.is_empty() && t.len() <= 60 && !termos.iter().any(|x| x.eq_ignore_ascii_case(t)) { termos.push(t.to_owned()); }
+    };
+    if let Some(nome) = pasta_do_projeto.file_name() { por(&nome.to_string_lossy()); }
+    let json = |arquivo: &str, chave: &str| fs::read(pasta_do_projeto.join(arquivo)).ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()).and_then(|v| v[chave].as_str().map(str::to_owned));
+    for (arquivo, chave) in [("package.json", "name"), ("package.json", "productName"), ("src-tauri/tauri.conf.json", "productName")] {
+        if let Some(t) = json(arquivo, chave) { por(t.rsplit('/').next().unwrap_or(&t)); }
+    }
+    if let Ok(cargo) = fs::read_to_string(pasta_do_projeto.join("Cargo.toml")) {
+        if let Some(nome) = cargo.lines().skip_while(|l| l.trim() != "[package]").find_map(|l| l.trim().strip_prefix("name").and_then(|r| r.trim().strip_prefix('='))) { por(nome); }
+    }
+    if let Ok(readme) = fs::read_to_string(pasta_do_projeto.join("README.md")) {
+        if let Some(titulo) = readme.lines().find_map(|l| l.strip_prefix("# ")) { por(titulo); }
+    }
+    termos
+}
+
+/// Dica de vocabulário: as palavras da lista, os nomes do projeto e o que está na raiz dele. O whisper
+/// usa o `initial_prompt` como contexto e passa a acertar termo que ele trocaria por palavra comum.
+pub fn vocabulario(state: &EngineState, pasta_do_projeto: &Path) -> String {
+    let mut termos: Vec<String> = palavras(state).into_iter().map(|p| p.termo).collect();
+    termos.extend(termos_do_projeto(pasta_do_projeto));
+    termos.extend(["Claude", "Codex", "Gemini", "commit", "deploy"].map(str::to_owned));
+    dica(termos, pasta_do_projeto)
+}
+
+fn dica(mut termos: Vec<String>, pasta_do_projeto: &Path) -> String {
     if let Ok(entradas) = fs::read_dir(pasta_do_projeto) {
         let mut nomes: Vec<String> = entradas.flatten().map(|e| e.file_name().to_string_lossy().into_owned())
             .filter(|n| !n.starts_with('.') && n != "node_modules" && n != "target").collect();
@@ -229,21 +297,26 @@ fn eh_ruido(trecho: &str) -> bool {
 const INSTRUCOES_DA_CORRECAO: &str = "Você corrige transcrições automáticas de fala em português. A pessoa ditou um pedido para um agente de programação. Corrija só o que a transcrição errou: pontuação, acentos, palavras trocadas por outras de som parecido e nomes técnicos ou de arquivo (prefira os do vocabulário dado). Tire hesitações (\"é…\", \"ãh\", \"tipo\") e repetições sem querer. Mantenha as palavras, a conjugação e o tom da pessoa — não troque \"abre\" por \"abra\", não formalize. Não responda o pedido, não comente, não explique o que mudou. Devolva só o texto corrigido.";
 
 fn corrigir_com_ia(state: &EngineState, bruto: &str, dica: &str) -> Option<String> {
+    claude_rapido(state.state_file.parent()?, INSTRUCOES_DA_CORRECAO, &format!("{dica}\n\nTranscrição:\n{bruto}"))
+}
+
+/// Uma pergunta curta ao Haiku pela CLI do Claude da pessoa (conta padrão), sem ferramentas e sem
+/// gravar sessão. `None` se a CLI faltar, falhar ou passar de 30 s: quem chama tem um plano B.
+pub fn claude_rapido(dir: &Path, sistema: &str, entrada: &str) -> Option<String> {
     let exe = fluxos::executavel("claude")?;
-    let dir = state.state_file.parent()?;
     let perfis = omni_core::profiles(dir);
     let perfil = perfis.iter().find(|p| p.provider == "claude" && p.builtin).or_else(|| perfis.iter().find(|p| p.provider == "claude"));
     let mut c = fluxos::comando_da_cli(&exe);
-    // Sem ferramentas, sem MCP e sem gravar sessão: abre em segundos em vez de ~20 s, e a correção não
+    // Sem ferramentas, sem MCP e sem gravar sessão: abre em segundos em vez de ~20 s, e a pergunta não
     // aparece no histórico de conversas do Claude.
     c.args(["-p", "--output-format", "json", "--model", "haiku", "--no-session-persistence", "--strict-mcp-config", "--tools", ""])
-        .arg("--system-prompt").arg(INSTRUCOES_DA_CORRECAO);
+        .arg("--system-prompt").arg(sistema);
     if let Some(p) = perfil { c.envs(omni_core::env_for(p)); }
     // Pasta temporária: longe de qualquer projeto, nada de CLAUDE.md alheio mexendo na correção.
     c.current_dir(env::temp_dir()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
     sem_janela(&mut c);
     let mut filho = c.spawn().ok()?;
-    filho.stdin.take()?.write_all(format!("{dica}\n\nTranscrição:\n{bruto}").as_bytes()).ok()?;
+    filho.stdin.take()?.write_all(entrada.as_bytes()).ok()?;
     let mut stdout = filho.stdout.take()?;
     let leitor = std::thread::spawn(move || { let mut s = String::new(); let _ = stdout.read_to_string(&mut s); s });
     let inicio = Instant::now();
@@ -288,10 +361,26 @@ mod tests {
         fs::create_dir_all(projeto.join(".git")).unwrap();
         fs::create_dir_all(projeto.join("node_modules")).unwrap();
         fs::write(projeto.join("roadmap.md"), "").unwrap();
-        let dica = vocabulario(&projeto);
+        let dica = dica(termos_do_projeto(&projeto), &projeto);
         assert!(dica.contains("omni-agents") && dica.contains("src-tauri") && dica.contains("roadmap.md"), "{dica}");
         assert!(!dica.contains(".git") && !dica.contains("node_modules"), "{dica}");
         assert!(dica.ends_with('.'));
+    }
+
+    #[test]
+    fn correcao_aprendida_junta_com_o_termo_existente_e_entra_na_dica() {
+        let state = crate::tests::test_state();
+        let p = |termo: &str, ouvido: &[&str]| Palavra { termo: termo.into(), ouvido: ouvido.iter().map(|s| s.to_string()).collect(), origem: String::new() };
+        salvar_palavras(&state, vec![p("SIAPLUS", &[]), p(" ", &["lixo"])]).unwrap();
+        let itens = aprender(&state, vec![p("siaplus", &["abra-se e a plus"]), p("Domus AdPilot", &["domus a de pilot", "Domus AdPilot"])]).unwrap();
+        assert_eq!(itens.len(), 2, "{itens:?}");
+        assert_eq!(itens[0].ouvido, ["abra-se e a plus"]);
+        assert_eq!(itens[1].ouvido, ["domus a de pilot"], "o próprio termo não vira ouvido");
+        assert_eq!(itens[1].origem, "correcao");
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("package.json"), r#"{"name":"@camps/siaplus-web"}"#).unwrap();
+        assert!(termos_do_projeto(dir.path()).contains(&"siaplus-web".to_owned()));
+        assert!(vocabulario(&state, dir.path()).contains("Domus AdPilot"));
     }
 
     #[test]

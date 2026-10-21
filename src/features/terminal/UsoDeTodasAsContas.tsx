@@ -4,33 +4,34 @@ import { invoke } from "@tauri-apps/api/core";
 import { ChartIcon, ReloadIcon } from "../../components/ui/PixelIcon";
 import { AgentIcon } from "../../components/ui/AgentIcon";
 import { resetShort, usageTone } from "../../lib/uso";
+import { abrirPopover, encherBarra, entrarEmCascata, fecharPopover, useCountUp } from "../../lib/motion";
 import type { Usage, UsageWindow } from "./AccountUsage";
 import { listProfiles, type Profile } from "./terminalService";
 import { timeAgo } from "./AgentUsageStatus";
 import { AGENTES_COM_USO, NOME_DO_AGENTE } from "../../mobile/api";
 
-/** Blocos do medidor: 5% cada, no passo do pixel do resto do app. */
-const BLOCOS = 20;
-
-/** Medidor em blocos: quantos estão acesos diz o consumo, a cor diz a faixa (verde/amarelo/vermelho). */
+/** Medidor de uma janela: rótulo, quando renova e o %, com a barra embaixo na cor da faixa (verde/amarelo/vermelho). */
 export function Medidor({ rotulo, janela }: { rotulo: string; janela: UsageWindow | null }) {
   const usado = janela ? Math.min(100, Math.max(0, janela.used_percent)) : 0;
   const tom = janela ? usageTone(janela.used_percent) : null;
-  const acesos = janela ? Math.ceil(usado / (100 / BLOCOS)) : 0;
   const reset = resetShort(janela);
   return (
-    <span className="uso-janela" title={reset ? `${rotulo}: reseta ${reset}` : undefined}>
+    <span className="uso-janela" title={reset ? `${rotulo}: renova ${reset}` : undefined}>
       <span className="uso-rotulo">{rotulo}</span>
+      <span className="uso-reset">{reset ? `renova ${reset}` : ""}</span>
+      {janela ? <Porcento valor={janela.used_percent} className={`uso-pct ${tom?.text}`} /> : <span className="uso-pct text-text-muted">—</span>}
       <span role="progressbar" aria-label={`${rotulo} consumido`} aria-valuenow={Math.round(usado)} aria-valuemin={0} aria-valuemax={100}
-        className="uso-blocos">
-        {Array.from({ length: BLOCOS }, (_, i) => <span key={i} className={i < acesos ? tom?.bar : undefined} />)}
+        className="uso-barra">
+        <span ref={encherBarra} className={tom?.bar} style={{ width: `${usado}%` }} />
       </span>
-      <span className={`uso-pct ${tom?.text ?? "text-text-muted"}`}>
-        {janela ? `${Math.round(janela.used_percent)}%` : "—"}
-      </span>
-      <span className="uso-reset">{reset ? `↻ ${reset}` : ""}</span>
     </span>
   );
+}
+
+/** % que sobe do zero ao abrir e corre até o número novo depois de uma consulta. */
+function Porcento({ valor, className }: { valor: number; className: string }) {
+  const ref = useCountUp<HTMLSpanElement>(valor, (n) => `${Math.round(n)}%`, 0);
+  return <span ref={ref} className={className} />;
 }
 
 /** Agentes na ordem fixa das listas; um provider desconhecido entra no fim. */
@@ -41,7 +42,7 @@ function ordenar(contas: Profile[]): string[] {
 }
 
 /**
- * Botão do rodapé, à esquerda do agente em foco, que abre (para cima) o uso de todas as contas de
+ * Botão "Uso" da barra de cima (mesmo visual do "Layouts"), que abre para baixo o uso de todas as contas de
  * todas as IAs. Abrir só lê o cache do engine; o botão de cada conta é que consulta o `/usage`.
  * O Cursor entra na lista, mas a CLI dele não informa consumo — a conta aparece sem medidor.
  */
@@ -51,10 +52,20 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
   const [usos, setUsos] = useState<Record<string, Usage>>({});
   const [erros, setErros] = useState<Record<string, string>>({});
   const [atualizando, setAtualizando] = useState<Set<string>>(new Set());
-  const [posicao, setPosicao] = useState<{ left: number; bottom: number } | null>(null);
+  const [posicao, setPosicao] = useState<{ right: number; top: number } | null>(null);
   const botao = useRef<HTMLButtonElement>(null);
   const painel = useRef<HTMLDivElement>(null);
+  const fechando = useRef(false);
   const mensuraveis = contas.filter((conta) => AGENTES_COM_USO.includes(conta.provider));
+
+  // Fecha animando; o clique-fora e o Esc chegam várias vezes durante a saída, só o primeiro conta.
+  const fechar = () => {
+    if (fechando.current) return;
+    fechando.current = true;
+    fecharPopover(painel.current, () => { fechando.current = false; setAberto(false); });
+  };
+  const fecharRef = useRef(fechar);
+  fecharRef.current = fechar;
 
   // Cada abertura relê a lista e o cache: conta nova ou um /usage feito em outro lugar já aparecem.
   useEffect(() => {
@@ -72,30 +83,31 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
     return () => { cancelado = true; };
   }, [aberto, engineOnline]);
 
-  // O rodapé corta o que passa dele (`overflow-hidden`): o painel vai para o `body`, ancorado no botão.
+  // A barra de cima corta o que passa dela: o painel vai para o `body`, ancorado no botão.
   useLayoutEffect(() => {
     if (!aberto) return;
     const ancorar = () => {
       const caixa = botao.current?.getBoundingClientRect();
       if (!caixa) return;
-      const largura = 416;
-      setPosicao({
-        left: Math.max(8, Math.min(caixa.left, window.innerWidth - largura - 8)),
-        bottom: window.innerHeight - caixa.top + 6,
-      });
+      setPosicao({ right: Math.max(8, window.innerWidth - caixa.right), top: caixa.bottom + 4 });
     };
     ancorar();
     window.addEventListener("resize", ancorar);
     return () => window.removeEventListener("resize", ancorar);
   }, [aberto]);
 
+  const montado = aberto && posicao !== null;
+  useLayoutEffect(() => {
+    if (montado) abrirPopover(painel.current);
+  }, [montado]);
+
   useEffect(() => {
     if (!aberto) return;
     const fora = (evento: MouseEvent) => {
       const alvo = evento.target as Node;
-      if (!painel.current?.contains(alvo) && !botao.current?.contains(alvo)) setAberto(false);
+      if (!painel.current?.contains(alvo) && !botao.current?.contains(alvo)) fecharRef.current();
     };
-    const esc = (evento: KeyboardEvent) => { if (evento.key === "Escape") setAberto(false); };
+    const esc = (evento: KeyboardEvent) => { if (evento.key === "Escape") fecharRef.current(); };
     document.addEventListener("mousedown", fora);
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", fora); document.removeEventListener("keydown", esc); };
@@ -118,38 +130,48 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
     }
   }
 
+  const ias = ordenar(contas);
+  // Posição de cada grupo e cartão na cascata de entrada.
+  let ordem = 0;
+  const atualizadoEm = Math.max(0, ...Object.values(usos).map((uso) => uso.observed_at_ms ?? 0));
+
   return (
     <>
       <button ref={botao} type="button" aria-label="Uso de todas as contas" aria-expanded={aberto} aria-haspopup="dialog"
-        title="Uso de todas as IAs" disabled={!engineOnline} onClick={() => setAberto((atual) => !atual)}
-        className={`shrink-0 disabled:opacity-50 ${aberto ? "text-accent" : "text-text-secondary hover:text-accent"}`}>
+        title="Uso de todas as IAs" disabled={!engineOnline} onClick={() => (aberto ? fechar() : setAberto(true))}
+        className={`titlebar-acao disabled:opacity-50${aberto ? " is-aberto" : ""}`}>
         <ChartIcon aria-hidden className="h-3.5 w-3.5" />
+        Uso
       </button>
       {aberto && posicao && createPortal(
-        <div ref={painel} role="dialog" aria-label="Uso das contas" style={{ left: posicao.left, bottom: posicao.bottom }}
-          className="uso-painel fixed z-[200] flex max-h-[72vh] w-[26rem] flex-col border-2 border-border-subtle bg-bg-elevated text-[11px] text-text-primary shadow-[0_12px_28px_rgb(0_0_0/0.35)]">
-          <div className="flex items-center gap-2 border-b-2 border-border-subtle px-3 py-2">
-            <ChartIcon aria-hidden className="h-3.5 w-3.5 text-accent" />
-            <p className="flex-1 text-[10px] font-bold uppercase tracking-wider text-text-secondary">Uso das IAs</p>
+        <div ref={painel} role="dialog" aria-label="Uso das contas" style={{ right: posicao.right, top: posicao.top }} className="uso-painel">
+          <header className="uso-cabeca">
+            <span className="uso-cabeca-icone"><ChartIcon aria-hidden className="h-4 w-4" /></span>
+            <span className="min-w-0 flex-1">
+              <span className="uso-titulo">Uso das IAs</span>
+              <span className="uso-sub">
+                {contas.length} {contas.length === 1 ? "conta" : "contas"} · {ias.length} {ias.length === 1 ? "IA" : "IAs"}
+                {atualizadoEm > 0 && ` · lido ${timeAgo(atualizadoEm, Date.now())}`}
+              </span>
+            </span>
             <button type="button" onClick={() => void atualizarTodas()} disabled={mensuraveis.length === 0 || atualizando.size > 0}
-              title="Consultar o uso de todas as contas agora"
-              className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-text-secondary hover:text-accent disabled:opacity-50">
+              title="Consultar o uso de todas as contas agora" className="uso-botao">
               <ReloadIcon aria-hidden className={`h-3 w-3${atualizando.size > 0 ? " animate-spin" : ""}`} />Atualizar todas
             </button>
-          </div>
-          <div className="flex flex-col gap-3 overflow-y-auto p-2.5">
-            {contas.length === 0 && <p className="px-1 py-2 text-text-secondary">Nenhuma conta de IA cadastrada.</p>}
-            {ordenar(contas).map((provider) => {
+          </header>
+          <div className="uso-corpo">
+            {contas.length === 0 && <p className="uso-vazio">Nenhuma conta de IA cadastrada.</p>}
+            {ias.map((provider) => {
               const doAgente = contas.filter((conta) => conta.provider === provider);
               const nome = NOME_DO_AGENTE[provider] ?? provider;
               const mede = AGENTES_COM_USO.includes(provider);
               return (
-                <section key={provider} aria-label={nome} className="flex flex-col gap-1.5">
-                  <p className="uso-agente">
-                    <AgentIcon provider={provider} size={12} className="shrink-0" />
+                <section key={provider} aria-label={nome} className="uso-grupo">
+                  <p ref={entrarEmCascata} data-ordem={ordem++} className="uso-agente">
+                    <span className="uso-agente-icone"><AgentIcon provider={provider} size={13} /></span>
                     {nome}
-                    <span className="h-px flex-1 bg-border-subtle" />
-                    <span className="font-normal normal-case tracking-normal">{doAgente.length} {doAgente.length === 1 ? "conta" : "contas"}</span>
+                    <span className="uso-agente-linha" />
+                    <span className="uso-agente-qtd">{doAgente.length} {doAgente.length === 1 ? "conta" : "contas"}</span>
                   </p>
                   <ul className="flex flex-col gap-1.5">
                     {doAgente.map((conta) => {
@@ -158,11 +180,12 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
                       const motivo = erros[conta.id] ?? (uso && uso.status === "unavailable" ? uso.reason : null);
                       const emUso = conta.id === contaAtiva;
                       return (
-                        <li key={conta.id} className={`uso-conta${emUso ? " is-ativa" : ""}`}>
+                        <li key={conta.id} ref={entrarEmCascata} data-ordem={ordem++} className={`uso-conta${emUso ? " is-ativa" : ""}`}>
                           <span className="flex min-w-0 items-center gap-2">
+                            <span className="uso-avatar" aria-hidden>{conta.name.slice(0, 1).toUpperCase()}</span>
                             <span className="min-w-0 flex-1">
                               <span className="flex min-w-0 items-center gap-1.5">
-                                <span className="truncate text-[12px] font-bold">{conta.name}</span>
+                                <span className="truncate text-[12px] font-bold text-text-primary">{conta.name}</span>
                                 {emUso && <span className="uso-selo">em uso</span>}
                               </span>
                               {conta.email && <span className="block truncate text-[10px] text-text-muted">{conta.email}</span>}
@@ -178,8 +201,8 @@ export function UsoDeTodasAsContas({ engineOnline, contaAtiva }: { engineOnline:
                           {!mede ? (
                             <span className="text-text-muted">A CLI do {nome} não informa o consumo do plano.</span>
                           ) : uso && uso.status !== "unavailable" ? (
-                            <span className="flex flex-col gap-1">
-                              <Medidor rotulo="5H" janela={uso.primary} />
+                            <span className="flex flex-col gap-2">
+                              <Medidor rotulo="5 horas" janela={uso.primary} />
                               <Medidor rotulo="Semana" janela={uso.secondary} />
                             </span>
                           ) : !motivo && <span className="text-text-muted">{uso ? "Sem leitura de uso ainda" : "Lendo…"}</span>}

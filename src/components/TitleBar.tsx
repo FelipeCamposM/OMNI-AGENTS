@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { OmniLogo } from "./ui/OmniLogo";
 import { NotificationBell } from "./NotificationBell";
+import { TarefasNoTopo } from "../features/todo/TarefasNoTopo";
 import { useJanelaEmFoco } from "../hooks/useJanelaEmFoco";
 import type { SettingsSection } from "../hooks/useNotifications";
 import { GlifoFechar, GlifoMaximizar, GlifoMinimizar, GlifoRestaurar } from "./ui/PixelGlyph";
@@ -111,6 +112,10 @@ export function TitleBar({
       <span data-tauri-drag-region className="flex-1 self-stretch" />
 
       {acoes}
+
+      <span className="titlebar-sino">
+        <TarefasNoTopo />
+      </span>
 
       <span className="titlebar-sino">
         <NotificationBell onOpenSettings={onOpenSettings} />

@@ -24,6 +24,9 @@ pub enum TitleSource {
     #[default]
     Auto,
     Manual,
+    /// Resumido pela própria IA (Haiku) a partir do primeiro prompt. Não trava como o manual: é
+    /// só o automático melhorado, e renomear à mão passa por cima.
+    Ia,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,15 +43,13 @@ pub struct Conversation {
     pub segments: Vec<Segment>,
 }
 
-/// Tamanho do nome derivado do primeiro prompt. Cabe numa aba sem virar reticências.
-const TITULO_MAX: usize = 60;
+/// No máximo 3 palavras: o nome inteiro cabe numa aba e diz o assunto num relance.
+pub const TITULO_PALAVRAS: usize = 3;
+const PALAVRA_MAX: usize = 24;
 
-/// Nome curto tirado do **primeiro prompt do usuário**, lido do transcript que a própria CLI grava.
-///
-/// Só a primeira linha útil, sem marcação de bloco: o começo de um prompt costuma dizer do que a
-/// conversa trata, e o resto vira ruído numa aba. Devolve `None` enquanto ninguém falou nada — aí o
-/// título de nascimento continua valendo.
-pub fn auto_title(conversation: &Conversation) -> Option<String> {
+/// Primeiro prompt de verdade do usuário, lido do transcript que a própria CLI grava (sem comando
+/// local nem instrução injetada). `None` enquanto ninguém falou nada.
+pub fn primeiro_prompt(conversation: &Conversation) -> Option<String> {
     for segment in &conversation.segments {
         let Some(path) = segment.transcript_path.as_deref() else { continue };
         let Ok(file) = File::open(path) else { continue };
@@ -60,36 +61,78 @@ pub fn auto_title(conversation: &Conversation) -> Option<String> {
             }
             // Mensagem de sistema do próprio CLI (comando local, lembrete) não é o assunto da conversa.
             let text = text.trim_start();
-            if text.starts_with('<') || text.starts_with("# AGENTS.md") || text.starts_with("Caveat:") {
+            if text.starts_with('<') || text.starts_with("# AGENTS.md") || text.starts_with("Caveat:") || text.is_empty() {
                 continue;
             }
-            if let Some(resumo) = resumir(text) {
-                return Some(resumo);
-            }
+            return Some(text.chars().take(2_000).collect());
         }
     }
     None
 }
 
-fn resumir(texto: &str) -> Option<String> {
-    let linha = texto
-        .lines()
-        .map(str::trim)
-        .find(|linha| !linha.is_empty() && !linha.starts_with("```"))?;
-    let limpo = linha.trim_start_matches(['#', '*', '-', '>', ' ']).trim();
-    if limpo.is_empty() {
-        return None;
+/// Nome automático enquanto a IA não resumiu: as 3 primeiras palavras de conteúdo do primeiro prompt.
+pub fn auto_title(conversation: &Conversation) -> Option<String> {
+    primeiro_prompt(conversation).and_then(|texto| titulo_curto(&texto))
+}
+
+/// Conectivos, pronomes e os verbos de pedido ("corrigir", "quero", "ajusta"): sobra o assunto.
+const VAZIAS: &[&str] = &[
+    "a", "o", "as", "os", "um", "uma", "uns", "umas", "de", "da", "do", "das", "dos", "em", "na", "no", "nas", "nos", "num", "numa",
+    "por", "pra", "pro", "para", "com", "sem", "sob", "sobre", "entre", "até", "ate", "e", "ou", "mas", "que", "se", "como", "quando",
+    "onde", "porque", "pq", "porém", "pois", "também", "tambem", "ainda", "já", "ja", "só", "so", "mais", "menos", "muito", "muita",
+    "bem", "mal", "sim", "não", "nao", "isso", "isto", "esse", "essa", "este", "esta", "esses", "essas", "aquele", "aquela", "aqui",
+    "ali", "lá", "la", "eu", "tu", "ele", "ela", "nós", "nos", "eles", "elas", "vc", "você", "voce", "vcs", "me", "te", "lhe", "meu",
+    "minha", "seu", "sua", "nosso", "nossa", "dele", "dela", "agora", "depois", "antes", "então", "entao", "tipo", "ai", "aí", "oi",
+    "olá", "ola", "favor", "obrigado", "tá", "ta", "está", "estão", "estao", "estava", "fica", "ficar", "ficou", "ficando", "é", "ser",
+    "seja", "foi", "era", "vai", "ir", "vamos", "tem", "ter", "temos", "tinha", "há", "faz", "fazer", "faça", "faca", "feito", "pode",
+    "poderia", "podemos", "deve", "quero", "queria", "preciso", "precisa", "gostaria", "consegue", "consegue", "deixa", "deixe",
+    "deixar", "coloca", "coloque", "colocar", "ajusta", "ajuste", "ajustar", "corrige", "corrija", "corrigir", "cria", "crie", "criar",
+    "adiciona", "adicione", "adicionar", "muda", "mude", "mudar", "troca", "troque", "trocar", "implementa", "implemente",
+    "implementar", "verifica", "verifique", "verificar", "veja", "ver", "olha", "olhe", "analisa", "analise", "analisar", "arruma",
+    "arrume", "arrumar", "melhora", "melhore", "melhorar", "remove", "remova", "remover", "tira", "tire", "tirar", "usa", "use",
+    "usar", "mostra", "mostre", "mostrar", "precisamos", "vou", "estou", "tô", "to", "algum", "alguma", "todo", "toda", "todos",
+    "todas", "cada", "tão", "tao", "acho", "falei", "disse", "qual", "quais", "quanto", "aquilo", "nele", "nela", "dessa", "desse", "nessa", "nesse", "pelo", "pela",
+    "the", "an", "of", "to", "in", "for", "and", "or", "with", "on", "at", "is", "are", "it", "this", "that", "please", "fix", "add",
+    "make", "create", "update", "i", "we", "you", "can", "could", "would", "should", "want", "need", "let's", "lets",
+];
+
+/// Até `TITULO_PALAVRAS` palavras de conteúdo, na ordem em que aparecem. Palavra só de letras ganha
+/// maiúscula; sigla, arquivo e nome com caixa própria (`SIAPLUS`, `App.tsx`) ficam como estão.
+pub fn titulo_curto(texto: &str) -> Option<String> {
+    let sem_codigo: String = texto.split("```").step_by(2).collect::<Vec<_>>().join(" ");
+    let palavras: Vec<String> = sem_codigo
+        .split(|c: char| c.is_whitespace() || ",;:!?()[]{}\"'`“”‘’<>|*#=+".contains(c))
+        .map(|p| p.trim_matches(|c: char| c == '.' || c == '-' || c == '/' || c == '…'))
+        .filter(|p| p.chars().count() >= 2 && p.chars().any(char::is_alphabetic) && !p.starts_with('/'))
+        .filter(|p| !VAZIAS.contains(&p.to_lowercase().as_str()))
+        .take(TITULO_PALAVRAS)
+        .map(|p| {
+            let p: String = p.chars().take(PALAVRA_MAX).collect();
+            if p.chars().all(|c| c.is_alphabetic() && c.is_lowercase()) {
+                let mut letras = p.chars();
+                letras.next().map(|c| c.to_uppercase().chain(letras).collect()).unwrap_or_default()
+            } else { p }
+        })
+        .collect();
+    (!palavras.is_empty()).then(|| palavras.join(" "))
+}
+
+/// Título vindo da IA: só grava se ninguém renomeou nesse meio-tempo.
+pub fn definir_titulo_ia(dir: &Path, conversation_id: &str, titulo: &str) -> Result<(), String> {
+    let mut index = read_index(dir);
+    let Some(conversation) = index.iter_mut().find(|item| item.id == conversation_id) else { return Ok(()) };
+    if conversation.title_source != TitleSource::Auto || !valid_title(titulo) {
+        return Ok(());
     }
-    Some(match limpo.char_indices().nth(TITULO_MAX) {
-        Some((corte, _)) => format!("{}…", limpo[..corte].trim_end()),
-        None => limpo.to_string(),
-    })
+    conversation.title = titulo.trim().to_string();
+    conversation.title_source = TitleSource::Ia;
+    write_index(dir, &index).map_err(|erro| erro.to_string())
 }
 
 /// O nome que todas as telas devem mostrar: o que o usuário escreveu, ou o derivado do primeiro
 /// prompt enquanto ele não escreveu nada.
 pub fn display_title(conversation: &Conversation) -> String {
-    if conversation.title_source == TitleSource::Manual {
+    if conversation.title_source != TitleSource::Auto {
         return conversation.title.clone();
     }
     auto_title(conversation).unwrap_or_else(|| conversation.title.clone())
@@ -267,6 +310,8 @@ pub struct Message {
     /// Imagens coladas nesta mensagem; o conteúdo vem por `GET …/imagens/{n}/{k}`.
     #[serde(skip_serializing_if = "sem_imagens")]
     pub imagens: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<crate::feed::Diff>,
 }
 fn sem_imagens(n: &usize) -> bool { *n == 0 }
 #[derive(Serialize)]
@@ -360,10 +405,26 @@ pub fn timeline_cached(
             itens.push((segment.provider.clone(), entry.item.clone()));
         }
     }
-    let itens = com_avisos_de_troca(conversation, itens, profiles);
+    let itens = com_avisos_de_troca(conversation, em_ordem_de_hora(itens), profiles);
     let mut result = page(&conversation.id, itens, cursor, limit);
     result.unavailable_segments = unavailable;
     result
+}
+
+/// Os segmentos são lidos um depois do outro, mas trocar de conta e voltar faz o `.jsonl` do primeiro
+/// já trazer as mensagens mais novas: o que só existia no arquivo da outra conta (dias antes) caía no
+/// fim do chat, por cima da conversa de agora. Ordena pela hora; ordenação estável, e item sem hora
+/// herda a do anterior, para não sair do lugar.
+fn em_ordem_de_hora(itens: Vec<(String, crate::feed::Item)>) -> Vec<(String, crate::feed::Item)> {
+    let mut ultima = i64::MIN;
+    let mut com_hora: Vec<_> = itens.into_iter().map(|par| {
+        if let Some(m) = par.1.timestamp.as_deref().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()) {
+            ultima = m.timestamp_millis();
+        }
+        (ultima, par)
+    }).collect();
+    com_hora.sort_by_key(|(hora, _)| *hora);
+    com_hora.into_iter().map(|(_, par)| par).collect()
 }
 
 /// Põe "Conta trocada: A → B" no ponto da conversa em que a troca aconteceu — pela **hora** da
@@ -418,6 +479,7 @@ fn aviso_de_troca(anterior: &Segment, novo: &Segment, profiles: &[crate::Profile
         tool: None,
         timestamp: chrono::DateTime::from_timestamp_millis(novo.started_at_ms as i64).map(|d| d.to_rfc3339()),
         imagens: 0,
+        diff: None,
     }
 }
 
@@ -437,6 +499,7 @@ pub fn page(conversation_id: &str, itens: Vec<(String, crate::feed::Item)>, curs
         kind: item.kind,
         tool: item.tool,
         imagens: item.imagens,
+        diff: item.diff,
     }).collect();
     Timeline {
         messages,
@@ -525,8 +588,16 @@ mod tests {
             json!({"type":"user","message":{"role":"user","content":"Corrigir o login que quebra no Safari
 segunda linha"}}),
         ]);
-        // Mensagem de sistema da própria CLI não conta; a primeira linha do prompt de verdade, sim.
-        assert_eq!(display_title(&conversa), "Corrigir o login que quebra no Safari");
+        // Mensagem de sistema da própria CLI não conta; do prompt de verdade saem as palavras de
+        // conteúdo, sem o verbo do pedido nem conectivo.
+        assert_eq!(display_title(&conversa), "Login Quebra Safari");
+    }
+
+    #[test] fn titulo_curto_fica_com_ate_tres_palavras_de_conteudo() {
+        assert_eq!(titulo_curto("quero ajustar tambem os titulos das conversas que tao ficando muito extensos").as_deref(), Some("Titulos Conversas Extensos"));
+        assert_eq!(titulo_curto("eu falei abrir o SIAPLUS no App.tsx").as_deref(), Some("Abrir SIAPLUS App.tsx"));
+        assert_eq!(titulo_curto("```\ncodigo colado\n```\nexplica isso").as_deref(), Some("Explica"));
+        assert_eq!(titulo_curto("e o que"), None);
     }
 
     #[test] fn nome_longo_e_cortado_e_conversa_vazia_mantem_o_provisorio() {
@@ -536,7 +607,7 @@ segunda linha"}}),
             json!({"type":"user","message":{"role":"user","content":longo}}),
         ]);
         let titulo = display_title(&conversa);
-        assert!(titulo.ends_with('…') && titulo.chars().count() == TITULO_MAX + 1);
+        assert_eq!(titulo.chars().count(), PALAVRA_MAX);
 
         let vazia = conversa_com_transcript(dir.path(), &[]);
         assert_eq!(display_title(&vazia), "Conversa");
@@ -570,7 +641,7 @@ segunda linha"}}),
         assert!(discover_codex_transcripts(&mut conversations, &[profile]));
         assert_eq!(conversations[0].segments[0].external_session_id.as_deref(), Some("codex-1"));
         assert_eq!(Path::new(conversations[0].segments[0].transcript_path.as_deref().unwrap()), correto.canonicalize().unwrap());
-        assert_eq!(display_title(&conversations[0]), "Implementar busca por cliente");
+        assert_eq!(display_title(&conversations[0]), "Busca Cliente Filtros");
         assert!(!discover_codex_transcripts(&mut conversations, &[]), "ponteiro já conhecido não deve ser redescoberto");
     }
 
@@ -607,6 +678,22 @@ com quebra").is_err());
         assert_eq!(second.messages.len(),5); assert!(second.next_cursor.is_none()); assert_eq!(second.prev_cursor,Some(0));
         let wrong = crate::Profile{config_dir:dir.path().join("other").to_string_lossy().into_owned(),..profile};
         assert_eq!(timeline(&conversation,&[wrong],Some(0),100).unavailable_segments,vec![0,1]);
+    }
+
+    /// Caso real (conversa "PRINCIPAL"): conta A → B → A. O `.jsonl` da A, lido primeiro, já tem a
+    /// mensagem de hoje; o da B tem uma de dias antes que a A não tem. Ela não pode fechar o chat.
+    #[test] fn ida_e_volta_de_conta_mantem_o_chat_em_ordem_de_hora() {
+        let dir = tempfile::tempdir().unwrap();
+        let linha = |uuid: &str, hora: &str, texto: &str| json!({"uuid":uuid,"type":"user","timestamp":hora,"message":{"role":"user","content":texto}}).to_string();
+        let a = dir.path().join("a.jsonl");
+        std::fs::write(&a, [linha("1","2026-10-19T10:00:00Z","antigo"), linha("3","2026-10-21T03:15:00Z","ola")].join("\n")).unwrap();
+        let b = dir.path().join("b.jsonl");
+        std::fs::write(&b, [linha("1","2026-10-19T10:00:00Z","antigo"), linha("2","2026-10-20T02:15:00Z","so na outra conta")].join("\n")).unwrap();
+        let profile = crate::Profile{id:"p".into(),provider:"claude".into(),name:"Test".into(),config_dir:dir.path().to_string_lossy().into_owned(),builtin:false,created_at_ms:0,last_used_at_ms:None,authenticated:false,email:None};
+        let seg = |caminho: &Path| Segment{provider:"claude".into(),profile_id:Some("p".into()),external_session_id:None,transcript_path:Some(caminho.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None,historico_ate_ms:None};
+        let conversa = Conversation{id:"c".into(),project_id:"project".into(),cwd:"C:/test".into(),title:"t".into(),title_source:TitleSource::Manual,created_at_ms:0,segments:vec![seg(&a),seg(&b),seg(&a)]};
+        let textos: Vec<_> = timeline(&conversa,std::slice::from_ref(&profile),None,100).messages.into_iter().map(|m| m.text).collect();
+        assert_eq!(textos, ["antigo","so na outra conta","ola"]);
     }
 
     /// Fork: antes da primeira mensagem a cópia não tem arquivo e a conversa mostra o histórico da

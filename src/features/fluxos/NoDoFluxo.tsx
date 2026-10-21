@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { Handle, NodeToolbar, Position, type Node, type NodeProps } from "@xyflow/react";
 import { AgentIcon } from "../../components/ui/AgentIcon";
-import { CheckIcon, ChatIcon, CopyIcon, FlagIcon, GitBranchIcon, PlayIcon, RobotIcon, ShieldIcon, TrashIcon } from "../../components/ui/PixelIcon";
+import { CheckIcon, ChatIcon, CopyIcon, FlagIcon, GitBranchIcon, PlayIcon, RobotIcon, ShieldIcon, TerminalIcon, TrashIcon } from "../../components/ui/PixelIcon";
 import { ROTULO_ESFORCO } from "../agentes/agentesService";
 import { SAIDAS, type EstadoDoNo, type NoDoFluxo } from "./fluxosService";
 
@@ -18,8 +18,8 @@ export type DadosDoNo = {
 };
 export type NoOmni = Node<DadosDoNo, "omni">;
 
-const ICONE = { entrada: PlayIcon, agente: RobotIcon, condicao: ShieldIcon, aprovacao: CheckIcon, sala: ChatIcon, pr: GitBranchIcon, fim: FlagIcon } as const;
-const NOME = { entrada: "Entrada", agente: "Agente", condicao: "Condição", aprovacao: "Aprovação", sala: "Time", pr: "Pull request", fim: "Fim" } as const;
+const ICONE = { entrada: PlayIcon, agente: RobotIcon, condicao: ShieldIcon, aprovacao: CheckIcon, sala: ChatIcon, pr: GitBranchIcon, comando: TerminalIcon, fim: FlagIcon } as const;
+const NOME = { entrada: "Entrada", agente: "Agente", condicao: "Condição", aprovacao: "Aprovação", sala: "Time", pr: "Pull request", comando: "Comando", fim: "Fim" } as const;
 const ROTULO_SAIDA: Record<string, string> = { sim: "sim", nao: "não", esgotado: "esgotou" };
 const STATUS: Record<string, string> = { pendente: "", rodando: "rodando", concluido: "feito", falhou: "falhou", pausado: "pausado", aguardando: "sua vez" };
 
@@ -34,7 +34,8 @@ export const NoDoFluxoView = memo(function NoDoFluxoView({ data, selected }: Nod
     : no.tipo === "condicao" ? `lê o veredito · até ${String(no.config.max_voltas ?? 3)} voltas`
     : no.tipo === "aprovacao" ? "espera você aprovar"
     : no.tipo === "entrada" ? "a tarefa que você digita"
-    : no.tipo === "pr" ? "commit, push e gh pr create" : "";
+    : no.tipo === "pr" ? "commit, push e gh pr create"
+    : no.tipo === "comando" ? String(no.config.comando || "escreva o comando") : "";
   const duracao = estado?.inicio_ms && estado.fim_ms ? Math.max(1, Math.round((estado.fim_ms - estado.inicio_ms) / 1000)) : null;
 
   return (
@@ -56,7 +57,8 @@ export const NoDoFluxoView = memo(function NoDoFluxoView({ data, selected }: Nod
       {estado?.status === "rodando" && estado.atividade && <div className="fx-no-atividade" title={estado.atividade}>{estado.atividade}</div>}
       {estado && (estado.voltas > 0 || estado.custo_usd > 0 || duracao) && (
         <div className="fx-no-metricas">
-          {estado.voltas > 1 && no.tipo !== "condicao" && <span>{estado.voltas}ª vez</span>}
+          {estado.voltas > 1 && no.tipo !== "condicao" && no.tipo !== "comando" && <span>{estado.voltas}ª vez</span>}
+          {no.tipo === "comando" && estado.voltas > 0 && <span>{estado.voltas} falha(s)</span>}
           {no.tipo === "condicao" && estado.voltas > 0 && <span>{estado.voltas} reprovação(ões)</span>}
           {duracao && <span>{duracao < 60 ? `${duracao}s` : `${Math.floor(duracao / 60)}min ${duracao % 60}s`}</span>}
           {estado.custo_usd > 0 && <span>US$ {estado.custo_usd.toFixed(2)}</span>}

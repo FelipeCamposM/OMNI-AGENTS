@@ -28,13 +28,13 @@ describe("workspacesReducer", () => {
     expect(state.workspaces.find((ws) => ws.id === first.id)?.projects).toHaveLength(0);
   });
 
-  it("fecha o workspace ativo e cai pro outro restante", () => {
+  it("exclui o workspace ativo e cai pro outro restante", () => {
     let state = collection();
     const first = state.workspaces[0];
     state = workspacesReducer(state, { type: "ADD_WORKSPACE", name: "Segundo" });
     const second = state.workspaces[1];
 
-    state = workspacesReducer(state, { type: "CLOSE_WORKSPACE", workspaceId: second.id });
+    state = workspacesReducer(state, { type: "DELETE_WORKSPACE", workspaceId: second.id });
     expect(state.workspaces.map((ws) => ws.id)).toEqual([first.id]);
     expect(state.activeWorkspaceId).toBe(first.id);
   });
@@ -60,9 +60,67 @@ describe("workspacesReducer", () => {
   it("nunca deixa a lista de workspaces vazia", () => {
     let state = collection();
     const only = state.workspaces[0];
-    state = workspacesReducer(state, { type: "CLOSE_WORKSPACE", workspaceId: only.id });
+    state = workspacesReducer(state, { type: "DELETE_WORKSPACE", workspaceId: only.id });
     expect(state.workspaces).toHaveLength(1);
     expect(state.activeWorkspaceId).toBe(state.workspaces[0].id);
+  });
+
+  it("fechar só esconde: some da lista, guarda os projetos e reabre igual", () => {
+    let state = collection();
+    const first = state.workspaces[0];
+    state = workspacesReducer(state, { type: "ADD_PROJECT", path: "C:/dev/um" });
+    state = workspacesReducer(state, { type: "ADD_WORKSPACE", name: "Segundo" });
+    state = workspacesReducer(state, { type: "SELECT_WORKSPACE", workspaceId: first.id });
+
+    state = workspacesReducer(state, { type: "HIDE_WORKSPACE", workspaceId: first.id });
+    expect(state.workspaces.find((ws) => ws.id === first.id)?.hidden).toBe(true);
+    expect(state.workspaces.find((ws) => ws.id === first.id)?.projects).toHaveLength(1);
+    expect(state.activeWorkspaceId).toBe(state.workspaces[1].id);
+
+    state = workspacesReducer(state, { type: "SHOW_WORKSPACE", workspaceId: first.id });
+    expect(state.workspaces.find((ws) => ws.id === first.id)?.hidden).toBe(false);
+    expect(state.activeWorkspaceId).toBe(first.id);
+  });
+
+  it("esconder o único aberto cria um novo, para a lateral nunca ficar sem workspace", () => {
+    let state = collection();
+    const only = state.workspaces[0];
+    state = workspacesReducer(state, { type: "HIDE_WORKSPACE", workspaceId: only.id });
+    expect(state.workspaces).toHaveLength(2);
+    const ativo = state.workspaces.find((ws) => ws.id === state.activeWorkspaceId)!;
+    expect(ativo.id).not.toBe(only.id);
+    expect(ativo.hidden).toBeFalsy();
+  });
+
+  it("arrastar muda a ordem de workspaces e de projetos", () => {
+    let state = collection();
+    const [a] = state.workspaces;
+    state = workspacesReducer(state, { type: "ADD_WORKSPACE", name: "B" });
+    state = workspacesReducer(state, { type: "ADD_WORKSPACE", name: "C" });
+    const [, b, c] = state.workspaces;
+    state = workspacesReducer(state, { type: "MOVE_WORKSPACE", workspaceId: c.id, beforeId: a.id });
+    expect(state.workspaces.map((ws) => ws.id)).toEqual([c.id, a.id, b.id]);
+    state = workspacesReducer(state, { type: "MOVE_WORKSPACE", workspaceId: c.id, beforeId: null });
+    expect(state.workspaces.map((ws) => ws.id)).toEqual([a.id, b.id, c.id]);
+
+    state = workspacesReducer(state, { type: "ADD_PROJECT", path: "C:/dev/p1" });
+    state = workspacesReducer(state, { type: "ADD_PROJECT", path: "C:/dev/p2" });
+    const ativo = () => state.workspaces.find((ws) => ws.id === state.activeWorkspaceId)!;
+    const [p1, p2] = ativo().projects;
+    state = workspacesReducer(state, { type: "MOVE_PROJECT", projectId: p2.id, beforeId: p1.id });
+    expect(ativo().projects.map((p) => p.id)).toEqual([p2.id, p1.id]);
+  });
+
+  it("gerenciar tira um projeto de um workspace escondido sem mexer no ativo", () => {
+    let state = collection();
+    const first = state.workspaces[0];
+    state = workspacesReducer(state, { type: "ADD_PROJECT", path: "C:/dev/um" });
+    state = workspacesReducer(state, { type: "ADD_WORKSPACE", name: "Segundo" });
+    state = workspacesReducer(state, { type: "HIDE_WORKSPACE", workspaceId: first.id });
+    const projeto = state.workspaces.find((ws) => ws.id === first.id)!.projects[0];
+    state = workspacesReducer(state, { type: "CLOSE_PROJECT_IN_WORKSPACE", workspaceId: first.id, projectId: projeto.id });
+    expect(state.workspaces.find((ws) => ws.id === first.id)?.projects).toHaveLength(0);
+    expect(state.activeWorkspaceId).toBe(state.workspaces[1].id);
   });
 
   it("FOCUS_SESSION alcança um workspace inativo e anexa a sessão no projeto certo", () => {

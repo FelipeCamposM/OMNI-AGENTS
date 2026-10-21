@@ -1,0 +1,29 @@
+/* Vocabulário da voz (Configurações → Geral). */
+.voc-nova { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: .5rem; align-items: center; }
+@media (max-width: 640px) { .voc-nova { grid-template-columns: minmax(0, 1fr); } }
+
+.voc-lista { display: flex; flex-direction: column; gap: .375rem; }
+.voc-item {
+  display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem .625rem;
+  border: 1px solid rgb(var(--c-overlay) / .1); border-left: 2px solid rgb(var(--c-accent)); background: rgb(var(--c-overlay) / .03);
+  animation: popover-entra 160ms ease-out;
+}
+.voc-termo { font-size: .8125rem; font-weight: 600; color: rgb(var(--c-accent)); text-shadow: 0 0 10px rgb(var(--c-accent) / .35); }
+.voc-selo {
+  padding: 0 .3125rem; font-size: .5625rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: rgb(var(--c-success)); border: 1px solid rgb(var(--c-success) / .4); background: rgb(var(--c-success) / .1);
+}
+.voc-ouvidos { display: flex; flex: 1; flex-wrap: wrap; gap: .25rem; min-width: 0; }
+.voc-ouvido {
+  display: inline-flex; align-items: center; gap: .25rem; padding: .0625rem .25rem .0625rem .375rem; font-size: .6875rem;
+  color: rgb(var(--c-text-muted)); text-decoration: line-through; border: 1px dashed rgb(var(--c-overlay) / .2);
+}
+.voc-ouvido button { display: grid; place-items: center; color: inherit; background: none; border: 0; cursor: pointer; }
+.voc-ouvido button:hover { color: rgb(var(--c-danger)); }
+.voc-remover { display: grid; place-items: center; width: 26px; height: 26px; color: rgb(var(--c-text-muted)); background: none; border: 1px solid transparent; cursor: pointer; }
+.voc-remover:hover { color: rgb(var(--c-danger)); border-color: rgb(var(--c-danger) / .35); background: rgb(var(--c-danger) / .1); }
+
+.voc-projetos { display: flex; flex-direction: column; gap: .375rem; padding-top: .625rem; border-top: 1px dashed rgb(var(--c-overlay) / .12); }
+.voc-projeto { display: flex; flex-wrap: wrap; align-items: center; gap: .3125rem; }
+.voc-projeto-nome { display: inline-flex; align-items: center; gap: .25rem; margin-right: .25rem; font-size: .6875rem; color: rgb(var(--c-text-secondary)); }
+.voc-chip { padding: .0625rem .375rem; font-size: .6875rem; color: rgb(var(--c-text-primary)); border: 1px solid rgb(var(--c-accent) / .3); background: rgb(var(--c-accent) / .08); }

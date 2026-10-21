@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import gsap from "gsap";
-import { iconForEntry } from "../features/files/fileIcons";
+import { iconForEntry, iconStyle } from "../features/files/fileIcons";
 import {
   baseName,
   copyIntoProject,
@@ -511,7 +511,7 @@ function FileTreeNode({
             </span>
             {/* `iconRef` fica no ícone (e não na seta): é a PASTA que pulsa ao virar alvo de drop. */}
             <span ref={iconRef} className="mr-1.5 inline-block align-[-2px]" aria-hidden="true">
-              <ItemIcon className="h-3 w-3" aria-hidden />
+              <ItemIcon className="h-3 w-3" style={iconStyle(entry.name, entry.isDirectory)} aria-hidden />
             </span>
             {entry.name}
           </button>
@@ -566,7 +566,7 @@ const DragGhost = forwardRef<HTMLDivElement, { entry: DragPayload; transform: st
       style={{ position: "fixed", top: 0, left: 0, transform, pointerEvents: "none" }}
       className="popover z-50 flex items-center gap-1.5 px-2 py-1 text-xs text-text-primary opacity-90 whitespace-nowrap"
     >
-      <Icon className="h-3 w-3" aria-hidden />
+      <Icon className="h-3 w-3" style={iconStyle(name, entry.isDirectory)} aria-hidden />
       {name}
     </div>
   );
@@ -588,7 +588,7 @@ function NewEntryInput({ depth, isDirectory, onCommit, onCancel }: { depth: numb
     <div className="flex items-center" style={{ paddingLeft: `${depth * 14 + 24}px` }}>
       <span className="mr-0.5 inline-block w-3" aria-hidden="true" />
       <span className="mr-1.5 inline-block" aria-hidden="true">
-        <Icon className="h-3 w-3" aria-hidden />
+        <Icon className="h-3 w-3" style={iconStyle(name, isDirectory)} aria-hidden />
       </span>
       <input
         autoFocus

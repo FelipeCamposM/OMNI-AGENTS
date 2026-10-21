@@ -584,6 +584,9 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/previas/{porta}/fechar",post(previas_fechar))
         .route("/contas/{id}/uso",post(atualizar_uso))
         .route("/compactacao",get(compactacao_ler).post(compactacao_salvar))
+        .route("/limpeza",get(limpeza_ler).post(limpeza_salvar))
+        .route("/limpeza/agora",post(limpeza_agora))
+        .route("/copias",get(copias_ler).post(copias_juntar))
         .route("/historico/levar",post(levar_do_historico))
         .route("/extensoes",get(extensoes))
         .route("/extensoes/compartilhar",post(compartilhar_extensoes))
@@ -603,6 +606,8 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/voz/baixar",post(voz_baixar))
         .route("/voz/remover",post(voz_remover))
         .route("/voz/ajustes",post(voz_ajustes))
+        .route("/voz/vocabulario",get(vocabulario_ler).post(vocabulario_salvar))
+        .route("/voz/vocabulario/aprender",post(vocabulario_aprender))
         .route("/atencao",get(attention))
         .route("/sessoes",post(create_session))
         .route("/parear",post(parear))
@@ -1326,12 +1331,36 @@ async fn voz_ajustes(State(state): State<Arc<EngineState>>, Json(body): Json<Voz
     Ok(Json(crate::voz::estado(&state)))
 }
 
+/// Vocabulário da voz: as palavras da pessoa (manuais e aprendidas com correções) e, à parte, os nomes
+/// tirados de cada projeto da lista — esses entram sozinhos e não se apagam, só se acrescentam.
+fn vocabulario_json(state: &EngineState, itens: Vec<crate::voz::Palavra>) -> Value {
+    let projetos: Vec<Value> = state.mobile.workspace.lock().expect("workspace poisoned").projects.iter()
+        .map(|p| json!({"nome":p.name,"termos":crate::voz::termos_do_projeto(Path::new(&p.path))})).collect();
+    json!({"itens":itens,"projetos":projetos})
+}
+async fn vocabulario_ler(State(state): State<Arc<EngineState>>) -> Json<Value> {
+    Json(tokio::task::spawn_blocking(move || vocabulario_json(&state, crate::voz::palavras(&state))).await.unwrap_or(json!({"itens":[],"projetos":[]})))
+}
+#[derive(Deserialize)] #[serde(deny_unknown_fields)] struct VocabularioCorpo { itens: Vec<crate::voz::Palavra> }
+async fn vocabulario_salvar(State(state): State<Arc<EngineState>>, Json(body): Json<VocabularioCorpo>) -> Result<Json<Value>,ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let itens = crate::voz::salvar_palavras(&state, body.itens).map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Não foi possível salvar"))?;
+        Ok(Json(vocabulario_json(&state, itens)))
+    }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Não foi possível salvar"))?
+}
+async fn vocabulario_aprender(State(state): State<Arc<EngineState>>, Json(body): Json<VocabularioCorpo>) -> Result<Json<Value>,ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let itens = crate::voz::aprender(&state, body.itens).map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Não foi possível salvar"))?;
+        Ok(Json(vocabulario_json(&state, itens)))
+    }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Não foi possível salvar"))?
+}
+
 /// Um trecho da fala (PCM 16 bits, 16 kHz, mono, cortado nas pausas pelo navegador) → texto cru. Volta para o campo, nunca é
 /// enviado sozinho: a pessoa revisa antes. A conversa só serve para a dica de vocabulário do projeto.
 async fn transcrever_voz(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, corpo: axum::body::Bytes) -> Result<Json<Value>,ApiError> {
     tokio::task::spawn_blocking(move || {
         let (conversation,_) = current(&state,&id)?;
-        let dica = crate::voz::vocabulario(std::path::Path::new(&conversation.cwd));
+        let dica = crate::voz::vocabulario(&state,std::path::Path::new(&conversation.cwd));
         let texto = crate::voz::transcrever(&state,&corpo,&dica).map_err(|e| error(StatusCode::CONFLICT,&e.to_string()))?;
         Ok(Json(json!({"texto":texto})))
     }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao transcrever"))?
@@ -1341,7 +1370,7 @@ async fn transcrever_voz(State(state): State<Arc<EngineState>>, RoutePath(id): R
 async fn corrigir_voz(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, Json(body): Json<VozTexto>) -> Result<Json<Value>,ApiError> {
     tokio::task::spawn_blocking(move || {
         let (conversation,_) = current(&state,&id)?;
-        let dica = crate::voz::vocabulario(std::path::Path::new(&conversation.cwd));
+        let dica = crate::voz::vocabulario(&state,std::path::Path::new(&conversation.cwd));
         Ok(Json(json!({"texto":crate::voz::corrigir(&state,&body.texto,&dica)})))
     }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao corrigir"))?
 }
@@ -1688,6 +1717,128 @@ async fn compactacao_salvar(State(state): State<Arc<EngineState>>, Json(body): J
     Ok(Json(body))
 }
 
+/// Configurações → Armazenamento → limpeza automática (`limpeza.json`). Desligada até alguém ligar.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub(crate) struct AjusteDeLimpeza {
+    pub automatica: bool,
+    /// Sem uso há mais de quantos dias: 30, 60 ou 90.
+    pub dias: u64,
+}
+
+impl Default for AjusteDeLimpeza {
+    fn default() -> Self { Self { automatica: false, dias: 60 } }
+}
+
+impl AjusteDeLimpeza {
+    fn ler(dir: &Path) -> Self {
+        fs::read(dir.join("limpeza.json")).ok()
+            .and_then(|bytes| serde_json::from_slice::<Self>(&bytes).ok())
+            .filter(|a| dias_validos(a.dias)).unwrap_or_default()
+    }
+}
+
+fn dias_validos(dias: u64) -> bool { matches!(dias, 30 | 60 | 90) }
+
+/// Última limpeza (manual ou automática), para a tela dizer o que saiu e quando.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct UltimaLimpeza { em_ms: u64, dias: u64, conversas: usize, bytes: u64, automatica: bool }
+
+/// Ids das conversas com sessão aberta agora — nunca apagadas, por mais paradas que estejam.
+fn conversas_abertas(state: &EngineState) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let mut conversas = HashSet::new();
+    if let Ok(sessoes) = state.sessions.lock() {
+        for entrada in sessoes.values() {
+            let SessionEntry::Live(sessao) = entrada else { continue };
+            let Ok(meta) = sessao.meta.lock() else { continue };
+            if let Some(id) = &meta.external_session_id { ids.insert(id.to_lowercase()); }
+            if let Some(id) = &meta.conversation_id { conversas.insert(id.clone()); }
+        }
+    }
+    for conversa in omni_core::conversations::read_index(state.state_file.parent().unwrap()).iter().filter(|c| conversas.contains(&c.id)) {
+        for segmento in &conversa.segments {
+            if let Some(id) = &segmento.external_session_id { ids.insert(id.to_lowercase()); }
+            if let Some(stem) = segmento.transcript_path.as_deref().and_then(|p| Path::new(p).file_stem()) {
+                let stem = stem.to_string_lossy().to_lowercase();
+                // Codex: `rollout-<data>-<uuid>`, o mesmo corte do `armazenamento::id_da_conversa`.
+                ids.insert(stem.get(stem.len().saturating_sub(36)..).unwrap_or(&stem).to_owned());
+                ids.insert(stem);
+            }
+        }
+    }
+    ids
+}
+
+fn limpar_e_registrar(state: &EngineState, dias: u64, automatica: bool) -> omni_core::armazenamento::Limpeza {
+    let dir = state.state_file.parent().unwrap();
+    let agora = now_ms();
+    let feito = omni_core::armazenamento::limpar(dir, dias, agora, &conversas_abertas(state));
+    let ultima = UltimaLimpeza { em_ms: agora, dias, conversas: feito.conversas, bytes: feito.bytes, automatica };
+    let _ = omni_protocol::atomic_write_json(&dir.join("limpeza-ultima.json"), &ultima);
+    feito
+}
+
+/// Uma vez na subida (depois de 10 min, longe do pico de abrir o app) e a cada 6 h, se ligada.
+pub fn limpeza_automatica(state: Arc<EngineState>) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(10 * 60));
+        let ajuste = AjusteDeLimpeza::ler(state.state_file.parent().unwrap());
+        if ajuste.automatica {
+            let feito = limpar_e_registrar(&state, ajuste.dias, true);
+            if !feito.erros.is_empty() { eprintln!("limpeza automática: {} arquivos não saíram", feito.erros.len()); }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(6 * 60 * 60 - 10 * 60));
+    });
+}
+
+/// Ajuste + o que sairia com 30, 60 e 90 dias (as 50 maiores de cada, e o total).
+async fn limpeza_ler(State(state): State<Arc<EngineState>>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let dir = state.state_file.parent().unwrap();
+        let abertas = conversas_abertas(&state);
+        let agora = now_ms();
+        let sugestoes: Vec<Value> = [30, 60, 90].into_iter().map(|dias| {
+            let lista = omni_core::armazenamento::antigas(dir, dias, agora, &abertas);
+            json!({ "dias": dias, "conversas": lista.len(), "bytes": lista.iter().map(|a| a.bytes).sum::<u64>(),
+                "lista": lista.into_iter().take(50).collect::<Vec<_>>() })
+        }).collect();
+        let ultima = fs::read(dir.join("limpeza-ultima.json")).ok().and_then(|b| serde_json::from_slice::<UltimaLimpeza>(&b).ok());
+        Json(json!({ "ajuste": AjusteDeLimpeza::ler(dir), "sugestoes": sugestoes, "ultima": ultima }))
+    }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "Falha ao medir as conversas"))
+}
+
+async fn limpeza_salvar(State(state): State<Arc<EngineState>>, Json(body): Json<AjusteDeLimpeza>) -> Result<Json<AjusteDeLimpeza>, ApiError> {
+    if !dias_validos(body.dias) { return Err(error(StatusCode::BAD_REQUEST, "Escolha 30, 60 ou 90 dias")); }
+    omni_protocol::atomic_write_json(&state.state_file.parent().unwrap().join("limpeza.json"), &body)
+        .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "Não foi possível salvar"))?;
+    Ok(Json(body))
+}
+
+#[derive(Deserialize)]
+struct LimparAgora { dias: u64 }
+
+/// Apaga já. Só recebe os dias: a lista é refeita no engine, nunca vem da tela.
+async fn limpeza_agora(State(state): State<Arc<EngineState>>, Json(body): Json<LimparAgora>) -> Result<Json<omni_core::armazenamento::Limpeza>, ApiError> {
+    if !dias_validos(body.dias) { return Err(error(StatusCode::BAD_REQUEST, "Escolha 30, 60 ou 90 dias")); }
+    tokio::task::spawn_blocking(move || Json(limpar_e_registrar(&state, body.dias, false)))
+        .await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "Falha ao limpar"))
+}
+
+/// Conversas guardadas em mais de uma conta (ou fora da conta mestra): quantas e quanto liberaria.
+async fn copias_ler(State(state): State<Arc<EngineState>>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let lista = omni_core::armazenamento::copias(state.state_file.parent().unwrap(), &conversas_abertas(&state));
+        Json(json!({ "conversas": lista.len(), "bytes": lista.iter().map(|d| d.bytes).sum::<u64>(), "lista": lista.into_iter().take(50).collect::<Vec<_>>() }))
+    }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "Falha ao procurar cópias"))
+}
+
+/// Junta já, na conta mestra de cada IA. A lista é refeita no engine, nunca vem da tela.
+async fn copias_juntar(State(state): State<Arc<EngineState>>) -> Result<Json<omni_core::armazenamento::Limpeza>, ApiError> {
+    tokio::task::spawn_blocking(move || Json(omni_core::armazenamento::juntar_copias(state.state_file.parent().unwrap(), &conversas_abertas(&state))))
+        .await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR, "Falha ao juntar as cópias"))
+}
+
 async fn opcoes(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>) -> Result<Json<Value>, ApiError> {
     tokio::task::spawn_blocking(move || opcoes_da_conversa(&state,&id).map(Json))
         .await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler as opções"))?
@@ -1879,24 +2030,28 @@ fn comando_de_retomada(base: &str, provider: &str, sessao: &str, ajustes: &Ajust
     Ok(comando)
 }
 
-/// Copia o arquivo da conversa para onde a CLI da conta de destino procura: Claude por pasta do
-/// projeto + id; Codex na mesma posição relativa dentro do CODEX_HOME. Devolve o caminho novo.
-fn levar_transcript(perfis: &[omni_core::Profile], provider: &str, conta_origem: Option<&str>, origem: &Path,
+/// Leva a conversa para onde a CLI da conta de destino procura (Claude por pasta do projeto + id;
+/// Codex na mesma posição relativa dentro do CODEX_HOME) sem duplicar: o arquivo mora na conta
+/// mestra da IA e as outras contas o enxergam por hard link (`omni_core::mestra`). Devolve o caminho
+/// na conta de destino.
+fn levar_transcript(dir: &Path, perfis: &[omni_core::Profile], provider: &str, conta_origem: Option<&str>, origem: &Path,
     alvo: &omni_core::Profile, cwd: &str, sessao: &str) -> Result<String> {
-    let destino = match provider {
-        "claude" => omni_core::conversations::claude_transcript_path(Path::new(&alvo.config_dir),cwd,sessao),
+    let relativo = match provider {
+        "claude" => None,
         _ => {
             let raiz = perfis.iter().find(|p| Some(p.id.as_str()) == conta_origem)
                 .and_then(|p| Path::new(&p.config_dir).canonicalize().ok()).ok_or_else(||anyhow!("Conta de origem não encontrada"))?;
-            let relativo = origem.canonicalize()?.strip_prefix(&raiz).map(Path::to_path_buf)
-                .map_err(|_|anyhow!("Transcript fora da conta de origem"))?;
-            Path::new(&alvo.config_dir).join(relativo)
+            Some(origem.canonicalize()?.strip_prefix(&raiz).map(Path::to_path_buf)
+                .map_err(|_|anyhow!("Transcript fora da conta de origem"))?)
         }
     };
-    if destino != origem {
-        if let Some(pasta) = destino.parent() { std::fs::create_dir_all(pasta)?; }
-        std::fs::copy(origem,&destino)?;
-    }
+    let na_conta = |conta: &omni_core::Profile| match &relativo {
+        None => omni_core::conversations::claude_transcript_path(Path::new(&conta.config_dir),cwd,sessao),
+        Some(relativo) => Path::new(&conta.config_dir).join(relativo),
+    };
+    let destino = na_conta(alvo);
+    let mestre = omni_core::mestra::mestra(dir,perfis,provider).map(na_conta).unwrap_or_else(|| destino.clone());
+    omni_core::mestra::unificar(&mestre,&[origem.to_path_buf(),destino.clone()])?;
     Ok(destino.to_string_lossy().into_owned())
 }
 
@@ -1915,7 +2070,7 @@ async fn levar_do_historico(State(state): State<Arc<EngineState>>, Json(body): J
         let alvo = perfis.iter().find(|p| p.id == body.destino && p.provider == entrada.provider)
             .ok_or_else(||error(StatusCode::NOT_FOUND,"Conta não encontrada para este agente"))?;
         let cwd = entrada.cwd.clone().ok_or_else(||error(StatusCode::CONFLICT,"Essa conversa não registrou a pasta onde rodou"))?;
-        levar_transcript(&perfis,&entrada.provider,Some(&entrada.profile_id),Path::new(&entrada.path),alvo,&cwd,&entrada.session_id)
+        levar_transcript(state.state_file.parent().unwrap(),&perfis,&entrada.provider,Some(&entrada.profile_id),Path::new(&entrada.path),alvo,&cwd,&entrada.session_id)
             .map_err(|e|error(StatusCode::CONFLICT,&format!("Não deu para levar a conversa para a conta {}: {e}",alvo.name)))?;
         Ok(Json(json!({"ok":true})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao copiar a conversa"))?
@@ -2016,7 +2171,7 @@ fn retomar(state: &Arc<EngineState>, action: &Action, plano: &Retomada) -> Resul
         let alvo = alvo.ok_or_else(||anyhow!("Conta não encontrada"))?;
         let origem = plano.transcript.as_deref().map(PathBuf::from).filter(|p| p.is_file())
             .ok_or_else(||anyhow!("Não achei o transcript desta conversa para levar à outra conta"))?;
-        transcript = Some(levar_transcript(&perfis,&plano.provider,plano.profile_id.as_deref(),&origem,alvo,&plano.cwd,&plano.session_id)?);
+        transcript = Some(levar_transcript(&dir,&perfis,&plano.provider,plano.profile_id.as_deref(),&origem,alvo,&plano.cwd,&plano.session_id)?);
     }
     let base = state.mobile.workspace.lock().map_err(|_|anyhow!("workspace poisoned"))?.agents.iter()
         .find(|agente| agente.id == plano.provider).map(|agente| agente.command.clone())
@@ -2083,7 +2238,7 @@ fn reabrir_com(state: &Arc<EngineState>, conversation_id: &str, ajustes: &Ajuste
         let alvo = alvo.ok_or_else(||anyhow!("Conta não encontrada"))?;
         let origem = omni_core::conversations::resolve_transcript(&segmento,conversa,&perfis)
             .ok_or_else(||anyhow!("Não achei o transcript desta conversa para levar à outra conta"))?;
-        transcript = Some(levar_transcript(&perfis,&segmento.provider,segmento.profile_id.as_deref(),&origem,alvo,&conversa.cwd,&sessao_externa)?);
+        transcript = Some(levar_transcript(&dir,&perfis,&segmento.provider,segmento.profile_id.as_deref(),&origem,alvo,&conversa.cwd,&sessao_externa)?);
     }
 
     let base = state.mobile.workspace.lock().map_err(|_|anyhow!("workspace poisoned"))?.agents.iter()
@@ -2412,6 +2567,37 @@ mod tests {
 
         let EngineResponse::Api { status, .. } = local(state,"POST","/extensoes/principal",Some(r#"{"provider":"claude","conta":"nao-existe"}"#.into()),None,vec![]).await else { panic!("não é Api") };
         assert_eq!(status,404);
+    }
+
+    /// Armazenamento → limpeza: sugere, salva o ajuste (só 30/60/90) e apaga o que está parado.
+    #[tokio::test] async fn limpeza_sugere_salva_e_apaga_pela_rota() {
+        let (dir,state) = fixture();
+        let conta = dir.path().join("conta");
+        let pasta = conta.join("projects").join("D--proj");
+        std::fs::create_dir_all(&pasta).unwrap();
+        let velha = pasta.join("velha.jsonl");
+        std::fs::write(&velha,b"{}\n").unwrap();
+        let ha_45_dias = std::time::SystemTime::now() - std::time::Duration::from_secs(45 * 24 * 3600);
+        std::fs::File::options().write(true).open(&velha).unwrap().set_modified(ha_45_dias).unwrap();
+        std::fs::write(pasta.join("nova.jsonl"),b"{}\n").unwrap();
+        atomic_write_json(&dir.path().join("profiles.json"),&json!({"profiles":[
+            {"id":"a","provider":"claude","name":"Padrão","config_dir":conta.to_string_lossy(),"builtin":false,"created_at_ms":0}]})).unwrap();
+
+        let EngineResponse::Api { status, .. } = local(state.clone(),"POST","/limpeza",Some(r#"{"automatica":true,"dias":7}"#.into()),None,vec![]).await else { panic!("não é Api") };
+        assert_eq!(status,400);
+        let EngineResponse::Api { status, .. } = local(state.clone(),"POST","/limpeza",Some(r#"{"automatica":true,"dias":30}"#.into()),None,vec![]).await else { panic!("não é Api") };
+        assert_eq!(status,200);
+        let EngineResponse::Api { body, .. } = local(state.clone(),"GET","/limpeza",None,None,vec![]).await else { panic!("não é Api") };
+        let lido: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(lido["ajuste"],json!({"automatica":true,"dias":30}));
+        assert_eq!((lido["sugestoes"][0]["dias"].clone(),lido["sugestoes"][0]["conversas"].clone(),lido["sugestoes"][1]["conversas"].clone()),(json!(30),json!(1),json!(0)));
+
+        let EngineResponse::Api { status, body } = local(state.clone(),"POST","/limpeza/agora",Some(r#"{"dias":30}"#.into()),None,vec![]).await else { panic!("não é Api") };
+        assert_eq!(status,200,"{body}");
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["conversas"],1);
+        assert!(!velha.exists() && pasta.join("nova.jsonl").exists());
+        let EngineResponse::Api { body, .. } = local(state,"GET","/limpeza",None,None,vec![]).await else { panic!("não é Api") };
+        assert_eq!(serde_json::from_str::<Value>(&body).unwrap()["ultima"]["conversas"],1);
     }
 
     /// `/painel` junta lista e catálogo; com o `ETag` de volta e nada mudado, responde 304 sem corpo.

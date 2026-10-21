@@ -96,7 +96,7 @@ describe("useAttention", () => {
     );
     expect(result.current.items).toHaveLength(1);
     expect(result.current.items[0].sessionId).toBe("terminal-1790000000040-4");
-    expect(result.current.countByWorkspace).toEqual({ "ws-a": 1 });
+    expect(result.current.items.filter((item) => item.workspaceId === "ws-a")).toHaveLength(1);
 
     // Visto o limite, a próxima tentativa batendo no mesmo limite não é notícia.
     act(() => result.current.dismiss("terminal-1790000000040-4"));
@@ -171,7 +171,7 @@ describe("useAttention", () => {
       workspaceName: "Cliente X",
       projectName: "api",
     });
-    expect(result.current.countByWorkspace).toEqual({ "ws-a": 1 });
+    expect(result.current.items.filter((item) => item.workspaceId === "ws-a")).toHaveLength(1);
   });
 
   it("some enquanto está na tela e volta com evento novo em outro workspace", () => {
@@ -198,7 +198,7 @@ describe("useAttention", () => {
       activeWorkspaceId: "ws-b",
     });
     expect(result.current.items).toHaveLength(1);
-    expect(result.current.countByWorkspace).toEqual({ "ws-a": 1 });
+    expect(result.current.items.filter((item) => item.workspaceId === "ws-a")).toHaveLength(1);
 
     // Voltar pro workspace dele zera o aviso de novo.
     rerender({
@@ -263,7 +263,7 @@ describe("useAttention", () => {
 
     expect(result.current.items.map((item) => item.sessionId)).toEqual(["aprovar", "limite", "terminou"]);
     expect(result.current.items[1].reason).toBe("usage_limit");
-    expect(result.current.countByWorkspace).toEqual({ "ws-a": 3 });
+    expect(result.current.items.filter((item) => item.workspaceId === "ws-a")).toHaveLength(3);
   });
 
   it("ignora sessão de projeto que não está em workspace nenhum", () => {
@@ -276,5 +276,22 @@ describe("useAttention", () => {
     );
 
     expect(result.current.items).toHaveLength(0);
+  });
+
+  it("sessão encerrada ou órfã não vira aviso; a hora é a do evento, não a do último redesenho", () => {
+    const { result } = renderHook(() =>
+      useAttention(
+        [
+          session({ id: "encerrada", project_id: "api", state: "stopped" }),
+          session({ id: "orfa", project_id: "api", state: "orphan" }),
+          session({ id: "terminou", project_id: "api", attention_at_ms: 1_000, last_activity_at_ms: 9_000 }),
+        ],
+        [workspace("ws-a", "Cliente X", [project("api", null)], "api")],
+        "ws-a"
+      )
+    );
+
+    expect(result.current.items.map((item) => item.sessionId)).toEqual(["terminou"]);
+    expect(result.current.items[0].aconteceuEm).toBe(1_000);
   });
 });

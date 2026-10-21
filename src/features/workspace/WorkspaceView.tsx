@@ -74,7 +74,7 @@ export function WorkspaceView({
   );
 }
 
-/** Conta do git, uso dos agentes e engine — no workspace e nos fluxos. A branch fica no topo da conversa. */
+/** Conta do git, uso do agente em foco e engine (o uso de todas as contas fica no botão "Uso" da barra de cima) — no workspace e nos fluxos. A branch fica no topo da conversa. */
 export function RodapeDoProjeto({ projectPath, engineOnline, activeSessionId }: { projectPath: string | null; engineOnline: boolean; activeSessionId: string | null }) {
   return (
     <footer className="rodape-app">
@@ -83,7 +83,6 @@ export function RodapeDoProjeto({ projectPath, engineOnline, activeSessionId }: 
       </span>
       <span className="rodape-grupo flex-1 justify-end">
         <AgentUsageStatus engineOnline={engineOnline} activeSessionId={activeSessionId} />
-        <span className="rodape-sep" aria-hidden />
         <span className="rodape-engine" data-online={engineOnline} title={engineOnline ? "Engine rodando: terminais e conversas ativos" : "Conectando ao engine…"}>
           <span className="rodape-ponto" aria-hidden />
           {engineOnline ? "Engine online" : "Conectando…"}

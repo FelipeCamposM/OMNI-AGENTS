@@ -34,10 +34,13 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> 
     activeWorkspaceId: "ws-b",
     onSelectWorkspace: vi.fn(),
     onCreateWorkspace: vi.fn(),
-    onCloseWorkspace: vi.fn(),
+    onHideWorkspace: vi.fn(),
+    onShowWorkspace: vi.fn(),
+    onDeleteWorkspace: vi.fn(),
+    onMoveWorkspace: vi.fn(),
+    onRemoveProjectFromWorkspace: vi.fn(),
     onRenameWorkspace: vi.fn(),
     attention: [item],
-    attentionByWorkspace: { "ws-a": 1 },
     onFocusSession: vi.fn(),
     onDismissAttention: vi.fn(),
     onRunInTerminal: vi.fn(),
@@ -55,6 +58,7 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> 
     onAddProject: vi.fn(),
     onSelectProject: vi.fn(),
     onCloseProject: vi.fn(),
+    onMoveProject: vi.fn(),
     onAttachTerminal: vi.fn(),
     onCloseTerminal: vi.fn(),
     onDuplicateTerminal: vi.fn(),
@@ -78,6 +82,47 @@ function renderSidebar(overrides: Partial<React.ComponentProps<typeof Sidebar>> 
 }
 
 describe("Sidebar", () => {
+  it("fechar workspace só esconde; o + reabre um escondido ou cria um novo", async () => {
+    const escondido = { ...workspace("ws-c", "Antigo"), hidden: true };
+    const props = renderSidebar({ workspaces: [workspace("ws-a", "Cliente X"), workspace("ws-b", "Estudos"), escondido] });
+    expect(screen.queryByText("Antigo")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Fechar workspace Cliente X" }));
+    expect(props.onHideWorkspace).toHaveBeenCalledWith("ws-a");
+
+    await userEvent.click(screen.getByRole("button", { name: "Abrir workspace" }));
+    const modal = screen.getByRole("dialog", { name: "Abrir workspace" });
+    await userEvent.click(within(modal).getByRole("button", { name: /Antigo/ }));
+    expect(props.onShowWorkspace).toHaveBeenCalledWith("ws-c");
+
+    await userEvent.click(screen.getByRole("button", { name: "Abrir workspace" }));
+    await userEvent.type(screen.getByRole("textbox", { name: "Nome do workspace novo" }), "Cliente Y");
+    await userEvent.click(screen.getByRole("button", { name: "Criar" }));
+    expect(props.onCreateWorkspace).toHaveBeenCalledWith("Cliente Y");
+  });
+
+  it("gerenciar exclui só depois da confirmação que explica o que acontece, e remove projeto", async () => {
+    const comProjeto: WorkspaceState = { ...workspace("ws-a", "Cliente X"), projects: [
+      { id: "p1", name: "api", path: "C:/dev/api", gitRoot: null, branch: null, composeFile: null, lastOpenedAt: "",
+        layout: { type: "pane", id: "pane", tabs: [], activeTabId: null }, activePaneId: "pane", maximizedPaneId: null },
+    ] } as WorkspaceState;
+    const props = renderSidebar({ workspaces: [comProjeto, workspace("ws-b", "Estudos")] });
+
+    await userEvent.click(screen.getByRole("button", { name: "Gerenciar workspaces" }));
+    const gerenciar = screen.getByRole("dialog", { name: "Gerenciar workspaces" });
+    await userEvent.click(within(gerenciar).getByRole("button", { name: /^Cliente X/ }));
+    await userEvent.click(within(gerenciar).getByRole("button", { name: "Remover" }));
+    expect(props.onRemoveProjectFromWorkspace).toHaveBeenCalledWith("ws-a", "p1");
+
+    await userEvent.click(within(gerenciar).getByRole("button", { name: "Excluir workspace Cliente X" }));
+    const confirmar = screen.getByRole("dialog", { name: "Excluir workspace?" });
+    expect(confirmar).toHaveTextContent("não dá para desfazer");
+    expect(confirmar).toHaveTextContent("continuam no Histórico");
+    expect(props.onDeleteWorkspace).not.toHaveBeenCalled();
+    await userEvent.click(within(confirmar).getByRole("button", { name: "Excluir workspace" }));
+    expect(props.onDeleteWorkspace).toHaveBeenCalledWith("ws-a");
+  });
+
   it("mostra o agente pendente de outro workspace e pula pra ele no clique", async () => {
     const props = renderSidebar();
 
@@ -86,6 +131,15 @@ describe("Sidebar", () => {
 
     await userEvent.click(aviso);
     expect(props.onFocusSession).toHaveBeenCalledWith(item);
+  });
+
+  it("aviso diz o tipo e há quanto tempo aconteceu", () => {
+    renderSidebar({ attention: [{ ...item, provider: "codex", aconteceuEm: Date.now() - 5 * 60_000 }] });
+    expect(screen.getByText("há 5 min")).toBeInTheDocument();
+    // Só a marca na linha; o nome do agente fica no tooltip.
+    expect(screen.getByTitle(/^Codex · Cliente X/)).toBeInTheDocument();
+    // Topo da Atenção e o workspace Cliente X: o mesmo selo de aprovação com a contagem.
+    expect(screen.getAllByTitle("aprovar").map((selo) => selo.textContent)).toEqual(["1", "1"]);
   });
 
   it("dispensa o aviso pelo X sem abrir o agente", async () => {
@@ -102,7 +156,7 @@ describe("Sidebar", () => {
   });
 
   it("lista os workspaces sem precisar abrir dropdown", () => {
-    renderSidebar({ attention: [], attentionByWorkspace: {} });
+    renderSidebar({ attention: [] });
 
     expect(screen.getByRole("button", { name: "Cliente X" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Estudos" })).toBeInTheDocument();
@@ -116,7 +170,6 @@ describe("Sidebar", () => {
     });
     renderSidebar({
       attention: [],
-      attentionByWorkspace: {},
       activeProjectId: "p",
       activeProjectPath: "C:/p",
       terminalSessions: [sessao("s1", "Corrigir o login", "claude"), sessao("s2", "npm run dev", null)],
@@ -128,5 +181,20 @@ describe("Sidebar", () => {
     expect(within(chats).queryByText("npm run dev")).not.toBeInTheDocument();
     expect(within(terminais).getByText("npm run dev")).toBeInTheDocument();
     expect(within(terminais).queryByText("Corrigir o login")).not.toBeInTheDocument();
+  });
+
+  it("conversas: a mexida por último aparece primeiro", () => {
+    const sessao = (id: string, name: string, quando: number): TerminalSession => ({
+      id, name, provider: "claude", project_id: "p", cwd: "C:/p", shell: "bash", state: "answered", pid: 1, output_seq: 0, rows: 24, cols: 80,
+      last_activity_at_ms: quando,
+    });
+    renderSidebar({
+      attention: [], activeProjectId: "p", activeProjectPath: "C:/p",
+      terminalSessions: [sessao("s1", "Antiga", 1_000), sessao("s2", "Recente", 9_000), sessao("s3", "Meio", 5_000)],
+    });
+    const chats = screen.getByRole("button", { name: "CHATS" }).parentElement!;
+    const nomes = ["Antiga", "Recente", "Meio"].map((nome) => within(chats).getByText(nome));
+    const ordem = [...nomes].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)).map((n) => n.textContent);
+    expect(ordem).toEqual(["Recente", "Meio", "Antiga"]);
   });
 });

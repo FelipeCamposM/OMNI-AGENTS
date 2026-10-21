@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { matchesShortcut } from "../../lib/shortcuts";
-import { iconForEntry } from "./fileIcons";
+import { iconForEntry, iconStyle } from "./fileIcons";
 import { baseName, dirName, listAllFiles, resolveIgnoreList, type FileEntry } from "./filesService";
 
 const MAX_RESULTS = 50;
@@ -145,7 +145,7 @@ export function QuickOpen({ projectPath, onOpenFile }: QuickOpenProps) {
                   ].join(" ")}
                   title={file.path}
                 >
-                  <Icon className="h-3 w-3 shrink-0" aria-hidden />
+                  <Icon className="h-3 w-3 shrink-0" style={iconStyle(file.name)} aria-hidden />
                   <span className="shrink-0">{file.name}</span>
                   <span className="truncate text-text-muted">{folder}</span>
                 </li>

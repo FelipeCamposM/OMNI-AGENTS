@@ -192,6 +192,16 @@ function updateActiveProject(
   };
 }
 
+/** Tira o item `id` e o põe antes de `beforeId` (`null` ou desconhecido = no fim). Mesma lista se nada mudar. */
+export function moverAntes<T extends { id: string }>(lista: T[], id: string, beforeId: string | null): T[] {
+  const item = lista.find((atual) => atual.id === id);
+  if (!item || id === beforeId) return lista;
+  const resto = lista.filter((atual) => atual.id !== id);
+  const destino = beforeId === null ? -1 : resto.findIndex((atual) => atual.id === beforeId);
+  const nova = destino < 0 ? [...resto, item] : [...resto.slice(0, destino), item, ...resto.slice(destino)];
+  return nova.every((atual, i) => atual === lista[i]) ? lista : nova;
+}
+
 export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction): WorkspaceState {
   switch (action.type) {
     case "ADD_PROJECT": {
@@ -219,6 +229,10 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           ? (projects[0]?.id ?? null)
           : state.activeProjectId;
       return { ...state, projects, activeProjectId, updatedAt: new Date().toISOString() };
+    }
+    case "MOVE_PROJECT": {
+      const projects = moverAntes(state.projects, action.projectId, action.beforeId);
+      return projects === state.projects ? state : { ...state, projects, updatedAt: new Date().toISOString() };
     }
     case "FOCUS_PANE":
       return updateActiveProject(state, (project) =>

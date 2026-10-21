@@ -108,7 +108,7 @@ pub fn itens(db: &Path) -> std::io::Result<Vec<Entry>> {
         let (idx, tipo, payload) = linha.map_err(erro)?;
         let Some(payload) = payload else { continue };
         let item = |kind: Kind, role: &str, text: String, tool: Option<String>| Item {
-            kind, role: role.into(), text, tool, timestamp: hora(&payload), imagens: 0,
+            kind, role: role.into(), text, tool, timestamp: hora(&payload), imagens: 0, diff: None,
         };
         let novo = match tipo {
             PASSO_USUARIO => texto(&payload, &[19, 2]).filter(|t| !t.trim().is_empty())

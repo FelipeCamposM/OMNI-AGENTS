@@ -6,7 +6,7 @@
  * (o sistema sempre vence: se o usuário pediu menos movimento no Windows,
  * "completas" não reativa).
  */
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import type { MotionLevel } from "../types/settings";
@@ -150,17 +150,22 @@ export function useViewTransition<T extends HTMLElement = HTMLDivElement>(key: s
   return ref;
 }
 
-/** Número que corre até o valor novo. Escreve textContent direto. */
+/**
+ * Número que corre até o valor novo. Escreve textContent direto — o elemento não deve ter filhos
+ * do React. `inicio` é de onde corre na montagem (padrão: já nasce no valor).
+ */
 export function useCountUp<T extends HTMLElement = HTMLSpanElement>(
   value: number,
-  format: (n: number) => string = (n) => String(Math.round(n))
+  format: (n: number) => string = (n) => String(Math.round(n)),
+  inicio: number = value
 ) {
   const ref = useRef<T>(null);
-  const from = useRef(value);
+  const from = useRef(inicio);
   const fmt = useRef(format);
   fmt.current = format;
 
-  useEffect(() => {
+  // Layout effect: escreve antes da pintura, senão o número pisca vazio no primeiro quadro.
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
     if (!motionOn()) {
@@ -169,9 +174,10 @@ export function useCountUp<T extends HTMLElement = HTMLSpanElement>(
       return;
     }
     const obj = { n: from.current };
+    el.textContent = fmt.current(obj.n);
     const tween = gsap.to(obj, {
       n: value,
-      duration: d(0.6),
+      duration: d(0.7),
       ease: EASE,
       onUpdate: () => {
         el.textContent = fmt.current(obj.n);
@@ -284,4 +290,47 @@ export function usePulse() {
       { scale: 1, duration: 0.4, ease: "back.out(2.2)", clearProps: "scale" }
     );
   }, []);
+}
+
+/**
+ * Popover que cai do botão: fade, descida curta e um leve zoom a partir do canto `origem`.
+ * Só a entrada; a saída é `fecharPopover`.
+ */
+export function abrirPopover(el: HTMLElement | null, origem = "top right") {
+  if (!el || !motionOn()) return;
+  gsap.fromTo(
+    el,
+    { opacity: 0, y: px(-8), scale: level === "reduzidas" ? 1 : 0.96, transformOrigin: origem },
+    { opacity: 1, y: 0, scale: 1, duration: d(0.3), ease: "expo.out", clearProps: "opacity,transform" }
+  );
+}
+
+/** Saída rápida do popover; `done` desmonta. Sem movimento, desmonta na hora. */
+export function fecharPopover(el: HTMLElement | null, done: () => void) {
+  if (!el || !motionOn()) {
+    done();
+    return;
+  }
+  gsap.to(el, { opacity: 0, y: px(-4), scale: level === "reduzidas" ? 1 : 0.98, duration: d(0.14), ease: "power2.in", onComplete: done });
+}
+
+/**
+ * Ref de callback (estável, passe direto em `ref=`): o elemento entra em cascata ao montar, com o
+ * atraso pela posição em `data-ordem`. Conteúdo que chega depois (lista lida do engine) entra
+ * também, sem precisar de efeito no componente.
+ */
+export function entrarEmCascata(el: HTMLElement | null) {
+  if (!el || !motionOn()) return;
+  const atraso = d(0.05 + Math.min(Number(el.dataset.ordem ?? 0), 10) * 0.045);
+  safeFrom(el, { opacity: 0, y: px(10) }, { y: 0, duration: d(0.38), ease: EASE, delay: atraso }, d(0.38) + atraso);
+}
+
+/** Ref de callback: barra que enche da esquerda ao montar. Mudança depois fica com a transição do CSS. */
+export function encherBarra(el: HTMLElement | null) {
+  if (!el || !motionOn()) return;
+  gsap.fromTo(
+    el,
+    { scaleX: 0, transformOrigin: "left center" },
+    { scaleX: 1, duration: d(0.9), ease: "expo.out", delay: d(0.15), clearProps: "transform" }
+  );
 }

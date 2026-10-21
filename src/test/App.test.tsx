@@ -75,7 +75,9 @@ describe("App shell", () => {
     await adicionarProjeto();
     expect(screen.getAllByText("workspace-um").length).toBeGreaterThan(0);
 
-    await userEvent.click(screen.getByRole("button", { name: /criar workspace/i }));
+    // "+" abre o modal: novo ou reabrir um fechado.
+    await userEvent.click(screen.getByRole("button", { name: "Abrir workspace" }));
+    await userEvent.click(screen.getByRole("button", { name: "Criar" }));
 
     expect(screen.getByText(/nenhum projeto ainda/i)).toBeInTheDocument();
     mockOpen.mockResolvedValueOnce("C:\\dev\\workspace-dois");
@@ -100,7 +102,7 @@ describe("App shell", () => {
     expect(screen.getByRole("heading", { name: /configurações/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /^agentes cli/i }));
-    expect(screen.getByRole("heading", { name: /conexões de agentes/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /contas dos agentes/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /omni agents/i }));
     expect(screen.getByText(/nenhum painel aberto/i)).toBeInTheDocument();
