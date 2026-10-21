@@ -3551,6 +3551,12 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
 - [x] Prévia no navegador, fala do navegador na web/celular, link externo do app no navegador do sistema, versão no topo
   da web. CI verde (`cb57d5f`), release `v0.7.5` publicada como latest; `latest.json` servindo 0.7.5.
 
+### Release v0.7.6 publicada (2026-10-21)
+
+- [x] Armazenamento + limpeza, conta mestra (hard link), Agentes refeita, tarefas no topo, arrasto flutuante, microfone
+  sem aviso do WebView2 + ondas, abertura em etapas, vocabulário da voz, títulos curtos, diff nas edições. CI verde
+  (`a39879d`), release `v0.7.6` publicada como latest; `latest.json` servindo 0.7.6.
+
 ### Codex travado na tela de update (sem release)
 
 - [x] Codex com versão nova abre "Update available" (1 atualizar / 2 pular / 3 pular até a próxima), em inglês; o
