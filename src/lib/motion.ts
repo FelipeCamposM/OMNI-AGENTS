@@ -334,3 +334,28 @@ export function encherBarra(el: HTMLElement | null) {
     { scaleX: 1, duration: d(0.9), ease: "expo.out", delay: d(0.15), clearProps: "transform" }
   );
 }
+
+/**
+ * Troca de aba da lateral, como um carrossel: `dir = 1` andou para a direita — a nova entra pela
+ * direita e a velha sai pela esquerda; `-1` o contrário. `done` tira a velha da tela.
+ */
+export function deslizarAba(entra: HTMLElement | null, sai: HTMLElement | null, dir: 1 | -1, done: () => void) {
+  if (!entra || !motionOn()) {
+    done();
+    return;
+  }
+  gsap.killTweensOf([entra, sai]);
+  const largura = entra.offsetWidth || 240;
+  const ease = "expo.out";
+  gsap.fromTo(entra, { x: dir * (px(largura) || 12), opacity: 0 }, { x: 0, opacity: 1, duration: d(0.5), ease, clearProps: "transform,opacity" });
+  if (sai) gsap.fromTo(sai, { x: 0, opacity: 1 }, { x: -dir * (px(largura * 0.6) || 12), opacity: 0, duration: d(0.4), ease, onComplete: done });
+  else done();
+}
+
+/** Leva o marcador da aba ativa até o botão `alvo` (posição e largura dentro da fileira). */
+export function moverIndicador(el: HTMLElement | null, alvo: HTMLElement | null) {
+  if (!el || !alvo) return;
+  const destino = { x: alvo.offsetLeft, width: alvo.offsetWidth };
+  if (!motionOn()) gsap.set(el, destino);
+  else gsap.to(el, { ...destino, duration: d(0.45), ease: "expo.out" });
+}

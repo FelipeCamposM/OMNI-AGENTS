@@ -14,6 +14,23 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.7",
+    date: "2026-10-23",
+    changes: [
+      "Novo: busca nas Configurações. Digite o que procura (\"tema\", \"voz\", \"celular\"…), escolha o resultado e o app leva você direto à opção. Ctrl+F abre a busca. A tela de Configurações também ficou mais bonita.",
+      "Novo: Panorama, um mapa de tudo o que está rodando no OMNI — workspaces, projetos e agentes — com as conversas abertas e o que cada agente está fazendo.",
+      "Novo: exporte uma conversa para outro agente ou conta, com o resumo do que já foi feito, ou copie como texto.",
+      "As respostas do agente aparecem como se estivessem sendo digitadas, e o campo de digitação ganhou um cursor neon na cor do tema.",
+      "Responder às perguntas do agente ficou instantâneo, e agora dá para voltar à pergunta anterior para trocar a resposta.",
+      "Corrigido: ao parar o agente antes de ele ler sua mensagem, o texto volta para o campo de digitação em vez de travar a conversa.",
+      "Extensões mostram o logo de cada plugin e conector.",
+      "Novo: microfone em \"Criar fluxo com IA\".",
+      "Na web: abas na lateral, uso das contas no topo com mais animação, Histórico numa aba própria e \"Últimas conversas\" mostrando de qual projeto é cada uma.",
+      "Quando o agente cita um arquivo que não existe, o app avisa em vez de abrir uma aba vazia.",
+      "Corrigidos o visualizador de PDF, o microfone na web e uma rolagem para o lado na lista de projetos da web.",
+    ],
+  },
+  {
     version: "0.7.6",
     date: "2026-10-21",
     changes: [

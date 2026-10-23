@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { Composer } from "../mobile/Composer";
+import { Composer, Microfone } from "../mobile/Composer";
 
 // Reconhecedor falso: o teste dispara os resultados e o fim como o Chrome faria.
 class Falso {
@@ -48,4 +48,29 @@ it("com fala do navegador, o texto entra enquanto fala e sobrevive ao Chrome rel
   await act(async () => { await userEvent.click(screen.getByRole("button", { name: "Parar de ouvir" })); });
   expect(screen.getByRole("button", { name: "Falar o prompt" })).toBeInTheDocument();
   expect(campo()).toBe("veja: abre o roadmap e marca a tarefa");
+});
+
+it("navegador sem serviço de fala (Brave, Opera) explica o motivo em vez de \"sem conexão\"", async () => {
+  vi.stubGlobal("isSecureContext", true);
+  vi.stubGlobal("webkitSpeechRecognition", Falso);
+  sessionStorage.clear();
+  render(<Teste />);
+  await act(async () => { await userEvent.click(screen.getByRole("button", { name: "Falar o prompt" })); });
+  act(() => { Falso.ultimo.onerror?.({ error: "network" }); Falso.ultimo.onend?.(); });
+  expect(screen.getByRole("status")).toHaveTextContent(/Use o Chrome ou o Edge/);
+  expect(sessionStorage.getItem("omni-fala-sem-servico")).toBe("1");
+});
+
+it("microfone avulso (criar fluxo com IA) escreve no campo de fora do chat", async () => {
+  vi.stubGlobal("isSecureContext", true);
+  vi.stubGlobal("webkitSpeechRecognition", Falso);
+  sessionStorage.clear();
+  function Campo() {
+    const [texto, setTexto] = useState("");
+    return <><textarea aria-label="Descreva o fluxo" value={texto} readOnly /><Microfone texto={texto} onTexto={setTexto} /></>;
+  }
+  render(<Campo />);
+  await act(async () => { await userEvent.click(screen.getByRole("button", { name: "Falar o prompt" })); });
+  act(() => Falso.ultimo.falar(["recebe um bug e o QA testa", true]));
+  expect(screen.getByLabelText("Descreva o fluxo")).toHaveValue("recebe um bug e o QA testa");
 });

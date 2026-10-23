@@ -238,6 +238,17 @@ pub fn ready(screen: &vt100::Screen, provider: &str) -> bool {
         && approval(&text,provider).is_none()
 }
 
+/// Turno parado com texto sobrando no campo: o Esc antes de a CLI ler o prompt devolve o texto ao
+/// campo, e campo com texto não passa no `ready` ("não reconhecida" até alguém apagar no PC).
+pub fn sobra_no_campo(screen: &vt100::Screen, provider: &str) -> bool {
+    let text = screen.contents();
+    let turno = area_do_turno(&text);
+    matches!(provider, "claude" | "codex") && screen.bracketed_paste() && !composer_vazio(screen)
+        && turno.lines().any(|l| { let l = l.trim_start(); l.starts_with('❯') || l.starts_with('›') })
+        && !turno.to_lowercase().contains("esc to interrupt") && !text.to_lowercase().contains("esc to cancel")
+        && approval(&text,provider).is_none()
+}
+
 /// Onde a CLI escreve o "esc to interrupt": a linha de status logo acima do campo (`✻ Mulling… (esc
 /// to interrupt)`, `• Working (3s • esc to interrupt)`) e o rodapé embaixo dele. Procurar na tela
 /// inteira pegava o texto da conversa — um diff de código com `"esc to interrupt"` deixava a sessão
@@ -1196,6 +1207,22 @@ Ready to submit your answers?
         let mut rascunho = Interaction::new(5,60);
         rascunho.parser.process("\x1b[?2004h\u{276f}\u{a0}fix lint\x1b[1;3H".as_bytes());
         assert!(!ready(rascunho.parser.screen(),"claude"));
+    }
+
+    /// Parado antes de a CLI ler o prompt: o texto volta ao campo e o "parar" precisa apagá-lo.
+    #[test] fn prompt_devolvido_ao_campo_conta_como_sobra_so_com_o_turno_parado() {
+        let mut parado = Interaction::new(5,60);
+        parado.parser.process("\x1b[?2004h\u{276f}\u{a0}rode os testes".as_bytes());
+        assert!(sobra_no_campo(parado.parser.screen(),"claude"));
+        assert!(!ready(parado.parser.screen(),"claude"));
+
+        let mut trabalhando = Interaction::new(5,60);
+        trabalhando.parser.process("\x1b[?2004h✻ Pensando… (esc to interrupt)\r\n\u{276f}\u{a0}rode os testes".as_bytes());
+        assert!(!sobra_no_campo(trabalhando.parser.screen(),"claude"));
+
+        let mut vazio = Interaction::new(5,60);
+        vazio.parser.process("\x1b[?2004h\u{276f}\u{a0}".as_bytes());
+        assert!(!sobra_no_campo(vazio.parser.screen(),"claude"));
     }
 
     #[test] fn trust_dialog_moves_to_yes_before_confirming() {

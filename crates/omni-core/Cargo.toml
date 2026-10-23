@@ -6,7 +6,7 @@ edition.workspace = true
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 # Já vem na árvore via tauri: o `config.toml` do Codex ao compartilhar extensões entre contas.
 toml = "0.9"
 # Também na árvore: mescla o `config.toml` sem perder os comentários da conta.

@@ -553,6 +553,8 @@ it("pergunta de marcar várias: marca pelo número, mostra a descrição e Conti
   expect(screen.getByRole("checkbox", { name: /Manga/ })).toHaveAttribute("aria-checked", "true");
   await act(async () => { await userEvent.click(screen.getByRole("checkbox", { name: /Uva/ })); });
   await waitFor(() => expect(posts.some((p) => p.url.endsWith("/escolher") && p.corpo === JSON.stringify({ opcao: 2 }))).toBe(true));
+  // A tela de mentira não muda: a releitura curta desiste em 1,5 s e o cartão libera de novo.
+  await waitFor(() => expect(screen.getByRole("button", { name: /Continuar/ })).toBeEnabled(), { timeout: 3000 });
   await act(async () => { await userEvent.click(screen.getByRole("button", { name: /Continuar/ })); });
   await waitFor(() => expect(posts.some((p) => p.url.endsWith("/escolher") && p.corpo === JSON.stringify({ avancar: true }))).toBe(true));
   expect(screen.getByRole("button", { name: /Responder com minhas palavras/ })).toBeInTheDocument();

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { listProjectSkills, type SkillInfo } from "./skillsService";
 
+/** Skills ativas do projeto e `recarregar` para reler depois de criar/importar uma. */
 export function useProjectSkills(projectPath: string | null) {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [versao, setVersao] = useState(0);
 
   useEffect(() => {
     setSkills([]);
@@ -14,7 +16,7 @@ export function useProjectSkills(projectPath: string | null) {
     return () => {
       cancelled = true;
     };
-  }, [projectPath]);
+  }, [projectPath, versao]);
 
-  return skills;
+  return [skills, () => setVersao((atual) => atual + 1)] as const;
 }

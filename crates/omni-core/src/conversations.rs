@@ -377,6 +377,18 @@ pub fn timeline_cached(
     limit: usize,
     cache: &mut crate::feed::FeedCache,
 ) -> Timeline {
+    let (itens, unavailable) = itens_cached(conversation, profiles, cache);
+    let mut result = page(&conversation.id, itens, cursor, limit);
+    result.unavailable_segments = unavailable;
+    result
+}
+
+/// A conversa inteira, na ordem da timeline (com os avisos de troca), e os trechos que não deu para ler.
+pub fn itens_cached(
+    conversation: &Conversation,
+    profiles: &[crate::Profile],
+    cache: &mut crate::feed::FeedCache,
+) -> (Vec<(String, crate::feed::Item)>, Vec<usize>) {
     let mut unavailable = Vec::new();
     let mut itens: Vec<(String, crate::feed::Item)> = Vec::new();
     let mut seen = HashSet::new();
@@ -405,10 +417,7 @@ pub fn timeline_cached(
             itens.push((segment.provider.clone(), entry.item.clone()));
         }
     }
-    let itens = com_avisos_de_troca(conversation, em_ordem_de_hora(itens), profiles);
-    let mut result = page(&conversation.id, itens, cursor, limit);
-    result.unavailable_segments = unavailable;
-    result
+    (com_avisos_de_troca(conversation, em_ordem_de_hora(itens), profiles), unavailable)
 }
 
 /// Os segmentos são lidos um depois do outro, mas trocar de conta e voltar faz o `.jsonl` do primeiro

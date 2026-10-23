@@ -3,6 +3,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { AgentIcon } from "../../components/ui/AgentIcon";
 import { Button } from "../../components/ui";
 import { CloudIcon, FolderIcon, PackageIcon, ReloadIcon, ServerIcon, StarFilledIcon, StarIcon } from "../../components/ui/PixelIcon";
+import { IconeDaExtensao } from "./IconeDaExtensao";
 import { fonteDoApp, type ExtensoesDaConta, type FonteDeExtensoes, type Mcp, type Plugin } from "./extensoesService";
 
 type Provider = "claude" | "codex" | "cursor";
@@ -214,8 +215,9 @@ function ListaDeMcps({ mcps, projectPath, vazio }: { mcps: Mcp[]; projectPath: s
         <li key={`${mcp.nome}-${mcp.escopo}-${mcp.pasta ?? ""}-${indice}`}
           className={`ext-item${mcp.ativo ? "" : " is-desligado"}${projectPath && !aqui(mcp) ? " is-fora" : ""}`}>
           <div className="ext-item-linha">
-            <span className={`ext-item-icone is-${mcp.tipo === "stdio" ? "local" : "remoto"}`} aria-hidden>
-              {mcp.tipo === "stdio" ? <ServerIcon className="h-3.5 w-3.5" /> : <CloudIcon className="h-3.5 w-3.5" />}
+            <IconeDaExtensao nome={mcp.nome} destino={mcp.destino} />
+            <span className={`ext-item-icone is-${mcp.tipo === "stdio" ? "local" : "remoto"}`} aria-hidden title={mcp.tipo === "stdio" ? "Local" : "Remoto"}>
+              {mcp.tipo === "stdio" ? <ServerIcon className="h-3 w-3" /> : <CloudIcon className="h-3 w-3" />}
             </span>
             <span className="ext-item-nome">{mcp.nome}</span>
             <span className={`ext-selo is-${mcp.escopo}`} title={mcp.pasta ?? undefined}>
@@ -244,7 +246,7 @@ function ListaDePlugins({ plugins, vazio }: { plugins: Plugin[]; vazio: ReactNod
     <ul className="ext-grade">
       {plugins.map((plugin) => (
         <li key={`${plugin.nome}@${plugin.origem ?? ""}`} className={`ext-plugin${plugin.ativo ? "" : " is-desligado"}`}>
-          <span className="ext-item-icone" aria-hidden><PackageIcon className="h-3.5 w-3.5" /></span>
+          <IconeDaExtensao nome={plugin.nome} logo={plugin.logo} destino={plugin.origem ?? undefined} />
           <span className="min-w-0 flex-1">
             <span className="ext-item-nome block truncate">{plugin.nome}</span>
             <span className="ext-plugin-meta">
@@ -269,7 +271,7 @@ function ListaDeConectores({ conectores, vazio }: { conectores: string[]; vazio:
       </p>
       <ul className="ext-conectores">
         {conectores.map((nome) => (
-          <li key={nome} className="ext-conector"><CloudIcon className="h-3.5 w-3.5" aria-hidden />{nome}</li>
+          <li key={nome} className="ext-conector"><IconeDaExtensao nome={nome} />{nome}</li>
         ))}
       </ul>
     </>

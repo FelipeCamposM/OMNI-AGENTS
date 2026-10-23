@@ -7,6 +7,7 @@ import { SettingsView } from "./components/SettingsView";
 import { Sidebar } from "./components/Sidebar";
 import { fileKind, joinPath } from "./features/files/filesService";
 import { semLocal } from "./mobile/api";
+import { exists } from "@tauri-apps/plugin-fs";
 import { EVENTO_ABRIR_ARQUIVO } from "./mobile/anexos";
 import { QuickOpen } from "./features/files/QuickOpen";
 import { useWorkspace } from "./features/workspace/useWorkspace";
@@ -30,6 +31,8 @@ import {
 } from "./features/terminal/terminalService";
 import { HistoryView } from "./features/history/HistoryView";
 import { FluxosView } from "./features/fluxos/FluxosView";
+import { Panorama } from "./features/panorama/Panorama";
+import { EyeIcon } from "./components/ui/PixelIcon";
 import { levarParaConta, resumeCommand, samePath, type HistoryEntry } from "./features/history/historyService";
 import { rememberProject } from "./services/recentProjectsService";
 import { primeSshDrives } from "./features/projects/targetState";
@@ -37,7 +40,7 @@ import type { SettingsSection } from "./hooks/useNotifications";
 import { useSettings } from "./hooks/useSettings";
 import { matchesShortcut } from "./lib/shortcuts";
 
-type View = "workspace" | "settings" | "history" | "fluxos";
+type View = "workspace" | "settings" | "history" | "fluxos" | "panorama";
 
 export function App() {
   const [view, setView] = useState<View>("workspace");
@@ -114,13 +117,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (view !== "settings" && view !== "history") return;
+    if (view !== "settings" && view !== "history" && view !== "panorama") return;
     function onKeyDown(event: KeyboardEvent) {
       // Esc dentro de campo/menu é do campo; só fecha a tela se ninguém mais tratou a tecla.
       if (event.defaultPrevented || (event.target as HTMLElement | null)?.closest?.("input, textarea, [role=listbox]")) return;
       if (!matchesShortcut(event, "closeSettings")) return;
       event.preventDefault();
-      setView(view === "settings" ? viewBeforeSettings : viewBeforeHistory);
+      setView(view === "settings" ? viewBeforeSettings : view === "panorama" ? "workspace" : viewBeforeHistory);
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -167,9 +170,15 @@ export function App() {
   useEffect(() => {
     if (!projetoDaCitacao) return;
     const abrir = (evento: Event) => {
-      const caminho = semLocal((evento as CustomEvent<string>).detail).replace(/^\.[\\/]/, "");
+      const { caminho: citado, ok, falha } = (evento as CustomEvent<{ caminho: string; ok: () => void; falha: (motivo: Error) => void }>).detail;
+      const caminho = semLocal(citado).replace(/^\.[\\/]/, "");
       const absoluto = /^([A-Za-z]:)?[\\/]/.test(caminho) ? caminho : joinPath(projetoDaCitacao, caminho);
-      abrirCitado.current(absoluto, fileKind(absoluto));
+      // Citado mas inexistente (o agente ainda vai criar, ou foi apagado): avisa sem abrir aba vazia.
+      exists(absoluto).then((tem) => {
+        if (!tem) return falha(new Error("Não existe no disco"));
+        abrirCitado.current(absoluto, fileKind(absoluto));
+        ok();
+      }, falha);
     };
     window.addEventListener(EVENTO_ABRIR_ARQUIVO, abrir);
     return () => window.removeEventListener(EVENTO_ABRIR_ARQUIVO, abrir);
@@ -225,10 +234,17 @@ export function App() {
           view === "settings" ? ["Configurações"]
             : view === "history" ? ["Histórico"]
             : view === "fluxos" ? ["Fluxos de agentes"]
+            : view === "panorama" ? ["Panorama"]
             : [workspaces.find((item) => item.id === activeWorkspaceId)?.name, activeProject?.name].filter((parte): parte is string => Boolean(parte))
         }
         dica={view === "workspace" ? activeProject?.path : undefined}
         acoes={<>
+          <button type="button" aria-label="Panorama" aria-pressed={view === "panorama"} title="Panorama: tudo o que está rodando"
+            onClick={() => setView(view === "panorama" ? "workspace" : "panorama")}
+            className={`titlebar-acao${view === "panorama" ? " is-aberto" : ""}`}>
+            <EyeIcon aria-hidden className="h-3.5 w-3.5" />
+            Panorama
+          </button>
           <UsoDeTodasAsContas engineOnline={engineOnline} contaAtiva={sessaoAtiva ? sessionsById[sessaoAtiva]?.profile_id ?? null : null} />
           {view === "workspace" && activeProject && <LayoutPresetPicker dispatch={dispatch} />}
         </>}
@@ -360,7 +376,31 @@ export function App() {
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <main className="flex-1 min-h-0">
-          {view === "history" ? (
+          {view === "panorama" ? (
+            <Panorama
+              workspaces={workspaces}
+              activeWorkspaceId={activeWorkspaceId}
+              sessions={sessions}
+              onSessao={(session, workspaceId, projectId) => {
+                if (workspaceId && projectId) dispatch({ type: "FOCUS_SESSION", workspaceId, projectId, sessionId: session.id, title: session.name });
+                else dispatch({ type: "ATTACH_TERMINAL", sessionId: session.id, title: session.name });
+                setView("workspace");
+              }}
+              onProjeto={(workspaceId, projectId) => {
+                dispatch({ type: "SHOW_WORKSPACE", workspaceId });
+                dispatch({ type: "SELECT_PROJECT", projectId });
+                setView("workspace");
+              }}
+              onAba={(workspaceId, projectId, paneId, tabId) => {
+                dispatch({ type: "SHOW_WORKSPACE", workspaceId });
+                dispatch({ type: "SELECT_PROJECT", projectId });
+                dispatch({ type: "SELECT_TAB", paneId, tabId });
+                setView("workspace");
+              }}
+              onWorkspace={(workspaceId) => { dispatch({ type: "SHOW_WORKSPACE", workspaceId }); setView("workspace"); }}
+              onClose={() => setView("workspace")}
+            />
+          ) : view === "history" ? (
             <HistoryView onResume={resumeHistory} onClose={closeHistory} />
           ) : view === "fluxos" ? (
             <div className="h-full min-h-0 flex flex-col">

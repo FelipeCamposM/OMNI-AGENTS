@@ -14,6 +14,8 @@ import {
 } from "../agentes/agentesService";
 import { SeletorDeModelo } from "../agentes/ModelosDeAgentes";
 import { ManualDeAgentes } from "../agentes/ManualDeAgentes";
+import { Microfone } from "../../mobile/Composer";
+import "../../mobile/mobile.css";
 import { ArestaDoFluxo, type ArestaOmni } from "./ArestaDoFluxo";
 import { NoDoFluxoView, type NoOmni } from "./NoDoFluxo";
 import {
@@ -802,12 +804,13 @@ function DialogoDeFluxoComIa({ projectPath, onCancelar, onUsar }: { projectPath:
     <div className="fx-dialogo-fundo" onMouseDown={(e) => { if (e.target === e.currentTarget && !ocupado) onCancelar(); }}>
       <div className="fx-dialogo is-largo" role="dialog" aria-modal="true" aria-label="Criar fluxo com IA">
         <h3 className="pixel-text">Criar fluxo com IA</h3>
-        <p className="fx-dica">Descreva o processo como você explicaria para alguém do time. A IA monta as etapas, as condições e os loops, usa os seus agentes e cria os que faltarem.</p>
+        <p className="fx-dica">Descreva (ou fale, pelo microfone) o processo como você explicaria para alguém do time. A IA monta as etapas, as condições e os loops, usa os seus agentes e cria os que faltarem.</p>
         <Textarea autoFocus rows={5} value={texto} onChange={(e) => setTexto(e.target.value)} disabled={ocupado} aria-label="Descreva o fluxo"
           placeholder="Ex.: recebe um bug; um agente investiga a causa; o dev corrige; o QA testa em loop até 2 vezes; um revisor de segurança verifica e eu aprovo antes do PR." />
         {erro && <p role="alert" className="fx-erro">{erro}</p>}
         {gerado && <PreviaDoGerado g={gerado} />}
         <div className="flex justify-end gap-2">
+          <div className="composer-direita" style={{ margin: "0 auto 0 0" }}><Microfone texto={texto} onTexto={setTexto} travado={ocupado} /></div>
           <Button variant="ghost" onClick={onCancelar} disabled={ocupado}>Cancelar</Button>
           <Button variant={gerado ? "ghost" : "primary"} onClick={() => void gerar()} disabled={ocupado || texto.trim().length < 10}>
             {ocupado ? <><ReloadIcon aria-hidden className="h-3.5 w-3.5 animate-spin" />Montando… (~1 min)</> : gerado ? "Gerar de novo" : <><SparkleIcon aria-hidden className="h-3.5 w-3.5" />Gerar fluxo</>}

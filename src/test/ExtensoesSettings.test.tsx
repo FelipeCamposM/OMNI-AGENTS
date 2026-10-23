@@ -39,3 +39,14 @@ it("mostra MCPs, plugins e conectores por IA e por conta, dizendo onde cada MCP 
   // Codex não tem conectores do claude.ai: a aba some e volta para MCPs.
   expect(screen.queryByRole("tab", { name: /^Conectores/ })).not.toBeInTheDocument();
 });
+
+it("foto da extensão: logo do plugin, marca conhecida ou inicial", async () => {
+  const { render } = await import("@testing-library/react");
+  const { IconeDaExtensao } = await import("../features/extensoes/IconeDaExtensao");
+  const { container, rerender } = render(<IconeDaExtensao nome="ponytail" logo="data:image/png;base64,AA==" />);
+  expect(container.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,AA==");
+  rerender(<IconeDaExtensao nome="meu-mcp" destino="https://api.github.com/mcp" />);
+  expect(container.querySelector(".ext-foto.is-marca svg")).not.toBeNull();
+  rerender(<IconeDaExtensao nome="Notion" />);
+  expect(container.querySelector(".ext-foto")).toHaveTextContent("N");
+});

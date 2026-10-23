@@ -32,6 +32,13 @@ describe("arquivo citado na conversa", () => {
     expect(screen.queryByRole("button", { name: /cat src/ })).not.toBeInTheDocument();
   });
 
+  it("arquivo que não existe mostra aviso ao lado em vez de abrir", async () => {
+    usarAbrirArquivo(() => Promise.reject(new Error("Não existe no disco")));
+    render(<MessageBubble lado="agent" provider="claude" texto={TEXTO} />);
+    await userEvent.click(screen.getByRole("button", { name: "src/App.tsx:42" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Não existe no disco");
+  });
+
   it("na web e no celular (sem abridor) o caminho continua texto", () => {
     render(<MessageBubble lado="agent" provider="claude" texto={TEXTO} />);
     expect(screen.queryByRole("button", { name: "src/App.tsx:42" })).not.toBeInTheDocument();

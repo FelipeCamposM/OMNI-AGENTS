@@ -48,3 +48,15 @@ it("na conversa mostra só a conta dela; sem conta escolhida, as do agente dela"
   expect(await screen.findByText("Trabalho")).toBeInTheDocument();
   expect(screen.queryByText("Pessoal")).not.toBeInTheDocument();
 });
+
+it("Antigravity aparece com o nome e o botão de atualizar", async () => {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([
+    { id: "agy", provider: "antigravity", name: "Google", usage: { status: "available", reason: null,
+      primary: { used_percent: 12, resets_at: null, reset_label: null }, secondary: { used_percent: 40, resets_at: null, reset_label: null } } },
+  ]))));
+  render(<UsoDasContas contaAtiva={null} />);
+  const conta = (await screen.findByText("Google")).closest("li")!;
+  expect(within(conta).getByText("Antigravity")).toBeInTheDocument();
+  expect(within(conta).getByText("12%")).toBeInTheDocument();
+  expect(within(conta).getByRole("button", { name: "Atualizar uso de Google" })).toBeInTheDocument();
+});

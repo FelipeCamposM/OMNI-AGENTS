@@ -49,6 +49,12 @@ it("o + escolhe entre agente e terminal", async () => {
   expect(dispatch).toHaveBeenCalledWith({ type: "CREATE_TAB", paneId: "p", kind: "agent", title: "Novo agente" });
 });
 
+it("PDF abre no leitor do WebView, não no editor de texto", () => {
+  const pane: PaneNode = { type: "pane", id: "p", activeTabId: "pdf", tabs: [{ id: "pdf", kind: "file", title: "aula.pdf", resourceId: "C:/test/aula.pdf" }] };
+  render(<PaneView pane={pane} active onlyPane maximized={false} projectId="project" projectPath="C:/test" fileSaveMode="auto" kanban={{ version: 1, tasks: [], agentByProject: {}, dispatcherEnabled: false, failureTimestamps: [], pausedUntil: null }} kanbanDispatch={vi.fn()} dispatch={vi.fn()} />);
+  expect(screen.getByTitle("aula.pdf").tagName).toBe("IFRAME");
+});
+
 describe("arraste de abas entre painéis", () => {
   beforeEach(() => {
     vi.stubGlobal("PointerEvent", MouseEvent);

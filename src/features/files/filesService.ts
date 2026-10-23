@@ -25,6 +25,10 @@ export function isImagePath(path: string): boolean {
   return IMAGE_EXTENSIONS.has(extension);
 }
 
+export function isPdfPath(path: string): boolean {
+  return path.toLowerCase().endsWith(".pdf");
+}
+
 export const DEFAULT_IGNORES = [
   ".git",
   "node_modules",
@@ -138,7 +142,15 @@ async function walkAllFiles(projectRoot: string, ignoreList: string[], limit: nu
 
 export async function readTextFile(absolutePath: string, projectRoot: string): Promise<string> {
   assertWithinRoot(absolutePath, projectRoot);
-  return pluginReadTextFile(absolutePath);
+  try {
+    return await pluginReadTextFile(absolutePath);
+  } catch (reason) {
+    // "os error 2"/"3": arquivo ou pasta não existe. Comum em arquivo citado pelo agente que ainda não foi criado.
+    if (/os error [23]\b/.test(String(reason))) {
+      throw new Error(`Arquivo não encontrado: ${absolutePath}. Ele não existe no disco (talvez o agente ainda não o tenha criado, ou foi apagado/movido).`);
+    }
+    throw reason;
+  }
 }
 
 export async function writeTextFile(absolutePath: string, projectRoot: string, content: string): Promise<void> {

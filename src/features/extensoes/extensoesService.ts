@@ -21,6 +21,8 @@ export interface Plugin {
   versao: string | null;
   escopo: string | null;
   arquivo: string;
+  /** Logo do pacote (`data:` URI), quando o manifesto traz. */
+  logo?: string;
 }
 
 export interface ExtensoesDaConta {

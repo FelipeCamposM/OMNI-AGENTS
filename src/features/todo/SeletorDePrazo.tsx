@@ -45,12 +45,41 @@ function Roda({ valores, valor, onChange, rotulo }: { valores: number[]; valor: 
     }
   }, []);
 
+  // Giro próprio em vez do `scrollTo` suave: o nativo recomeçava a cada clique da roda (trancos) e
+  // brigava com o encaixe. Aqui o alvo só se move e a roda persegue com mola (rAF); o encaixe fica
+  // desligado enquanto gira.
+  const giro = useRef<{ alvo: number; pos: number; quadro: number } | null>(null);
   const irPara = useCallback((i: number, suave: boolean) => {
     const el = trilho.current;
     if (!el) return;
-    if (typeof el.scrollTo === "function") el.scrollTo({ top: i * ALTURA, behavior: suave && motionOn() ? "smooth" : "auto" });
-    else el.scrollTop = i * ALTURA;
-  }, []);
+    const alvoPx = i * ALTURA;
+    if (!suave || !motionOn()) {
+      if (giro.current) { cancelAnimationFrame(giro.current.quadro); giro.current = null; el.style.scrollSnapType = ""; }
+      el.scrollTop = alvoPx;
+      return;
+    }
+    if (giro.current) { giro.current.alvo = alvoPx; return; }
+    el.style.scrollSnapType = "none";
+    const passo = () => {
+      const g = giro.current;
+      if (!g) return;
+      // Posição em float própria: o `scrollTop` arredonda e a mola podia empacar a meio pixel.
+      const falta = g.alvo - g.pos;
+      if (Math.abs(falta) < 0.6) {
+        el.scrollTop = g.alvo;
+        giro.current = null;
+        el.style.scrollSnapType = "";
+        pintar();
+        return;
+      }
+      g.pos += falta * 0.24;
+      el.scrollTop = g.pos;
+      pintar();
+      g.quadro = requestAnimationFrame(passo);
+    };
+    giro.current = { alvo: alvoPx, pos: el.scrollTop, quadro: requestAnimationFrame(passo) };
+  }, [pintar]);
+  useEffect(() => () => { if (giro.current) cancelAnimationFrame(giro.current.quadro); }, []);
 
   // Valor que mudou por fora (atalho, abrir de novo): a roda gira até ele.
   useLayoutEffect(() => {
@@ -70,13 +99,23 @@ function Roda({ valores, valor, onChange, rotulo }: { valores: number[]; valor: 
     const el = trilho.current;
     if (!el) return;
     let acumulado = 0;
+    let ultimo = 0;
+    let sequencia = 0;
+    let sentido = 0;
     function aoGirar(e: WheelEvent) {
       e.preventDefault();
       const px = e.deltaMode === 1 ? e.deltaY * ALTURA : e.deltaMode === 2 ? e.deltaY * ALTURA * VISIVEIS : e.deltaY;
-      if (Math.sign(px) !== Math.sign(acumulado)) acumulado = 0;
+      if (Math.sign(px) !== sentido) { acumulado = 0; sequencia = 0; sentido = Math.sign(px); }
       acumulado += px;
       if (Math.abs(acumulado) < ALTURA) return;
-      const i = Math.min(valores.length - 1, Math.max(0, alvo.current + Math.sign(acumulado)));
+      // Clique de roda em giro rápido acelera (1, 1, 2, 3… até 5 por clique), como girar forte a roda
+      // do iPhone; clique isolado anda um. Trackpad (deltas pequenos e contínuos) já é proporcional.
+      const clique = e.deltaMode !== 0 || Math.abs(e.deltaY) >= 50;
+      const agora = performance.now();
+      sequencia = clique && agora - ultimo < 90 ? sequencia + 1 : 0;
+      ultimo = agora;
+      const passos = Math.min(5, Math.max(1, sequencia));
+      const i = Math.min(valores.length - 1, Math.max(0, alvo.current + Math.sign(acumulado) * passos));
       acumulado = 0;
       if (i === alvo.current) return;
       alvo.current = i;
@@ -92,7 +131,8 @@ function Roda({ valores, valor, onChange, rotulo }: { valores: number[]; valor: 
     window.clearTimeout(parado.current);
     parado.current = window.setTimeout(() => {
       const el = trilho.current;
-      if (!el) return;
+      // Girando para um alvo já escolhido: a posição do meio do caminho não é o valor.
+      if (!el || giro.current) return;
       const i = Math.min(valores.length - 1, Math.max(0, Math.round(el.scrollTop / ALTURA)));
       if (valores[i] !== atual.current.valor) atual.current.onChange(valores[i]);
     }, 110);

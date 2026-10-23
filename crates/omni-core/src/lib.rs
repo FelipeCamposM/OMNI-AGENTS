@@ -15,6 +15,7 @@ pub mod antigravity;
 pub mod comandos;
 pub mod armazenamento;
 pub mod mestra;
+pub mod exportar;
 
 use serde::{Deserialize, Serialize};
 use std::{fs, path::{Path, PathBuf}};

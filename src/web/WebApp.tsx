@@ -1,16 +1,17 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
 import { Input } from "../components/ui/Input";
-import { ArrowLeftIcon, BlocksIcon, ChatIcon, FolderIcon, ReloadIcon, TerminalIcon } from "../components/ui/PixelIcon";
+import { ArrowLeftIcon, BlocksIcon, ChatIcon, ClockIcon, FolderIcon, GlobeIcon, ReloadIcon, TerminalIcon } from "../components/ui/PixelIcon";
+import { deslizarAba, moverIndicador } from "../lib/motion";
 import { ExtensoesSettings } from "../features/extensoes/ExtensoesSettings";
 import type { ExtensoesDaConta, FonteDeExtensoes } from "../features/extensoes/extensoesService";
 import { PairingScreen } from "../mobile/Chat";
-import { ConversationDetail, ConversasPorEstado, filterConversations, haQuanto, NovaSessao, Ocultas } from "../mobile/MobileApp";
+import { ConversationDetail, ConversationList, filterConversations, haQuanto, NovaSessao, Ocultas } from "../mobile/MobileApp";
 import { useDados } from "../mobile/useDados";
 import { usePoll } from "../mobile/usePoll";
 import { NOME_DO_AGENTE, request, temConversa, type Conversation } from "../mobile/api";
-import { UsoDasContas } from "./UsoDasContas";
+import { UsoNoTopo } from "./UsoDasContas";
 import { PreviasLocais } from "./PreviasLocais";
 
 /** O xterm só baixa quando alguém abre a aba Terminal: quem só conversa não paga por ele. */
@@ -71,6 +72,33 @@ function criarFonteDaWeb(projetoId: string | null): FonteDeExtensoes {
 }
 const CHAVE_ABA = "omni-web-aba";
 
+/** Abas da lateral, como no app do PC: as conversas do projeto e as prévias de localhost. */
+type AbaLateral = "conversas" | "historico" | "previas";
+const ABAS_LATERAIS: { id: AbaLateral; rotulo: string; icone: typeof ChatIcon }[] = [
+  { id: "conversas", rotulo: "Conversas", icone: ChatIcon },
+  { id: "historico", rotulo: "Histórico", icone: ClockIcon },
+  { id: "previas", rotulo: "Prévia", icone: GlobeIcon },
+];
+const CHAVE_ABA_LATERAL = "omni-web-aba-lateral";
+function lerAbaLateral(): AbaLateral {
+  try {
+    const salva = sessionStorage.getItem(CHAVE_ABA_LATERAL);
+    return ABAS_LATERAIS.some(({ id }) => id === salva) ? salva as AbaLateral : "conversas";
+  } catch { return "conversas"; }
+}
+/** Quantas conversas recentes a aba Conversas mostra; o resto fica na aba Histórico. */
+const ULTIMAS = 6;
+
+const DIA = 86_400_000;
+/** Histórico em faixas de tempo, da mais nova para a mais velha. */
+function porPeriodo(lista: Conversation[], agora = Date.now()): [string, Conversation[]][] {
+  const hoje = new Date(agora).setHours(0, 0, 0, 0);
+  const faixas: [string, number][] = [["Hoje", hoje], ["Ontem", hoje - DIA], ["Últimos 7 dias", hoje - 7 * DIA], ["Últimos 30 dias", hoje - 30 * DIA], ["Mais antigas", -Infinity]];
+  const grupos = faixas.map(([nome]) => [nome, [] as Conversation[]] as [string, Conversation[]]);
+  for (const c of lista) grupos[faixas.findIndex(([, desde]) => (c.updated_at_ms ?? 0) >= desde)][1].push(c);
+  return grupos.filter(([, itens]) => itens.length > 0);
+}
+
 function lerAba(): Aba {
   try { return sessionStorage.getItem(CHAVE_ABA) === "terminal" ? "terminal" : "conversa"; } catch { return "conversa"; }
 }
@@ -101,9 +129,33 @@ export function WebApp() {
   const { conversations, attention, catalog, carregado, error, semAcesso, refresh, atualizar, parear } = useDados(conversaId);
   const [projetoId, setProjetoId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [buscaHistorico, setBuscaHistorico] = useState("");
+  const [projetoHistorico, setProjetoHistorico] = useState("");
   const [aba, setAba] = useState<Aba>(lerAba);
   const [atualizando, setAtualizando] = useState(false);
   const busca = useRef<HTMLInputElement>(null);
+  // Lateral em abas: a que sai fica na tela até terminar de deslizar.
+  const [abaLateral, setAbaLateral] = useState<AbaLateral>(lerAbaLateral);
+  const [saindo, setSaindo] = useState<AbaLateral | null>(null);
+  const direcao = useRef<1 | -1>(1);
+  const paineis = useRef<Partial<Record<AbaLateral, HTMLElement | null>>>({});
+  const botoesAba = useRef<Partial<Record<AbaLateral, HTMLButtonElement | null>>>({});
+  const marcador = useRef<HTMLSpanElement>(null);
+  function trocarAbaLateral(nova: AbaLateral) {
+    if (nova === abaLateral) return;
+    const ordem = ABAS_LATERAIS.map(({ id }) => id);
+    direcao.current = ordem.indexOf(nova) > ordem.indexOf(abaLateral) ? 1 : -1;
+    setSaindo(abaLateral);
+    setAbaLateral(nova);
+    try { sessionStorage.setItem(CHAVE_ABA_LATERAL, nova); } catch { /* sem armazenamento: vale só agora */ }
+  }
+  useLayoutEffect(() => {
+    moverIndicador(marcador.current, botoesAba.current[abaLateral] ?? null);
+    if (!saindo) return;
+    const quem = saindo;
+    deslizarAba(paineis.current[abaLateral] ?? null, paineis.current[quem] ?? null, direcao.current,
+      () => setSaindo((atual) => (atual === quem ? null : atual)));
+  }, [abaLateral]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Endereço guarda a conversa aberta: atualizar a página (ou deixar aberta o dia todo) volta para
   // onde estava, como no celular.
@@ -140,8 +192,9 @@ export function WebApp() {
       const digitando = alvo?.closest?.("input, textarea, [contenteditable], .xterm");
       if ((evento.key === "/" && !digitando) || (evento.key.toLowerCase() === "k" && (evento.ctrlKey || evento.metaKey))) {
         evento.preventDefault();
-        busca.current?.focus();
-        busca.current?.select();
+        // Na aba das prévias a busca não está na tela: volta para as conversas e foca depois do render.
+        setAbaLateral("conversas");
+        requestAnimationFrame(() => { busca.current?.focus(); busca.current?.select(); });
       }
     }
     window.addEventListener("keydown", tecla);
@@ -233,7 +286,11 @@ export function WebApp() {
   const visiveis = conversations.filter((item) => !item.hidden);
   const doProjeto = visiveis.filter((item) => item.project_id === projetoAtivo?.id);
   const daLista = filterConversations(query ? visiveis : doProjeto, query, perfis, projetos);
-  const ocultasDoProjeto = conversations.filter((item) => item.hidden && item.project_id === projetoAtivo?.id);
+  const abertasDoProjeto = doProjeto.filter((item) => item.live);
+  // Recentes de qualquer projeto (o cartão diz de qual); o resto mora na aba Histórico.
+  const ultimas = visiveis.filter((item) => !item.live).sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0)).slice(0, ULTIMAS);
+  const historico = filterConversations(visiveis.filter((item) => !projetoHistorico || item.project_id === projetoHistorico), buscaHistorico, perfis, projetos)
+    .sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0));
   const trabalhando = conversations.filter((item) => item.state === "working");
   const naoVistas = new Set(attention.map((item) => item.id));
   // Agente sem visão de conversa (Cursor) abre direto no terminal ao vivo.
@@ -270,6 +327,7 @@ export function WebApp() {
           </div>
         ) : <span className="w-topo-espaco" />}
         {error && <span className="w-erro" role="alert">Sem conexão com o PC: {error}</span>}
+        <UsoNoTopo profileId={conversa?.profile_id ?? null} provider={conversa?.provider ?? null} />
         <button type="button" className={`btn btn-ghost w-atualizar${verExtensoes ? " is-ativo" : ""}`} aria-label="Extensões"
           title="MCPs, plugins e conectores de cada IA" onClick={() => {
             history.pushState(null, "", `${location.pathname}${location.search}#/extensoes`);
@@ -285,75 +343,144 @@ export function WebApp() {
 
       <div className="w-colunas">
         <aside className="w-coluna w-lateral" aria-label="Projetos e conversas">
-          <Input ref={busca} type="search" size="sm" value={query} onChange={event => setQuery(event.target.value)}
-            placeholder="Pesquisar conversas  ( / )" aria-label="Pesquisar conversas" className="w-busca" />
-          {!query && (
-            <div className="w-projetos-bloco">
-              <h2 className="w-rotulo">Projetos</h2>
-              {catalog && projetos.length === 0 && (
-                <p className="w-vazio">Nenhum projeto conhecido. Abra um projeto no OMNI do PC.</p>
-              )}
-              <ul className="w-projetos">
-                {projetos.map((project) => {
-                  const lista = conversations.filter((item) => item.project_id === project.id);
-                  const aguardando = lista.filter((item) => item.capabilities?.approve).length;
-                  const ativos = lista.filter((item) => item.state === "working").length;
-                  return (
-                    <li key={project.id}>
-                      <button
-                        type="button"
-                        onClick={() => selecionarProjeto(project.id)}
-                        aria-current={project.id === projetoAtivo?.id ? "true" : undefined}
-                        className={`w-projeto${project.id === projetoAtivo?.id ? " w-projeto-ativo" : ""}`}
-                        title={project.path}
-                        aria-label={project.name}
-                      >
-                        <FolderIcon aria-hidden className="h-3.5 w-3.5 shrink-0 w-projeto-icone" />
-                        <span className="w-projeto-nome">{project.name}</span>
-                        {ativos > 0 && <span className="m-dot m-dot-ativo" aria-label={`${ativos} trabalhando`} />}
-                        {aguardando > 0 && <span className="m-badge m-badge-alerta">{aguardando}</span>}
-                        <span className="w-projeto-total" aria-hidden>{lista.length}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          )}
-
-          <h2 className="w-rotulo">{query ? "Resultados" : `Conversas${projetoAtivo ? ` · ${projetoAtivo.name}` : ""}`}</h2>
-          <div className="w-conversas">
-            <ConversasPorEstado
-              conversations={daLista}
-              perfis={perfis}
-              projetos={projetos}
-              mostrarProjeto={Boolean(query)}
-              abrir={abrirConversa}
-              ativa={conversaId}
-              naoVistas={naoVistas}
-              vazio={carregado ? (query ? "Nenhuma conversa encontrada." : "Nenhuma conversa neste projeto ainda.") : "Carregando…"}
-            />
-            {!query && <Ocultas conversas={ocultasDoProjeto} perfis={perfis} abrir={abrirConversa} ativa={conversaId} />}
+          <div role="tablist" aria-label="Seções da lateral" className="lateral-abas w-lateral-abas">
+            <span ref={marcador} aria-hidden className="lateral-abas-marcador" />
+            {ABAS_LATERAIS.map(({ id, rotulo, icone: Icone }) => (
+              <button key={id} ref={(el) => { botoesAba.current[id] = el; }} type="button" role="tab"
+                aria-selected={abaLateral === id} aria-controls={`w-aba-${id}`} onClick={() => trocarAbaLateral(id)}
+                className={`lateral-aba w-lateral-aba${abaLateral === id ? " is-ativa" : ""}`}>
+                <Icone className="h-3.5 w-3.5" aria-hidden />
+                <span>{rotulo}</span>
+                {id === "conversas" && trabalhando.length > 0 && <span aria-hidden className="lateral-aba-vivo" />}
+              </button>
+            ))}
           </div>
-          {projetoAtivo?.path && !query && shellsDoProjeto.length > 0 && (
-            <div className="w-terminais-bloco">
-              <h2 className="w-rotulo">Terminais</h2>
-              <ul className="w-atencao">
-                {shellsDoProjeto.map((item) => (
-                  <li key={item.id}>
-                    <button type="button" title={item.cwd} onClick={() => abrirTerminal(item.id)}
-                      className={`w-atencao-item${item.id === terminalId ? " w-atencao-item-ativa" : ""}`}>
-                      <span className={`m-dot ${item.state === "working" ? "m-dot-ativo" : "m-dot-parado"}`} aria-hidden />
-                      <span className="w-atencao-texto">{item.name}</span>
-                      {haQuanto(item.updated_at_ms) && <time className="w-atencao-tempo">{haQuanto(item.updated_at_ms)}</time>}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {!query && <div className="w-previas-bloco"><PreviasLocais /></div>}
-          {projetoAtivo?.path && !query && (
+
+          <div className="w-lateral-paineis">
+            {ABAS_LATERAIS.filter(({ id }) => id === abaLateral || id === saindo).map(({ id, rotulo }) => (
+              <div key={id} id={`w-aba-${id}`} role="tabpanel" aria-label={rotulo} ref={(el) => { paineis.current[id] = el; }}
+                aria-hidden={id !== abaLateral || undefined} className={`w-lateral-painel${id !== abaLateral ? " is-saindo" : ""}`}>
+                {id === "previas" ? <PreviasLocais /> : id === "historico" ? (
+                  <>
+                    <div className="w-historico-filtros">
+                      <Input type="search" size="sm" value={buscaHistorico} onChange={(event) => setBuscaHistorico(event.target.value)}
+                        placeholder="Buscar no histórico" aria-label="Buscar no histórico" />
+                      <select className="w-historico-projeto" value={projetoHistorico} aria-label="Projeto do histórico"
+                        onChange={(event) => setProjetoHistorico(event.target.value)}>
+                        <option value="">Todos os projetos</option>
+                        {projetos.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                      </select>
+                    </div>
+                    {historico.length === 0 && <p className="w-vazio">{carregado ? "Nada no histórico com esse filtro." : "Carregando…"}</p>}
+                    {porPeriodo(historico).map(([periodo, itens]) => (
+                      <section key={periodo} className="w-secao">
+                        <h2 className="w-rotulo"><span className="w-rotulo-texto">{periodo}</span><span className="w-rotulo-conta">{itens.length}</span></h2>
+                        <div className="w-conversas">
+                          <ConversationList conversations={itens} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
+                            ativa={conversaId} naoVistas={naoVistas} vazio="" />
+                        </div>
+                      </section>
+                    ))}
+                    <Ocultas conversas={conversations.filter((item) => item.hidden && (!projetoHistorico || item.project_id === projetoHistorico))}
+                      perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa} ativa={conversaId} />
+                  </>
+                ) : (
+                  <>
+                    <Input ref={busca} type="search" size="sm" value={query} onChange={event => setQuery(event.target.value)}
+                      placeholder="Pesquisar conversas  ( / )" aria-label="Pesquisar conversas" className="w-busca" />
+                    {!query && (
+                      <section className="w-secao">
+                        <h2 className="w-rotulo"><FolderIcon aria-hidden className="h-3 w-3" />Projetos<span className="w-rotulo-conta">{projetos.length}</span></h2>
+                        {catalog && projetos.length === 0 && (
+                          <p className="w-vazio">Nenhum projeto conhecido. Abra um projeto no OMNI do PC.</p>
+                        )}
+                        <ul className="w-projetos">
+                          {projetos.map((project) => {
+                            const lista = conversations.filter((item) => item.project_id === project.id);
+                            const aguardando = lista.filter((item) => item.capabilities?.approve).length;
+                            const ativos = lista.filter((item) => item.state === "working").length;
+                            return (
+                              <li key={project.id}>
+                                <button
+                                  type="button"
+                                  onClick={() => selecionarProjeto(project.id)}
+                                  aria-current={project.id === projetoAtivo?.id ? "true" : undefined}
+                                  className={`w-projeto${project.id === projetoAtivo?.id ? " w-projeto-ativo" : ""}`}
+                                  title={project.path}
+                                  aria-label={project.name}
+                                >
+                                  <FolderIcon aria-hidden className="h-3.5 w-3.5 shrink-0 w-projeto-icone" />
+                                  <span className="w-projeto-nome">{project.name}</span>
+                                  {ativos > 0 && <span className="m-dot m-dot-ativo" aria-label={`${ativos} trabalhando`} />}
+                                  {aguardando > 0 && <span className="m-badge m-badge-alerta">{aguardando}</span>}
+                                  <span className="w-projeto-total" aria-hidden>{lista.length}</span>
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </section>
+                    )}
+
+                    {query ? (
+                      <section className="w-secao">
+                        <h2 className="w-rotulo"><ChatIcon aria-hidden className="h-3 w-3" />Resultados<span className="w-rotulo-conta">{daLista.length}</span></h2>
+                        <div className="w-conversas">
+                          <ConversationList conversations={daLista} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
+                            ativa={conversaId} naoVistas={naoVistas} vazio="Nenhuma conversa encontrada." />
+                        </div>
+                      </section>
+                    ) : (
+                      <>
+                        <section className="w-secao">
+                          <h2 className="w-rotulo"><span className="m-dot m-dot-ativo" aria-hidden />
+                            <span className="w-rotulo-texto">Abertas no PC</span>
+                            {projetoAtivo && <span className="w-rotulo-projeto" title={projetoAtivo.path}><FolderIcon aria-hidden className="h-3 w-3" />{projetoAtivo.name}</span>}
+                            <span className="w-rotulo-conta">{abertasDoProjeto.length}</span></h2>
+                          <div className="w-conversas">
+                            <ConversationList conversations={abertasDoProjeto} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
+                              ativa={conversaId} naoVistas={naoVistas} vazio={carregado ? "Nenhuma conversa aberta neste projeto." : "Carregando…"} />
+                          </div>
+                        </section>
+                        <section className="w-secao">
+                          <h2 className="w-rotulo"><ClockIcon aria-hidden className="h-3 w-3" /><span className="w-rotulo-texto">Últimas conversas</span>
+                            <span className="w-rotulo-dica">todos os projetos</span></h2>
+                          <div className="w-conversas">
+                            <ConversationList conversations={ultimas} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
+                              ativa={conversaId} naoVistas={naoVistas} vazio={carregado ? "Nenhuma conversa ainda." : "Carregando…"} />
+                          </div>
+                          <button type="button" className="w-ver-historico" onClick={() => trocarAbaLateral("historico")}>
+                            <ClockIcon aria-hidden className="h-3.5 w-3.5" />Ver todo o histórico<span aria-hidden>→</span>
+                          </button>
+                        </section>
+                      </>
+                    )}
+                    {projetoAtivo?.path && !query && shellsDoProjeto.length > 0 && (
+                      <section className="w-secao">
+                        <h2 className="w-rotulo"><TerminalIcon aria-hidden className="h-3 w-3" />Terminais<span className="w-rotulo-conta">{shellsDoProjeto.length}</span></h2>
+                        <ul className="w-atencao">
+                          {shellsDoProjeto.map((item) => (
+                            <li key={item.id}>
+                              <button type="button" title={item.cwd} onClick={() => abrirTerminal(item.id)}
+                                className={`w-atencao-item w-terminal-item${item.id === terminalId ? " w-atencao-item-ativa" : ""}`}>
+                                <span className={`m-dot ${item.state === "working" ? "m-dot-ativo" : "m-dot-parado"}`} aria-hidden />
+                                <TerminalIcon aria-hidden className="h-3.5 w-3.5 shrink-0" />
+                                <span className="w-atencao-texto">{item.name}</span>
+                                {haQuanto(item.updated_at_ms) && <time className="w-atencao-tempo">{haQuanto(item.updated_at_ms)}</time>}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Fixo embaixo, em qualquer aba: as duas ações do projeto. */}
+          {projetoAtivo?.path && (
             <div className="w-rodape-lateral">
               {catalog && <NovaSessao project={projetoAtivo} catalog={catalog} onCriada={refresh} classeBotao="w-rodape-botao" />}
               <button type="button" className="btn btn-ghost w-rodape-botao" disabled={abrindoTerminal}
@@ -433,8 +560,7 @@ export function WebApp() {
         </main>
 
         <aside className="w-coluna w-direita" aria-label="Precisa de você">
-          <UsoDasContas contaAtiva={conversa?.profile_id ?? null} />
-          <h2 className="w-rotulo">Precisa de você</h2>
+          <h2 className="w-rotulo">Precisa de você{attention.length > 0 && <span className="w-rotulo-conta is-alerta">{attention.length}</span>}</h2>
           {attention.length === 0 ? (
             <p className="w-vazio">Nada pendente agora.</p>
           ) : (
@@ -448,7 +574,7 @@ export function WebApp() {
           )}
           {trabalhando.length > 0 && (
             <>
-              <h2 className="w-rotulo">Trabalhando agora</h2>
+              <h2 className="w-rotulo">Trabalhando agora<span className="w-rotulo-conta is-vivo">{trabalhando.length}</span></h2>
               <ul className="w-atencao">
                 {trabalhando.map((item) => (
                   <li key={item.id}>

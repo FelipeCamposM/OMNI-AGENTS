@@ -66,6 +66,8 @@ enum Resposta {
     Opcao(u8),
     /// Tab: no marcar-várias, segue para a próxima pergunta ou para a revisão.
     Avancar,
+    /// ←: volta para a pergunta anterior quando são várias seguidas, para trocar a resposta.
+    Voltar,
     /// Esc.
     Fechar,
 }
@@ -563,6 +565,7 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/conversas/{id}/terminal",get(terminal))
         .route("/conversas/{id}/imagens/{n}/{k}",get(imagem_da_mensagem))
         .route("/conversas/{id}/teclas",post(teclas))
+        .route("/conversas/{id}/parar",post(parar))
         .route("/conversas/{id}/prompt",post(prompt))
         .route("/conversas/{id}/aprovar",post(approve))
         .route("/conversas/{id}/escolher",post(escolher))
@@ -575,6 +578,7 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/fluxos/execucoes/{id}/nos/{no}/aprovar",post(fluxos_aprovar))
         .route("/fluxos/execucoes/{id}/nos/{no}/conversa",post(fluxos_conversa))
         .route("/conversas/{id}/bifurcar",post(bifurcar_rota))
+        .route("/conversas/{id}/exportar",get(exportar_ler).post(exportar_rota))
         .route("/conversas/{id}/modo",post(modo))
         .route("/conversas/{id}/opcoes",get(opcoes))
         .route("/conversas/{id}/ajustes",post(ajustar))
@@ -986,6 +990,57 @@ async fn bifurcar_rota(State(state): State<Arc<EngineState>>, RoutePath(id): Rou
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao bifurcar"))?
 }
 
+/// A conversa (do índice ou só do histórico da CLI) como itens da timeline, com título, pasta,
+/// agente e o projeto a que pertence — o que o "Exportar para outro agente" precisa.
+fn para_exportar(state: &EngineState, id: &str) -> Result<(String, String, String, Option<String>, Vec<(String, omni_core::feed::Item)>), ApiError> {
+    let profiles = omni_core::profiles(state.state_file.parent().unwrap());
+    if let Ok((conversa,_)) = current(state,id) {
+        let itens = omni_core::conversations::itens_cached(&conversa,&profiles,&mut state.mobile.feeds.lock().expect("feeds poisoned")).0;
+        let provider = conversa.segments.last().map(|s| s.provider.clone()).unwrap_or_default();
+        return Ok((omni_core::conversations::display_title(&conversa), conversa.cwd.clone(), provider, Some(conversa.project_id.clone()), itens));
+    }
+    let entry = historical_entries(state).into_iter().find(|entry|history_id(entry) == id)
+        .ok_or_else(||error(StatusCode::NOT_FOUND,"Conversa não encontrada"))?;
+    let caminho = omni_core::history::validated(Path::new(&entry.path),&entry.provider,&profiles)
+        .ok_or_else(||error(StatusCode::NOT_FOUND,"Histórico não encontrado"))?;
+    let itens = state.mobile.feeds.lock().expect("feeds poisoned").read(&caminho,&entry.provider)
+        .map_err(|_|error(StatusCode::NOT_FOUND,"Histórico não encontrado"))?
+        .iter().map(|e|(entry.provider.clone(),e.item.clone())).collect();
+    let cwd = entry.cwd.clone().unwrap_or_default();
+    let mesmo = |a: &str, b: &str| a.replace('\\',"/").trim_end_matches('/').eq_ignore_ascii_case(b.replace('\\',"/").trim_end_matches('/'));
+    let projeto = known_projects(state).into_iter().find(|p| !cwd.is_empty() && mesmo(&p.path,&cwd)).map(|p| p.id);
+    let titulo = entry.title.clone().or(entry.first_prompt.clone()).unwrap_or_else(|| "Conversa".into());
+    Ok((titulo, cwd, entry.provider.clone(), projeto, itens))
+}
+
+/// Prévia do pacote / "Copiar como Markdown".
+async fn exportar_ler(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let (titulo, cwd, provider, _, itens) = para_exportar(&state,&id)?;
+        Ok(Json(json!({"markdown": omni_core::exportar::pacote(&titulo,&cwd,&provider,&itens), "titulo": titulo})))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao exportar"))?
+}
+
+#[derive(Deserialize)] #[serde(deny_unknown_fields)]
+struct ExportarBody { provider: String, profile_id: Option<String> }
+
+/// Exportar para outro agente: grava o pacote em `.omni/exports/` e abre uma conversa nova no agente
+/// escolhido, que começa lendo o arquivo. A original fica como está.
+async fn exportar_rota(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, Json(body): Json<ExportarBody>) -> Result<(StatusCode,Json<Value>), ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let (titulo, cwd, provider, projeto, itens) = para_exportar(&state,&id)?;
+        let projeto = projeto.ok_or_else(||error(StatusCode::CONFLICT,"A pasta desta conversa não é um projeto da lista; adicione o projeto no PC antes"))?;
+        let titulo_novo: String = titulo.chars().take(100).filter(|c| !c.is_control()).collect();
+        let mut plano = resolve_spawn(&state,&SpawnBody { project_id: projeto, provider: body.provider.clone(), profile_id: body.profile_id.clone(), titulo: Some(titulo_novo) })?;
+        let markdown = omni_core::exportar::pacote(&titulo,&cwd,&provider,&itens);
+        let (_, relativo) = omni_core::exportar::salvar(Path::new(&plano.cwd),&titulo,&markdown)
+            .map_err(|erro|error(StatusCode::INTERNAL_SERVER_ERROR,&format!("Não consegui gravar o pacote: {erro}")))?;
+        plano.command = format!("{} \"{}\"", plano.command, omni_core::exportar::prompt_inicial(&relativo,&provider));
+        let nova = spawn_plano(&state,&plano).map_err(|erro|error(StatusCode::INTERNAL_SERVER_ERROR,&erro.to_string()))?;
+        Ok((StatusCode::CREATED,Json(json!({"id":nova,"arquivo":relativo}))))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao exportar"))?
+}
+
 pub fn publish(state: &EngineState, projects: Vec<PublishedProject>, agents: Vec<PublishedAgent>, theme: Option<PublishedTheme>) -> Result<EngineResponse> {
     // Desktop antigo publica sem tema: mantém o último conhecido em vez de apagar.
     let theme = theme.or_else(|| state.mobile.workspace.lock().ok().and_then(|w| w.theme.clone()));
@@ -1248,6 +1303,28 @@ async fn teclas(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<
         Ok(Json(json!({"ok":true})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao enviar teclas"))?
 }
+/// O "parar" da conversa: Esc, e depois apaga o prompt que a CLI devolveu ao campo (com texto lá, o
+/// próximo prompt dava "não reconhecida"). `limpou` diz à página para devolver o texto ao campo dela.
+async fn parar(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let (_, sessao) = current(&state,&id)?;
+        let sessao = sessao.ok_or_else(||error(StatusCode::CONFLICT,"Sessão não está aberta no PC"))?;
+        let (sessao_id, provider) = sessao.meta.lock().map(|meta| (meta.id.clone(), meta.provider.clone().unwrap_or_default()))
+            .map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Sessão indisponível"))?;
+        write_terminal(&state,&sessao_id,"\x1b").map_err(|erro|error(StatusCode::CONFLICT,&erro.to_string()))?;
+        let mut limpou = false;
+        // ponytail: Ctrl+U apaga até o começo da linha; texto de várias linhas leva um por linha, daí o laço.
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let Ok(context) = sessao.interaction.lock() else { break };
+            if interaction::ready(context.parser.screen(),&provider) { break; }
+            let sobra = interaction::sobra_no_campo(context.parser.screen(),&provider);
+            drop(context);
+            if sobra { limpou = true; let _ = write_terminal(&state,&sessao_id,"\x15"); }
+        }
+        Ok(Json(json!({"ok":true,"limpou":limpou})))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao parar"))?
+}
 /// Renomear a conversa. Vale para o celular e para a web de computador; o desktop chega aqui pelo
 /// `EngineRequest::RenameConversation`, para o índice ter **um** escritor só.
 #[derive(Deserialize)] struct NomeBody { nome: String }
@@ -1355,12 +1432,17 @@ async fn vocabulario_aprender(State(state): State<Arc<EngineState>>, Json(body):
     }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Não foi possível salvar"))?
 }
 
+/// Pasta do projeto da conversa, para a dica de vocabulário. Sem conversa (o "-" de criar fluxo e outros
+/// campos fora do chat) fica só o vocabulário da pessoa.
+fn pasta_da_voz(state: &EngineState, id: &str) -> std::path::PathBuf {
+    current(state,id).map(|(c,_)| std::path::PathBuf::from(c.cwd)).unwrap_or_default()
+}
+
 /// Um trecho da fala (PCM 16 bits, 16 kHz, mono, cortado nas pausas pelo navegador) → texto cru. Volta para o campo, nunca é
 /// enviado sozinho: a pessoa revisa antes. A conversa só serve para a dica de vocabulário do projeto.
 async fn transcrever_voz(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, corpo: axum::body::Bytes) -> Result<Json<Value>,ApiError> {
     tokio::task::spawn_blocking(move || {
-        let (conversation,_) = current(&state,&id)?;
-        let dica = crate::voz::vocabulario(&state,std::path::Path::new(&conversation.cwd));
+        let dica = crate::voz::vocabulario(&state,&pasta_da_voz(&state,&id));
         let texto = crate::voz::transcrever(&state,&corpo,&dica).map_err(|e| error(StatusCode::CONFLICT,&e.to_string()))?;
         Ok(Json(json!({"texto":texto})))
     }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao transcrever"))?
@@ -1369,8 +1451,7 @@ async fn transcrever_voz(State(state): State<Arc<EngineState>>, RoutePath(id): R
 #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct VozTexto { texto: String }
 async fn corrigir_voz(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, Json(body): Json<VozTexto>) -> Result<Json<Value>,ApiError> {
     tokio::task::spawn_blocking(move || {
-        let (conversation,_) = current(&state,&id)?;
-        let dica = crate::voz::vocabulario(&state,std::path::Path::new(&conversation.cwd));
+        let dica = crate::voz::vocabulario(&state,&pasta_da_voz(&state,&id));
         Ok(Json(json!({"texto":crate::voz::corrigir(&state,&body.texto,&dica)})))
     }).await.map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao corrigir"))?
 }
@@ -1409,9 +1490,11 @@ async fn approve(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath
     enqueue_async(state,id,headers,ActionKind::Approval(body.permitir)).await
 }
 
-#[derive(Deserialize)] #[serde(deny_unknown_fields)] struct EscolhaBody { opcao: Option<u8>, #[serde(default)] avancar: bool }
+#[derive(Deserialize)] #[serde(deny_unknown_fields)] struct EscolhaBody { opcao: Option<u8>, #[serde(default)] avancar: bool, #[serde(default)] voltar: bool }
 async fn escolher(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, headers: HeaderMap, Json(body): Json<EscolhaBody>) -> Result<(StatusCode,Json<Value>),ApiError> {
-    let resposta = match (body.avancar, body.opcao) { (true, _) => Resposta::Avancar, (false, Some(n)) => Resposta::Opcao(n), (false, None) => Resposta::Fechar };
+    let resposta = match (body.voltar, body.avancar, body.opcao) {
+        (true, _, _) => Resposta::Voltar, (_, true, _) => Resposta::Avancar, (_, _, Some(n)) => Resposta::Opcao(n), _ => Resposta::Fechar,
+    };
     enqueue_async(state,id,headers,ActionKind::Escolha(resposta)).await
 }
 
@@ -1535,6 +1618,7 @@ fn enqueue(state:&Arc<EngineState>,id:&str,headers:&HeaderMap,kind:ActionKind) -
         ActionKind::Escolha(resposta) => capability.escolha.as_ref().is_some_and(|menu| match resposta {
             Resposta::Opcao(n) => menu.opcoes.iter().any(|o| o.numero == n),
             Resposta::Avancar => menu.multipla,
+            Resposta::Voltar => !menu.etapas.is_empty(),
             Resposta::Fechar => true,
         }),
         ActionKind::Spawn(_) | ActionKind::Retomar(_) => false,
@@ -1881,6 +1965,11 @@ async fn contas(State(state): State<Arc<EngineState>>) -> Json<Value> {
             let uso = match perfil.provider.as_str() {
                 "codex" => Some(omni_core::usage::read_codex(&perfil.id,Path::new(&perfil.config_dir),agora)),
                 "claude" => omni_core::usage::read_claude_cache(&perfil.id,&omni_core::usage::claude_state_path(&perfil),agora),
+                // Só a última consulta salva: `refresh: false` nunca digita nada.
+                "antigravity" => match interaction::account_usage(&state,&perfil.id,false) {
+                    Ok(EngineResponse::AccountUsage { usage }) => Some(usage),
+                    _ => None,
+                },
                 _ => None,
             };
             json!({"id":perfil.id,"provider":perfil.provider,"name":perfil.name,"usage":uso})
@@ -1896,15 +1985,16 @@ pub(crate) fn comando_do_agente(state: &EngineState, provider: &str) -> String {
         .unwrap_or_else(|| provider.to_string())
 }
 
-/// Busca o uso da conta de novo, como o botão de atualizar do rodapé do PC. Claude: o engine digita
-/// `/usage` num Claude ocioso da conta (ou num oculto) — leva alguns segundos. Codex: relê o rollout.
+/// Busca o uso da conta de novo, como o botão de atualizar do rodapé do PC. Claude e Antigravity: o
+/// engine digita `/usage` num agente ocioso da conta (ou num oculto) — leva alguns segundos. Codex:
+/// relê o rollout.
 async fn atualizar_uso(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>) -> Result<Json<Value>, ApiError> {
     tokio::task::spawn_blocking(move || {
         let dir = state.state_file.parent().unwrap().to_path_buf();
         let perfil = omni_core::profiles(&dir).into_iter().find(|p| p.id == id)
             .ok_or_else(||error(StatusCode::NOT_FOUND,"Conta não encontrada"))?;
         let uso = match perfil.provider.as_str() {
-            "claude" => match interaction::account_usage(&state,&perfil.id,true) {
+            "claude" | "antigravity" => match interaction::account_usage(&state,&perfil.id,true) {
                 Ok(EngineResponse::AccountUsage { usage }) => usage,
                 Ok(EngineResponse::Error { message, .. }) => return Err(error(StatusCode::CONFLICT,&message)),
                 Ok(_) => return Err(error(StatusCode::INTERNAL_SERVER_ERROR,"Resposta inesperada da consulta de uso")),
@@ -2280,6 +2370,11 @@ fn reabrir_com(state: &Arc<EngineState>, conversation_id: &str, ajustes: &Ajuste
 /// esse o caso de uso. Sem a conversa, a sessão existiria mas o celular não teria o que ler.
 fn spawn_from_mobile(state:&Arc<EngineState>, action:&Action, plan:&SpawnPlan) -> Result<()> {
     if now_ms().saturating_sub(action.created_at_ms) >= 60_000 { return Err(anyhow!("Ação expirada")); }
+    spawn_plano(state,plan).map(|_| ())
+}
+
+/// Abre a sessão do plano e grava a conversa nova; devolve o id dela.
+fn spawn_plano(state:&Arc<EngineState>, plan:&SpawnPlan) -> Result<String> {
     let dir = state.state_file.parent().unwrap().to_path_buf();
 
     let conversation = omni_core::conversations::Conversation {
@@ -2332,10 +2427,11 @@ fn spawn_from_mobile(state:&Arc<EngineState>, action:&Action, plan:&SpawnPlan) -
     let mut index = omni_core::conversations::read_index(&dir);
     let mut conversation = conversation;
     conversation.segments[0].terminal_session_id = Some(session.id.clone());
+    let id = conversation.id.clone();
     index.push(conversation);
     omni_core::conversations::write_index(&dir,&index)?;
     if plan.provider == "claude" { passar_pela_confianca(state,&session.id); }
-    Ok(())
+    Ok(id)
 }
 
 /// Pasta que a conta nunca abriu: o Claude para no "confiar nesta pasta?" e o celular só via
@@ -2403,6 +2499,9 @@ fn execute_checked(state:&Arc<EngineState>, action:&Action, is_running: impl Fn(
                 Resposta::Opcao(_) => return Err(anyhow!("Opção inexistente")),
                 Resposta::Avancar if menu.multipla => ("\t".into(), false),
                 Resposta::Avancar => return Err(anyhow!("Este menu não é de marcar várias")),
+                // A barra de abas das perguntas ("← ☐ Cor  ☒ Fruta  ✔ Submit →") anda com as setas.
+                Resposta::Voltar if !menu.etapas.is_empty() => ("\x1b[D".into(), false),
+                Resposta::Voltar => return Err(anyhow!("Não há pergunta anterior")),
                 Resposta::Fechar => ("\x1b".into(), false),
             }
         }

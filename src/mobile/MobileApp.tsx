@@ -8,9 +8,10 @@ import { Select } from "../components/ui/Select";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
 import { ArchiveIcon, ArrowLeftIcon, AttachmentIcon, ChatIcon, EditIcon, FolderIcon, GitBranchIcon, NotesIcon, PlayIcon, ReloadIcon, WarningIcon } from "../components/ui/PixelIcon";
-import { NOME_DO_AGENTE, request, requestSeMudou, esquecerVersao, enviarTeclas, actionKey, ApiError, type Comando, type Conversation, type Mensagem, type Projects, type Timeline } from "./api";
+import { NOME_DO_AGENTE, request, requestSeMudou, esquecerVersao, actionKey, ApiError, type Comando, type Conversation, type Mensagem, type Projects, type Timeline } from "./api";
 import { AgentWorking, BlocoDeAcoes, LinhaDeAviso, LinhaDeComando, MessageBubble, PairingScreen } from "./Chat";
 import { Composer } from "./Composer";
+import { ExportarConversa } from "./ExportarConversa";
 import { CartaoDePergunta } from "./CartaoDePergunta";
 import { AjustesDaConversa, type Ajustes } from "./AjustesDaConversa";
 import {
@@ -212,7 +213,7 @@ export function ConversationList({ conversations, perfis, projetos = [], mostrar
     );
     const conta = perfis.find(p => p.id === c.profile_id)?.name;
     const projeto = mostrarProjeto ? projetos.find(p => p.id === c.project_id)?.name : null;
-    const detalhe = [STATES[c.state ?? ""] ?? "Histórico", NOME_DO_AGENTE[c.provider ?? ""] ?? c.provider, conta, projeto]
+    const detalhe = [STATES[c.state ?? ""] ?? "Histórico", NOME_DO_AGENTE[c.provider ?? ""] ?? c.provider, conta]
       .filter(Boolean).join(" · ");
     return <li key={c.id}>
       <button type="button" className={`m-card glass glass-hover${c.id === ativa ? " m-card-ativo" : ""}`} data-status={status} onClick={() => abrir(c.id)}
@@ -221,6 +222,7 @@ export function ConversationList({ conversations, perfis, projetos = [], mostrar
           {c.provider ? <AgentIcon provider={c.provider} size={20} /> : <PlayIcon aria-hidden className="h-5 w-5" />}
         </span>
         <span className="m-card-corpo">
+          {projeto && <span className="m-card-projeto"><FolderIcon aria-hidden className="h-3 w-3 shrink-0" /><span className="truncate">{projeto}</span></span>}
           <span className="m-card-titulo">{c.title}</span>
           <span className="m-card-sub">
             <span className={`m-dot ${tomDoEstado(c.state, aprovar)}`} aria-hidden />
@@ -396,6 +398,8 @@ export function agruparMensagens(mensagens: Mensagem[]): Bloco[] {
   return blocos;
 }
 
+const chaveDoBloco = (bloco: Bloco) => bloco.tipo === "acoes" ? bloco.id : bloco.mensagem.id;
+
 /** Quem rola a conversa: a lista de mensagens (web) ou a página inteira (celular). */
 function rolagemDe(elemento: HTMLElement | null): HTMLElement | null {
   for (let atual = elemento?.parentElement ?? null; atual; atual = atual.parentElement) {
@@ -444,6 +448,8 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
   const [enviado, setEnviado] = useState<Enviado | null>(null);
   // Mensagens mandadas com o agente trabalhando: estão na fila da CLI e entram quando o turno acabar.
   const [fila, setFila] = useState<Enviado[]>([]);
+  /** O último texto mandado, para voltar ao campo quando o "parar" o tira do campo da CLI. */
+  const ultimoTexto = useRef("");
   const [novidades, setNovidades] = useState(false);
   const pending = useRef<{ signature: string; key: string; revision: string } | null>(null);
   const trabalhandoDesde = useRef<number | null>(null);
@@ -531,6 +537,23 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
     rolagem.scrollTop = antes.topo + (rolagem.scrollHeight - antes.altura);
   }, [antigas]);
   const blocos = useMemo(() => agruparMensagens(mensagens), [mensagens]);
+  // Blocos que chegaram depois da primeira leitura entram animados; o que já estava na tela ao abrir
+  // não. Fala do usuário não: ela substitui o balão otimista, que já entrou animado.
+  const conhecidos = useRef<Set<string> | null>(null);
+  const entraram = useRef(new Set<string>());
+  if (data) {
+    if (!conhecidos.current) conhecidos.current = new Set(blocos.map(chaveDoBloco));
+    else {
+      // As anteriores, buscadas ao rolar, entram antes de todas as conhecidas: essas não animam.
+      let depois = conhecidos.current.size === 0;
+      for (const bloco of blocos) {
+        const chave = chaveDoBloco(bloco);
+        if (conhecidos.current.has(chave)) { depois = true; continue; }
+        conhecidos.current.add(chave);
+        if (depois && (bloco.tipo !== "fala" || bloco.mensagem.role !== "user")) entraram.current.add(chave);
+      }
+    }
+  }
   // Só a primeira fala do agente em cada turno leva "Claude · 17:54"; as seguintes (falas curtas
   // entre ações) seguem coladas, sem repetir o cabeçalho.
   // "Hoje", "Ontem" ou a data entre mensagens de dias diferentes — numa conversa longa é o que dá
@@ -754,10 +777,23 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
 
   /** Responde um menu da CLI pelo número da opção; `null` fecha o menu (Esc); `"avancar"` é o Tab
    *  do marcar-várias. */
-  async function escolher(opcao: number | null | "avancar") {
-    if (!conversation.capabilities?.escolha || busy) return;
+  async function escolher(opcao: number | null | "avancar" | "voltar") {
+    const antes = conversation.capabilities?.escolha;
+    if (!antes || busy) return;
     setBusy(true); setError(null); setFalhaEnvio(null);
-    try { await post("escolher", opcao === "avancar" ? { avancar: true } : { opcao }); await Promise.all([ler(), refresh()]); }
+    try {
+      await post("escolher", opcao === "avancar" ? { avancar: true } : opcao === "voltar" ? { voltar: true } : { opcao });
+      // A resposta vai por fila e a tela do PC redesenha logo depois: relê em passos curtos até a
+      // pergunta mudar. Esperar o ciclo normal (3 s com a pergunta aberta) era o atraso do clique.
+      const assinatura = JSON.stringify(antes);
+      for (let tentativa = 0; tentativa < 15; tentativa += 1) {
+        await new Promise((r) => setTimeout(r, 100));
+        const lido = await request<Timeline>(url);
+        setData(lido);
+        if (JSON.stringify(lido.conversation?.capabilities?.escolha ?? null) !== assinatura) break;
+      }
+      void refresh().catch(() => undefined);
+    }
     catch (reason) { falhou(reason); }
     finally { setBusy(false); }
   }
@@ -817,7 +853,16 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
   /** O Esc do terminal: para o agente no meio do turno, como no PC. */
   async function interromper() {
     setError(null);
-    try { await enviarTeclas(conversation.id, "\u001b"); await ler(); }
+    try {
+      const parou = await request<{ limpou?: boolean }>(`/conversas/${encodeURIComponent(conversation.id)}/parar`, { method: "POST" });
+      // A CLI devolveu o prompt ao campo dela e o engine o apagou lá: ele volta para este campo.
+      if (parou?.limpou && ultimoTexto.current) {
+        const texto = ultimoTexto.current;
+        setText((atual) => atual.trim() ? atual : texto);
+        descartarEnviado(null);
+      }
+      await ler();
+    }
     catch (reason) { setError(String(reason)); }
   }
 
@@ -886,6 +931,7 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
         anexos: lista.map(a => ({ nome: a.arquivo.name || "anexo", previa: a.previa })),
       };
       if (paraFila) setFila((atual) => [...atual, item]); else setEnviado(item);
+      ultimoTexto.current = text;
       setText("");
       setAnexos([]);
       grudado.current = true;
@@ -903,14 +949,15 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
   const ultimoBloco = blocos[blocos.length - 1];
 
   function renderizarBloco(bloco: Bloco, indice: number) {
+    const entra = entraram.current.has(chaveDoBloco(bloco));
     if (bloco.tipo === "acoes") {
       return <BlocoDeAcoes key={bloco.id} acoes={bloco.acoes} provider={bloco.acoes[0]?.provider}
-        aoVivo={ativo && bloco === ultimoBloco} />;
+        aoVivo={ativo && bloco === ultimoBloco} entra={entra} />;
     }
-    if (bloco.tipo === "comando") return <LinhaDeComando key={bloco.mensagem.id} texto={bloco.mensagem.text} />;
-    if (bloco.tipo === "aviso") return <LinhaDeAviso key={bloco.mensagem.id} texto={bloco.mensagem.text} />;
+    if (bloco.tipo === "comando") return <LinhaDeComando key={bloco.mensagem.id} texto={bloco.mensagem.text} entra={entra} />;
+    if (bloco.tipo === "aviso") return <LinhaDeAviso key={bloco.mensagem.id} texto={bloco.mensagem.text} entra={entra} />;
     const message = bloco.mensagem;
-    return <MessageBubble key={message.id} lado={message.role === "user" ? "user" : "agent"}
+    return <MessageBubble key={message.id} entra={entra} lado={message.role === "user" ? "user" : "agent"}
       provider={message.provider} texto={message.text} horario={message.timestamp} continua={continuacoes.has(indice)}
       imagens={message.imagens ? { conversa: conversation.id, n: indiceDaMensagem(message.id), total: message.imagens } : undefined} />;
   }
@@ -954,7 +1001,7 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
         const dia = separadores.get(indice);
         const conteudo = renderizarBloco(bloco, indice);
         // Chave pelo bloco, não pela posição: com as antigas entrando em cima, a posição muda.
-        const chave = bloco.tipo === "acoes" ? bloco.id : bloco.mensagem.id;
+        const chave = chaveDoBloco(bloco);
         return dia ? <div key={`dia-${chave}`} className="chat-grupo"><p className="chat-dia"><span>{dia}</span></p>{conteudo}</div> : conteudo;
       })}
       {enviado && <MessageBubble lado="user" pendente texto={enviado.texto}
@@ -967,8 +1014,8 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
           <Button variant="danger" disabled={busy} onClick={() => void aprovar(false)}>Negar</Button>
         </div>
       </div>}
-      {capability?.escolha && <CartaoDePergunta escolha={capability.escolha} provider={conversation.provider} busy={busy}
-        onEscolher={(opcao) => void escolher(opcao)} onAvancar={() => void escolher("avancar")} />}
+      {capability?.escolha && <CartaoDePergunta key={capability.escolha.pergunta} escolha={capability.escolha} provider={conversation.provider} busy={busy}
+        onEscolher={(opcao) => void escolher(opcao)} onAvancar={() => void escolher("avancar")} onVoltar={() => void escolher("voltar")} />}
       {ativo && !capability?.approve &&
         <AgentWorking desde={trabalhandoDesde.current ?? Date.now()} provider={conversation.provider} tokens={conversation.tokens ?? null} />}
       {fila.length > 0 && (
@@ -1012,6 +1059,8 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
           onClick={() => setEditandoNome(true)}>
           <EditIcon aria-hidden className="h-4 w-4" />
         </button>
+        <ExportarConversa conversaId={conversation.id} provider={conversation.provider}
+          abrir={abrirConversa && ((id) => { void refresh().then(() => abrirConversa(id)); })} />
         {/* Bifurcar e ocultar só na web e no celular (quem passa `abrirConversa`): no PC a lateral já faz. */}
         {abrirConversa && conversation.live && (conversation.provider === "claude" || conversation.provider === "codex") && (
           <button type="button" className="composer-botao" disabled={bifurcando}

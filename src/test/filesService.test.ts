@@ -80,6 +80,11 @@ describe("restrição de raiz do projeto", () => {
     expect(text).toBe("conteúdo");
   });
 
+  it("arquivo inexistente vira mensagem legível, não o erro cru do sistema", async () => {
+    mockReadTextFile.mockRejectedValueOnce("failed to open file at path: C:\\dev\\projeto\\x.json with error: (os error 2)");
+    await expect(readTextFile("C:\\dev\\projeto\\x.json", "C:\\dev\\projeto")).rejects.toThrow(/^Arquivo não encontrado/);
+  });
+
   it("rejeita criar arquivo/pasta fora da raiz", async () => {
     await expect(createFile("C:\\dev\\projeto", "C:\\outro\\a.ts")).rejects.toThrow();
     await expect(createDir("C:\\dev\\projeto", "C:\\outro\\pasta")).rejects.toThrow();

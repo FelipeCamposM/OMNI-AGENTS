@@ -405,7 +405,34 @@
 }
 .pairing-button { min-height: 48px; }
 
+/* Mensagem que chega com a conversa aberta: desliza e acende devagar, sem tranco (ease-out longo).
+   A resposta do agente é "digitada": cada palavra acende desfocada → nítida, em sequência, com um
+   cursor piscando no fim. Só anima ao nascer: o elemento não remonta. */
+.entra { animation: chat-entra 520ms cubic-bezier(.22, 1, .36, 1) both; }
+@keyframes chat-entra { from { opacity: 0; transform: translateY(10px) scale(.985); filter: blur(2px); } }
+.palavra { animation: palavra-acende 460ms cubic-bezier(.22, 1, .36, 1) both; }
+.palavra-bloco { display: block; }
+@keyframes palavra-acende { from { opacity: 0; filter: blur(4px); } }
+.digitando-cursor::after {
+  content: "";
+  display: inline-block;
+  width: .45em;
+  height: 1.05em;
+  margin-left: .15em;
+  vertical-align: text-bottom;
+  background: rgb(var(--c-accent));
+  box-shadow: 0 0 6px rgb(var(--c-accent) / .7);
+}
+.digitando-cursor { animation: cursor-pisca 1s steps(1) infinite, cursor-some 360ms ease forwards; }
+@keyframes cursor-pisca { 50% { opacity: 0; } }
+@keyframes cursor-some { to { opacity: 0; visibility: hidden; width: 0; } }
+/* Ação nova no bloco ao vivo (ou ao abrir um bloco): cada linha desliza da esquerda. */
+.acoes-lista .acao { animation: acao-entra 220ms ease-out both; }
+@keyframes acao-entra { from { opacity: 0; transform: translateX(-6px); } }
+
 @media (prefers-reduced-motion: reduce) {
+  .entra, .palavra, .acoes-lista .acao { animation: none; }
+  .digitando-cursor { display: none; }
   .working-verb { animation: none; background: none; color: rgb(var(--c-accent)); }
   .m-dot-ativo, .anexo-girando { animation: none; }
   .m-card { transition: none; }
@@ -917,7 +944,7 @@
   box-shadow: 4px 4px 0 rgb(var(--c-accent) / .35);
   animation: conversa-entra 200ms ease-out;
 }
-.pergunta[aria-busy="true"] { opacity: .75; }
+.pergunta[aria-busy="true"] .pergunta-rodape { opacity: .75; }
 .pergunta-topo { display: flex; align-items: center; flex-wrap: wrap; gap: .5rem; }
 .pergunta-avatar { display: grid; place-items: center; width: 1.5rem; height: 1.5rem; background: rgb(var(--c-overlay) / .07); border: 1px solid rgb(var(--c-outline)); }
 .pergunta-quem { font-size: .625rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: rgb(var(--c-accent)); }
@@ -1139,3 +1166,40 @@ li[data-estado="agora"] > .abrindo-agente-marca { color: rgb(var(--c-accent)); b
 .composer-aprender strong { color: rgb(var(--c-accent)); font-weight: 600; }
 .composer-aprender-ouvido { text-decoration: line-through; color: rgb(var(--c-text-muted)); }
 .composer-aprender-acoes { display: flex; justify-content: flex-end; gap: .5rem; }
+
+/* Cursor neon do campo de digitação, desenhado por nós (`CursorNeon.tsx`; o nativo fica invisível):
+   barra grossa na cor do tema com brilho em camadas e um halo. Desliza até a nova posição, dá um
+   "soco" de luz a cada tecla (a luz remonta e a animação recomeça) e, parado, respira. */
+.composer-campo-caixa { position: relative; }
+#reply { caret-color: transparent; }
+.cursor-neon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  pointer-events: none;
+  transition: transform 120ms cubic-bezier(.22, 1, .36, 1), height 120ms;
+  will-change: transform;
+}
+.cursor-neon::before {
+  content: "";
+  position: absolute;
+  inset: -3px -7px;
+  background: radial-gradient(closest-side, rgb(var(--c-accent) / .35), transparent);
+  filter: blur(2px);
+}
+.cursor-neon-luz {
+  position: absolute;
+  inset: 1px 0;
+  background: rgb(var(--c-accent));
+  box-shadow: 0 0 3px rgb(var(--c-accent)), 0 0 9px rgb(var(--c-accent) / .85), 0 0 20px rgb(var(--c-accent) / .45);
+  animation: cursor-soco 280ms cubic-bezier(.22, 1, .36, 1);
+}
+.cursor-neon:not(.is-digitando) .cursor-neon-luz { animation: cursor-respira 1.3s ease-in-out infinite; }
+.cursor-neon:not(.is-digitando)::before { animation: cursor-respira 1.3s ease-in-out infinite; }
+@keyframes cursor-soco { from { transform: scale(1.8, 1.3); filter: brightness(1.9); } }
+@keyframes cursor-respira { 50% { opacity: .2; } }
+@media (prefers-reduced-motion: reduce) {
+  .cursor-neon { transition: none; }
+  .cursor-neon-luz, .cursor-neon::before { animation: none !important; }
+}

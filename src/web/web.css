@@ -358,3 +358,104 @@
 .aba-conversa-tela .composer-parar { box-shadow: 3px 3px 0 rgb(var(--c-outline)); }
 :root[data-motion="desligadas"] .aba-conversa-tela .composer, :root[data-motion="desligadas"] .aba-conversa-tela .composer::before, :root[data-motion="desligadas"] .aba-conversa-tela .composer-enviar::after { animation: none !important; }
 @media (prefers-reduced-motion: reduce) { .aba-conversa-tela .composer, .aba-conversa-tela .composer::before, .aba-conversa-tela .composer-enviar::after { animation: none !important; } }
+
+/* ── Lateral em abas (Conversas | Prévia no navegador), como no app do PC ──────────────────────
+   As abas ficam no topo, cada painel rola sozinho e Nova sessão / Novo terminal ficam fixos
+   embaixo. Conversas e terminais crescem com o conteúdo (o painel inteiro rola), sem caixinha. */
+.w-lateral { padding: 0; gap: 0; background: linear-gradient(180deg, rgb(var(--c-bg-elevated) / .55), rgb(var(--c-bg-primary) / .35)); }
+.w-lateral-abas { padding: .375rem .5rem 0; }
+.w-lateral-aba { display: flex; gap: .4rem; justify-content: center; font: inherit; font-size: .6875rem; font-weight: 700; letter-spacing: .02em; white-space: nowrap; background: none; border: none; cursor: pointer; }
+.w-lateral-aba > span:not(.lateral-aba-vivo) { overflow: hidden; text-overflow: ellipsis; }
+.w-lateral-aba .lateral-aba-vivo { position: static; flex-shrink: 0; }
+.w-lateral-paineis { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.w-lateral-painel {
+  position: absolute; inset: 0; overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column; gap: .25rem; padding: .75rem .75rem 1rem;
+  scrollbar-gutter: stable; scrollbar-width: thin;
+}
+.w-lateral-painel.is-saindo { pointer-events: none; }
+.w-lateral-painel > .w-busca { position: sticky; top: -.75rem; z-index: 2; margin: -.75rem -.75rem 0; padding: .75rem .75rem .5rem; width: calc(100% + 1.5rem); background: rgb(var(--c-bg-elevated)); }
+.w-secao { flex-shrink: 0; display: flex; flex-direction: column; }
+.w-secao .w-projetos { max-height: 11.5rem; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+.w-lateral .w-conversas { flex: none; overflow: visible; padding-right: 0; }
+
+/* Rótulo de seção: ícone, nome e contador à direita. */
+.w-rotulo { display: flex; align-items: center; gap: .375rem; }
+.w-rotulo > svg { flex-shrink: 0; color: rgb(var(--c-accent) / .8); }
+.w-rotulo-texto { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.w-rotulo-conta { margin-left: auto; min-width: 1.25rem; padding: 0 .3rem; font-size: .5625rem; line-height: 1rem; text-align: center; color: rgb(var(--c-text-secondary)); background: rgb(var(--c-overlay) / .08); border: 1px solid rgb(var(--c-outline) / .5); }
+.w-rotulo-conta.is-alerta { color: rgb(var(--c-bg-primary)); background: rgb(var(--c-warning)); border-color: transparent; box-shadow: 0 0 8px rgb(var(--c-warning) / .5); }
+.w-rotulo-conta.is-vivo { color: rgb(var(--c-success)); border-color: rgb(var(--c-success) / .5); background: rgb(var(--c-success) / .1); }
+
+/* Linhas de conversa e terminal mais altas: dá para ler título e subtítulo sem forçar. */
+.w-lateral .w-conversas .m-card { padding: .625rem .625rem; transition: background-color .15s, border-color .15s, translate .15s; }
+.w-lateral .w-conversas .m-card:hover { translate: 2px 0; }
+.w-lateral .w-conversas .m-card-titulo { font-size: .8125rem; }
+.w-terminal-item { padding: .55rem .625rem; }
+.w-terminal-item svg { color: rgb(var(--c-text-muted)); }
+.w-projeto { padding: .45rem .5rem; transition: background-color .15s, translate .15s; }
+.w-projeto:hover { translate: 2px 0; }
+
+/* Rodapé fixo: fica colado embaixo com um degradê por cima do que rola. */
+.w-rodape-lateral {
+  margin: 0; padding: .625rem .75rem .75rem;
+  background: linear-gradient(180deg, rgb(var(--c-bg-elevated) / .7), rgb(var(--c-bg-elevated)));
+  box-shadow: 0 -10px 18px -12px rgb(0 0 0 / .6);
+}
+.w-lateral-painel .w-previas-bloco, .w-lateral-painel > .previas { max-height: none; }
+
+/* ── Uso da conta no cabeçalho ───────────────────────────────────────── */
+.w-topo-uso { position: relative; flex-shrink: 0; }
+.w-topo-uso-botao {
+  display: flex; align-items: center; gap: .625rem; height: 2.25rem; padding: 0 .625rem;
+  font: inherit; font-size: .6875rem; color: rgb(var(--c-text-primary));
+  background: rgb(var(--c-overlay) / .05); border: 1px solid rgb(var(--c-outline) / .8); cursor: pointer;
+  transition: border-color .15s, background-color .15s;
+}
+.w-topo-uso-botao:hover, .w-topo-uso-botao.is-aberto { border-color: rgb(var(--c-accent) / .7); background: rgb(var(--c-accent) / .08); }
+.w-topo-uso-nome { font-weight: 700; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-topo-uso-sem { color: rgb(var(--c-text-muted)); }
+.w-topo-uso-janela { display: flex; align-items: center; gap: .3rem; }
+.w-topo-uso-rotulo { font-size: .5625rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: rgb(var(--c-text-muted)); }
+.w-topo-uso-barra { position: relative; width: 3.25rem; height: .3125rem; background: rgb(var(--c-overlay) / .16); }
+.w-topo-uso-pct { min-width: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.w-topo-uso-seta { color: rgb(var(--c-text-muted)); transition: rotate .2s; }
+.w-topo-uso-botao.is-aberto .w-topo-uso-seta { rotate: 180deg; }
+.w-topo-uso-pop {
+  position: absolute; right: 0; top: calc(100% + .5rem); z-index: 50; width: 21rem; max-height: min(70vh, 36rem); overflow-y: auto;
+  padding: .75rem; border: 2px solid rgb(var(--c-outline)); box-shadow: 6px 6px 0 rgb(0 0 0 / .45), 0 0 0 1px rgb(var(--c-accent) / .15);
+  animation: popover-entra 160ms ease-out;
+}
+.w-topo-uso-pop .w-uso-cabecalho { margin-bottom: .5rem; }
+@media (max-width: 1000px) { .w-topo-uso-janela .w-topo-uso-barra { display: none; } }
+@media (max-width: 760px) { .w-topo-uso-janela, .w-topo-uso-nome { display: none; } }
+
+/* ── Polimento geral ─────────────────────────────────────────────────── */
+.w-topo { background-image: linear-gradient(90deg, rgb(var(--c-accent) / .1), transparent 40%); box-shadow: 0 1px 0 rgb(var(--c-accent) / .18); }
+.w-colunas { grid-template-columns: 21rem minmax(0, 1fr) 17rem; }
+@media (max-width: 1180px) { .w-colunas { grid-template-columns: 18rem minmax(0, 1fr); } }
+@media (max-width: 760px) { .w-colunas { grid-template-columns: minmax(0, 1fr); } }
+.w-direita { background: linear-gradient(180deg, rgb(var(--c-bg-elevated) / .45), transparent); }
+.w-direita .w-rotulo:first-child { margin-top: .25rem; }
+.w-direita .w-atencao { gap: .25rem; }
+.w-direita .w-atencao-item { padding: .55rem .625rem; background: rgb(var(--c-overlay) / .035); border: 1px solid rgb(var(--c-outline) / .35); border-left-width: 2px; transition: background-color .15s, border-color .15s, translate .15s; }
+.w-direita .w-atencao-item:hover { translate: -2px 0; border-color: rgb(var(--c-accent) / .5); }
+.w-direita .w-atencao-item-alerta { border-left-color: rgb(var(--c-warning)); }
+.w-centro { background: radial-gradient(ellipse 70% 40% at 50% 0%, rgb(var(--c-accent) / .06), transparent 70%); }
+:root[data-motion="desligadas"] .w-topo-uso-pop { animation: none; }
+@media (prefers-reduced-motion: reduce) { .w-topo-uso-pop { animation: none; } }
+
+/* ── Histórico em aba própria, projeto visível em cada conversa ─────── */
+.m-card-projeto { display: flex; align-items: center; gap: .25rem; max-width: 100%; margin-bottom: .125rem; font-size: .5625rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: rgb(var(--c-accent)); }
+.w-rotulo-projeto { display: inline-flex; align-items: center; gap: .25rem; min-width: 0; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; padding: 0 .35rem; line-height: 1rem; letter-spacing: .04em; color: rgb(var(--c-accent)); background: rgb(var(--c-accent) / .1); border: 1px solid rgb(var(--c-accent) / .45); }
+.w-rotulo-dica { margin-left: auto; font-weight: 500; text-transform: none; letter-spacing: 0; color: rgb(var(--c-text-muted)); }
+.w-ver-historico { display: flex; align-items: center; justify-content: center; gap: .375rem; margin-top: .375rem; padding: .5rem; font: inherit; font-size: .6875rem; font-weight: 700; color: rgb(var(--c-text-secondary)); background: rgb(var(--c-overlay) / .04); border: 1px dashed rgb(var(--c-outline)); cursor: pointer; transition: color .15s, border-color .15s; }
+.w-ver-historico:hover { color: rgb(var(--c-accent)); border-color: rgb(var(--c-accent) / .6); }
+.w-ver-historico > span { transition: translate .15s; }
+.w-ver-historico:hover > span { translate: 3px 0; }
+.w-historico-filtros { position: sticky; top: -.75rem; z-index: 2; display: flex; flex-direction: column; gap: .375rem; margin: -.75rem -.75rem 0; padding: .75rem .75rem .5rem; background: rgb(var(--c-bg-elevated)); }
+.w-historico-projeto { height: 2rem; padding: 0 .5rem; font: inherit; font-size: .75rem; color: rgb(var(--c-text-primary)); background: rgb(var(--c-bg-primary)); border: 1px solid rgb(var(--c-outline)); }
+.w-uso.is-animado .w-uso-preenchido { transition: width .6s cubic-bezier(.2,.8,.2,1); }
+.w-topo-uso-barra .w-uso-preenchido { transition: width .6s cubic-bezier(.2,.8,.2,1); }
+.w-uso.is-animado .w-uso-conta { transition: background-color .15s, translate .15s; }
+.w-uso.is-animado .w-uso-conta:hover { translate: -2px 0; background: rgb(var(--c-accent) / .08); }

@@ -42,6 +42,10 @@ pub struct Plugin {
     versao: Option<String>,
     escopo: Option<String>,
     arquivo: String,
+    /// Logo do pacote em `data:` URI (o manifesto aponta um arquivo que já veio baixado). Vai embutido
+    /// para valer igual no app e na web, sem liberar a pasta do plugin no asset protocol.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logo: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -144,8 +148,10 @@ fn claude(conta: &mut ExtensoesDaConta, estado: &Path, dir: &Path, projeto: Opti
         conta.arquivos.push(texto(&instalados));
         for (id, instalacoes) in lista {
             let primeira = instalacoes.as_array().and_then(|l| l.first()).cloned().unwrap_or(Value::Null);
-            conta.plugins.push(plugin_claude(&id, ligados.get(&id).and_then(Value::as_bool).unwrap_or(false),
-                primeira.get("version").and_then(Value::as_str), primeira.get("scope").and_then(Value::as_str), &instalados));
+            let mut plugin = plugin_claude(&id, ligados.get(&id).and_then(Value::as_bool).unwrap_or(false),
+                primeira.get("version").and_then(Value::as_str), primeira.get("scope").and_then(Value::as_str), &instalados);
+            plugin.logo = primeira.get("installPath").and_then(Value::as_str).and_then(|pasta| logo_do_pacote(Path::new(pasta)));
+            conta.plugins.push(plugin);
             vistos.insert(id);
         }
     }
@@ -162,7 +168,7 @@ fn claude(conta: &mut ExtensoesDaConta, estado: &Path, dir: &Path, projeto: Opti
 
 fn plugin_claude(id: &str, ativo: bool, versao: Option<&str>, escopo: Option<&str>, arquivo: &Path) -> Plugin {
     let (nome, origem) = id.split_once('@').map_or((id, None), |(n, o)| (n, Some(o.to_owned())));
-    Plugin { nome: nome.to_owned(), origem, ativo, versao: versao.map(str::to_owned), escopo: escopo.map(str::to_owned), arquivo: texto(arquivo) }
+    Plugin { nome: nome.to_owned(), origem, ativo, versao: versao.map(str::to_owned), escopo: escopo.map(str::to_owned), arquivo: texto(arquivo), logo: None }
 }
 
 /* ── Codex ────────────────────────────────────────────────────────────────────────────────── */
@@ -197,6 +203,13 @@ fn codex(conta: &mut ExtensoesDaConta, arquivo: &Path) {
     if let Some(plugins) = config.get("plugins").and_then(toml::Value::as_table) {
         for (id, cfg) in plugins {
             let (nome, origem) = id.split_once('@').map_or((id.as_str(), None), |(n, o)| (n, Some(o.to_owned())));
+            // `plugins/cache/<marketplace>/<nome>/<versão>/`: a versão mais nova que estiver lá.
+            let logo = origem.as_deref().and_then(|o| {
+                let base = arquivo.parent()?.join("plugins").join("cache").join(o).join(nome);
+                let mut versoes: Vec<PathBuf> = std::fs::read_dir(&base).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
+                versoes.sort();
+                versoes.iter().rev().find_map(|v| logo_do_pacote(v))
+            });
             conta.plugins.push(Plugin {
                 nome: nome.to_owned(),
                 origem,
@@ -204,6 +217,7 @@ fn codex(conta: &mut ExtensoesDaConta, arquivo: &Path) {
                 versao: None,
                 escopo: None,
                 arquivo: texto(arquivo),
+                logo,
             });
         }
         conta.plugins.sort_by(|a, b| b.ativo.cmp(&a.ativo).then(a.nome.cmp(&b.nome)));
@@ -235,12 +249,60 @@ fn cursor(conta: &mut ExtensoesDaConta, dir: &Path, projeto: Option<&Path>) {
                 versao: None,
                 escopo: None,
                 arquivo: texto(&entrada.path()),
+                logo: logo_do_pacote(&entrada.path()),
             });
         }
     }
 }
 
 /* ── Comum ────────────────────────────────────────────────────────────────────────────────── */
+
+const LOGO_MAX: u64 = 256 * 1024;
+
+/// Logo de um pacote de plugin: o `logo`/`icon` de qualquer manifesto dele (o do Claude não tem o
+/// campo, mas o mesmo pacote costuma trazer o de Cursor/Codex) ou, sem isso, um `logo*`/`icon*` na
+/// raiz ou em `assets/`. Só imagem, só dentro da pasta do pacote e até `LOGO_MAX`: o manifesto é de
+/// terceiro e não pode servir para ler arquivo de fora.
+pub(crate) fn logo_do_pacote(pasta: &Path) -> Option<String> {
+    let raiz = pasta.canonicalize().ok()?;
+    let manifestos: Vec<Value> = [".claude-plugin", ".cursor-plugin", ".codex-plugin"].iter()
+        .filter_map(|m| ler_json(&raiz.join(m).join("plugin.json"))).collect();
+    let do_manifesto = manifestos.iter().find_map(campo_de_logo).map(|rel| raiz.join(rel.trim_start_matches("./")));
+    // `assets/caveman-small.svg`: imagem com o nome do plugin também é o logo dele.
+    let nome = manifestos.iter().find_map(|m| m.get("name").and_then(Value::as_str)).unwrap_or("").to_lowercase();
+    let solto = || {
+        let mut achados: Vec<PathBuf> = [raiz.clone(), raiz.join("assets")].iter()
+            .filter_map(|d| std::fs::read_dir(d).ok()).flatten().flatten().map(|e| e.path())
+            .filter(|p| {
+                let arquivo = p.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+                (arquivo.starts_with("logo") || arquivo.starts_with("icon") || arquivo.contains(" icon") || (nome.len() > 2 && arquivo.starts_with(&nome)))
+                    && tipo_de_imagem(p).is_some()
+            })
+            .collect();
+        // Versão colorida antes da escura/monocromática.
+        achados.sort_by_key(|p| { let n = p.to_string_lossy().to_lowercase(); (["dark", "mono", "black"].iter().any(|x| n.contains(x)), n) });
+        achados.into_iter().next()
+    };
+    let arquivo = do_manifesto.filter(|p| p.is_file()).or_else(solto)?.canonicalize().ok()?;
+    if !arquivo.starts_with(&raiz) || std::fs::metadata(&arquivo).ok()?.len() > LOGO_MAX { return None; }
+    let tipo = tipo_de_imagem(&arquivo)?;
+    use base64::Engine as _;
+    Some(format!("data:{tipo};base64,{}", base64::engine::general_purpose::STANDARD.encode(std::fs::read(&arquivo).ok()?)))
+}
+
+/// `logo`, `icon` ou `composerIcon`, no topo ou dentro de um objeto (o Codex aninha em `interface`).
+fn campo_de_logo(v: &Value) -> Option<String> {
+    let obj = v.as_object()?;
+    ["logo", "icon", "composerIcon"].iter().find_map(|k| obj.get(*k).and_then(Value::as_str).map(str::to_owned))
+        .or_else(|| obj.values().find_map(campo_de_logo))
+}
+
+fn tipo_de_imagem(p: &Path) -> Option<&'static str> {
+    match p.extension()?.to_string_lossy().to_lowercase().as_str() {
+        "svg" => Some("image/svg+xml"), "png" => Some("image/png"), "jpg" | "jpeg" => Some("image/jpeg"), "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
 
 /// `mcpServers` no formato JSON que Claude e Cursor compartilham.
 fn mcps_do_json(saida: &mut Vec<Mcp>, servidores: Option<&Value>, escopo: &'static str, pasta: Option<String>, arquivo: &Path) {
@@ -320,6 +382,24 @@ fn comando_seguro(comando: &str, args: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn logo_vem_do_manifesto_e_nao_sai_da_pasta() {
+        let tmp = std::env::temp_dir().join(format!("omni-logo-{}", std::process::id()));
+        let pacote = tmp.join("pacote");
+        std::fs::create_dir_all(pacote.join(".codex-plugin")).unwrap();
+        std::fs::create_dir_all(pacote.join("assets")).unwrap();
+        std::fs::write(pacote.join("assets").join("logo.svg"), "<svg/>").unwrap();
+        std::fs::write(pacote.join(".codex-plugin").join("plugin.json"), r#"{"interface":{"logo":"./assets/logo.svg"}}"#).unwrap();
+        assert_eq!(logo_do_pacote(&pacote).as_deref(), Some("data:image/svg+xml;base64,PHN2Zy8+"));
+
+        // Manifesto apontando para fora do pacote: recusa, mesmo sendo imagem.
+        std::fs::write(tmp.join("fora.svg"), "<svg/>").unwrap();
+        std::fs::remove_file(pacote.join("assets").join("logo.svg")).unwrap();
+        std::fs::write(pacote.join(".codex-plugin").join("plugin.json"), r#"{"logo":"../fora.svg"}"#).unwrap();
+        assert_eq!(logo_do_pacote(&pacote), None);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 
     #[test]
     fn url_perde_query_e_credencial() {

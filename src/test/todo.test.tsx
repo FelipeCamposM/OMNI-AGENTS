@@ -97,6 +97,18 @@ describe("TodoList", () => {
     expect(horas).toHaveAttribute("aria-valuenow", String(inicial + 2));
   });
 
+  it("giro rápido da roda acelera", () => {
+    vi.useFakeTimers({ now: AGORA, toFake: ["Date"] });
+    render(<Lista />);
+    fireEvent.click(screen.getByRole("button", { name: "Definir prazo" }));
+    const minutos = within(screen.getByRole("dialog", { name: "Escolher prazo" })).getByRole("spinbutton", { name: "Minuto" });
+    const trilho = minutos.firstElementChild!;
+    const inicial = Number(minutos.getAttribute("aria-valuenow"));
+    for (let i = 0; i < 6; i++) fireEvent.wheel(trilho, { deltaY: inicial > 30 ? -100 : 100 });
+    // Seis cliques em sequência: 1+1+2+3+4+5 = 16 itens, não 6.
+    expect(Math.abs(Number(minutos.getAttribute("aria-valuenow")) - inicial)).toBe(16);
+  });
+
   it("não deixa escolher um horário que já passou", () => {
     vi.useFakeTimers({ now: AGORA, toFake: ["Date"] });
     render(<Lista />);

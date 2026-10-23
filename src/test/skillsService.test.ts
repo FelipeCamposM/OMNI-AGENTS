@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { listProjectSkills } from "../features/skills/skillsService";
+import { criarSkillNoProjeto, listProjectSkills, slugDaSkill } from "../features/skills/skillsService";
 
 const mockExists = vi.mocked((await import("@tauri-apps/plugin-fs")).exists);
 const mockReadDir = vi.mocked((await import("@tauri-apps/plugin-fs")).readDir);
@@ -60,5 +60,22 @@ describe("listProjectSkills", () => {
       enabled: true,
       symlink: false,
     }]);
+  });
+});
+
+describe("criarSkillNoProjeto", () => {
+  it("vira pasta sem acento em .claude/skills e escreve o SKILL.md com frontmatter", async () => {
+    expect(slugDaSkill("  Revisão de PR!  ")).toBe("revisao-de-pr");
+    const fs = await import("@tauri-apps/plugin-fs");
+    mockExists.mockResolvedValueOnce(false);
+    const arquivo = await criarSkillNoProjeto("C:\dev\projeto", "Revisão de PR");
+    expect(arquivo).toMatch(/\.claude[\/]skills[\/]revisao-de-pr[\/]SKILL\.md$/);
+    expect(vi.mocked(fs.writeTextFile).mock.calls[0][1]).toMatch(/^---\nname: revisao-de-pr\ndescription: /);
+  });
+
+  it("recusa nome vazio e skill que já existe", async () => {
+    await expect(criarSkillNoProjeto("C:\dev\projeto", "!!!")).rejects.toThrow("letras ou números");
+    mockExists.mockResolvedValueOnce(true);
+    await expect(criarSkillNoProjeto("C:\dev\projeto", "deploy")).rejects.toThrow("Já existe");
   });
 });

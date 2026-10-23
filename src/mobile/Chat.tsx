@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import type { Element, ElementContent, Root } from "hast";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
 import {
@@ -145,6 +146,8 @@ interface MessageBubbleProps {
   /** Mais uma fala do agente no mesmo turno: sem cabeçalho, colada na anterior. */
   continua?: boolean;
   imagens?: ImagensDaMensagem;
+  /** Chegou agora (não estava na tela ao abrir): entra animado e o texto do agente se revela. */
+  entra?: boolean;
 }
 
 /**
@@ -154,7 +157,7 @@ interface MessageBubbleProps {
  * com o mesmo `rehype-sanitize`. Mensagem do usuário fica em texto puro — reinterpretar o que a
  * pessoa digitou mudaria o que ela vê do próprio prompt — e a lista de anexos vira cartões.
  */
-export const MessageBubble = memo(function MessageBubble({ lado, provider, texto, horario, pendente, anexosLocais, continua, imagens }: MessageBubbleProps) {
+export const MessageBubble = memo(function MessageBubble({ lado, provider, texto, horario, pendente, anexosLocais, continua, imagens, entra }: MessageBubbleProps) {
   const doUsuario = lado === "user";
   const separado = doUsuario ? separarAnexos(texto) : { texto, anexos: [] as string[] };
   const corpo = doUsuario ? semMarcasDeImagem(separado.texto) : separado.texto;
@@ -162,9 +165,12 @@ export const MessageBubble = memo(function MessageBubble({ lado, provider, texto
   const cartoes = anexosLocais ?? anexos.map((caminho) => ({ nome: nomeDoCaminho(caminho) }));
   const autor = doUsuario ? "Você" : NOME_DO_AGENTE[provider ?? ""] ?? provider ?? "Agente";
   const hora = horarioCurto(horario);
+  // Só o texto com que o balão nasceu é "digitado": se o mesmo balão crescer depois, não recomeça.
+  const textoInicial = useRef(corpo);
+  const digita = entra && !doUsuario && corpo === textoInicial.current;
   return (
     // `selectable`: no desktop o body barra a seleção (app nativo); o texto da conversa tem de copiar.
-    <article className={`bubble selectable ${doUsuario ? "bubble-user" : "bubble-agent"}${pendente ? " bubble-pending" : ""}${continua ? " bubble-continua" : ""}`}>
+    <article className={`bubble selectable ${doUsuario ? "bubble-user" : "bubble-agent"}${pendente ? " bubble-pending" : ""}${continua ? " bubble-continua" : ""}${entra || pendente ? " entra" : ""}`}>
       {/* Avatar só na primeira fala do turno; as seguintes alinham com ele. */}
       {!doUsuario && !continua && (
         <span className="bubble-avatar" aria-hidden><AgentIcon provider={provider} size={16} /></span>
@@ -176,7 +182,7 @@ export const MessageBubble = memo(function MessageBubble({ lado, provider, texto
       {corpo && (doUsuario
         ? <div className="mobile-message">{corpo}</div>
         : <div className="bubble-markdown prose prose-sm max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]} components={COMPONENTES_DO_MARKDOWN}>{corpo}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={digita ? [rehypeSanitize, rehypeDigitar] : [rehypeSanitize]} components={COMPONENTES_DO_MARKDOWN}>{corpo}</ReactMarkdown>
           </div>)}
       {imagens && imagens.total > 0 && (
         <ul className="bubble-imagens" aria-label="Imagens da mensagem">
@@ -191,6 +197,54 @@ export const MessageBubble = memo(function MessageBubble({ lado, provider, texto
     </article>
   );
 });
+
+/**
+ * Resposta "digitada": cada palavra vira um `<span class="palavra">` com atraso crescente e acende
+ * desfocada → nítida, e um cursor pisca no fim até o texto terminar. Roda depois do sanitize (o
+ * sanitize tiraria o `style`). Código (bloco ou solto) acende inteiro: quebrado em palavras, o
+ * `código` solto deixaria de virar link de arquivo.
+ */
+const BLOCOS_COM_TEXTO = new Set(["p", "ul", "ol", "li", "blockquote", "h1", "h2", "h3", "h4", "h5", "h6", "table", "tbody", "tr", "td"]);
+
+function rehypeDigitar() {
+  return (arvore: Root) => {
+    let total = 0;
+    const contar = (no: Root | ElementContent): void => {
+      if (no.type === "text") total += no.value.match(/\S+/g)?.length ?? 0;
+      else if (no.type === "element" && (no.tagName === "pre" || no.tagName === "code")) total += 1;
+      else if ("children" in no) no.children.forEach((filho) => contar(filho as ElementContent));
+    };
+    contar(arvore);
+    // ~25ms por palavra, mas a resposta inteira acaba em ~1,6s: longa digita mais rápido.
+    const passo = Math.min(25, 1600 / Math.max(total, 1));
+    let i = 0;
+    const atraso = (classe: string) => ({ className: [classe], style: `animation-delay:${Math.round(i++ * passo)}ms` });
+    const envolver = (filho: ElementContent, tag: string): Element =>
+      ({ type: "element", tagName: tag, properties: atraso(tag === "div" ? "palavra palavra-bloco" : "palavra"), children: [filho] });
+    const andar = (no: Root | Element) => {
+      no.children = (no.children as ElementContent[]).flatMap((filho): ElementContent[] => {
+        if (filho.type === "text") {
+          return filho.value.split(/(\s+)/).filter(Boolean).map((parte) => /^\s+$/.test(parte)
+            ? { type: "text", value: parte }
+            : envolver({ type: "text", value: parte }, "span"));
+        }
+        if (filho.type !== "element") return [filho];
+        if (filho.tagName === "pre") return [envolver(filho, "div")];
+        if (filho.tagName === "code") return [envolver(filho, "span")];
+        andar(filho);
+        return [filho];
+      });
+    };
+    andar(arvore);
+    // O cursor vai no fim do último texto: desce pela última lista/tabela até o parágrafo ou item.
+    const ultimoBloco = (no: Root | Element) =>
+      [...no.children].reverse().find((f): f is Element => f.type === "element" && BLOCOS_COM_TEXTO.has(f.tagName));
+    let ultimo = ultimoBloco(arvore);
+    for (let dentro = ultimo && ultimoBloco(ultimo); dentro; dentro = ultimoBloco(dentro)) ultimo = dentro;
+    ultimo?.children.push({ type: "element", tagName: "span", properties: { className: ["digitando-cursor"], ariaHidden: "true",
+      style: `animation-delay:0ms,${Math.round(i * passo + 200)}ms` }, children: [] });
+  };
+}
 
 /** Copiar para a área de transferência. Some onde ela não existe (HTTP fora de localhost). */
 function BotaoCopiar({ texto, rotulo, className }: { texto: string | (() => string); rotulo: string; className: string }) {
@@ -213,11 +267,21 @@ function BotaoCopiar({ texto, rotulo, className }: { texto: string | (() => stri
 /** Arquivo citado pelo agente: no app do PC abre num painel; na web e no celular continua texto. */
 function Arquivo({ caminho, children }: { caminho: string; children: ReactNode }) {
   const abrir = abridorDeArquivo();
+  const [falta, setFalta] = useState<string | null>(null);
+  useEffect(() => {
+    if (!falta) return;
+    const t = window.setTimeout(() => setFalta(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [falta]);
   if (!abrir) return <>{children}</>;
   return (
-    <button type="button" className="bubble-arquivo" title={`Abrir ${caminho}`} onClick={() => abrir(caminho)}>
-      {children}
-    </button>
+    <>
+      <button type="button" className="bubble-arquivo" title={`Abrir ${caminho}`}
+        onClick={() => void Promise.resolve(abrir(caminho)).catch((motivo) => setFalta(motivo instanceof Error ? motivo.message : String(motivo)))}>
+        {children}
+      </button>
+      {falta && <span role="status" className="bubble-arquivo-falta">{falta}</span>}
+    </>
   );
 }
 
@@ -332,15 +396,15 @@ function LinhaDeAcao({ acao }: { acao: Mensagem }) {
  * ficam resumidas ("7 ações · Rodou npm test") e abrem num toque. O bloco do turno em andamento
  * nasce aberto — é o que mostra, ao vivo, o que o agente está fazendo agora.
  */
-export const BlocoDeAcoes = memo(function BlocoDeAcoes({ acoes, aoVivo }: {
-  acoes: Mensagem[]; provider?: string | null; aoVivo?: boolean;
+export const BlocoDeAcoes = memo(function BlocoDeAcoes({ acoes, aoVivo, entra }: {
+  acoes: Mensagem[]; provider?: string | null; aoVivo?: boolean; entra?: boolean;
 }) {
   const [aberto, setAberto] = useState(Boolean(aoVivo));
   useEffect(() => { if (aoVivo) setAberto(true); }, [aoVivo]);
   const ultima = acoes[acoes.length - 1];
   const visiveis = aberto ? acoes : [];
   return (
-    <section className={`acoes${aoVivo ? " acoes-ao-vivo" : ""}`} aria-label="Ações do agente">
+    <section className={`acoes${aoVivo ? " acoes-ao-vivo" : ""}${entra ? " entra" : ""}`} aria-label="Ações do agente">
       <button type="button" className="acoes-cabecalho" aria-expanded={aberto} onClick={() => setAberto((v) => !v)}>
         <span className="acoes-seta" aria-hidden>{aberto ? "▾" : "▸"}</span>
         {ultima && <IconeDaAcao tool={ultima.tool} />}
@@ -358,18 +422,19 @@ export const BlocoDeAcoes = memo(function BlocoDeAcoes({ acoes, aoVivo }: {
 });
 
 /** `/comando` digitado na CLI: no terminal aparece como `> /model`; aqui, como um selo do seu lado. */
-export function LinhaDeComando({ texto }: { texto: string }) {
-  return <p className="comando"><span className="comando-sinal" aria-hidden>›</span><code>{texto}</code></p>;
+export function LinhaDeComando({ texto, entra }: { texto: string; entra?: boolean }) {
+  return <p className={`comando${entra ? " entra" : ""}`}><span className="comando-sinal" aria-hidden>›</span><code>{texto}</code></p>;
 }
 
 /** Aviso da própria CLI (interrompido, compactado): linha discreta no meio da conversa. */
-export function LinhaDeAviso({ texto }: { texto: string }) {
+export function LinhaDeAviso({ texto, entra }: { texto: string; entra?: boolean }) {
+  const classe = entra ? " entra" : "";
   // Troca de conta/IA (o engine escreve "Conta trocada: A → B"): destaque próprio, é o tipo de
   // aviso que explica por que a conversa mudou de dono no meio.
   if (/^(Conta|IA) trocada: /.test(texto)) {
-    return <p className="aviso-cli aviso-troca" role="note"><ReloadIcon aria-hidden className="h-3 w-3" />{texto}</p>;
+    return <p className={`aviso-cli aviso-troca${classe}`} role="note"><ReloadIcon aria-hidden className="h-3 w-3" />{texto}</p>;
   }
-  return <p className="aviso-cli" role="note">{texto}</p>;
+  return <p className={`aviso-cli${classe}`} role="note">{texto}</p>;
 }
 
 interface AgentWorkingProps {

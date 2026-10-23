@@ -122,15 +122,14 @@ it("no computador Enter envia e Shift+Enter quebra linha", async () => {
   expect(estado.enviados.find((item) => item.url.endsWith("/prompt"))?.body).toEqual({ texto: "linha 1\nlinha 2" });
 });
 
-it("com o agente trabalhando aparece o Parar, que manda o Esc para o terminal do PC", async () => {
+it("com o agente trabalhando aparece o Parar, que para o agente no PC", async () => {
   const estado = { lista: [conversa({ state: "working", capabilities: { prompt: false, approve: false, revision: '"r"', approval_text: null, reason: null } })], enviados: [] as { url: string; body: unknown }[], painelLido: 0 };
   vi.stubGlobal("fetch", servidor(estado));
   render(<WebApp />);
   await abrir();
   const parar = await screen.findByRole("button", { name: "Parar" }, { timeout: 4000 });
   await act(async () => { await userEvent.click(parar); });
-  await waitFor(() => expect(estado.enviados.some((item) => item.url.endsWith("/teclas"))).toBe(true));
-  expect(estado.enviados.find((item) => item.url.endsWith("/teclas"))?.body).toEqual({ dados: "\u001b" });
+  await waitFor(() => expect(estado.enviados.some((item) => item.url.endsWith("/parar"))).toBe(true));
 });
 
 it("terminal: digitação passa, respostas automáticas do xterm não", () => {

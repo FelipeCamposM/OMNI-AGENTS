@@ -10,19 +10,18 @@ import {
   FolderPlusIcon as FolderPlus,
   GitBranchIcon,
   KanbanIcon,
-  ListIcon,
   ReloadIcon,
   SlidersIcon as Sliders,
   TerminalIcon,
 } from "./ui/PixelIcon";
 import { destaqueDaLinha, EtiquetaDoStatus, haQuantoTempo, IconeDoStatus, ResumoDeAgentes, rotuloDoStatus, statusDaConversa } from "./ConversaStatus";
 import { conversationKey } from "../features/terminal/useAttention";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { ProjectPicker } from "../features/projects/ProjectPicker";
 import { EditableLabel } from "./ui/EditableLabel";
 import { listProfiles, renameSession } from "../features/terminal/terminalService";
-import { useStagger } from "../lib/motion";
+import { deslizarAba, moverIndicador, useStagger } from "../lib/motion";
 import { AgentIcon } from "./ui/AgentIcon";
 import type { SettingsSection } from "../hooks/useNotifications";
 import type { KanbanState } from "../types/kanban";
@@ -41,20 +40,29 @@ import { SkillsList } from "./SkillsList";
    bundle.icon). Importado em vez de copiado para src/assets: uma cópia
    dessincronizaria do ícone real na próxima troca de marca. */
 
-/** Seções do spec 7.3. Vazias por enquanto — Workspace/Project/Pane/Session
- * (Fase 1) é quem vai preencher cada uma com dados de verdade. */
-const SECTIONS = ["CHATS", "TERMINALS", "COMMANDS", "DOCKER", "FILES", "SKILLS", "GIT", "KANBAN"] as const;
-
-const SECTION_ICON: Record<(typeof SECTIONS)[number], React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>> = {
-  CHATS: ChatIcon,
-  TERMINALS: TerminalIcon,
-  COMMANDS: ListIcon,
-  DOCKER: DockerIcon,
-  FILES: FolderIcon,
-  SKILLS: BookIcon,
-  GIT: GitBranchIcon,
-  KANBAN: KanbanIcon,
+/** Abas da lateral, uma por ícone na fileira do topo. "geral" junta atenção, workspaces, projetos,
+ *  conversas e terminais; as outras são uma ferramenta do projeto cada. */
+type Aba = "geral" | "files" | "git" | "docker" | "skills" | "kanban";
+const ABAS: Record<Aba, { rotulo: string; icone: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>; precisaProjeto: boolean }> = {
+  geral: { rotulo: "Conversas", icone: ChatIcon, precisaProjeto: false },
+  files: { rotulo: "Arquivos", icone: FolderIcon, precisaProjeto: true },
+  git: { rotulo: "Git", icone: GitBranchIcon, precisaProjeto: true },
+  docker: { rotulo: "Docker", icone: DockerIcon, precisaProjeto: false },
+  skills: { rotulo: "Skills", icone: BookIcon, precisaProjeto: true },
+  kanban: { rotulo: "Kanban", icone: KanbanIcon, precisaProjeto: true },
 };
+const CHAVE_ABAS = "omni-lateral-abas";
+/** Ordem salva das abas (arrastando os ícones); aba nova de uma versão futura entra no fim. */
+function lerOrdemDasAbas(): Aba[] {
+  const todas = Object.keys(ABAS) as Aba[];
+  try {
+    const salva = JSON.parse(localStorage.getItem(CHAVE_ABAS) ?? "[]") as string[];
+    const validas = salva.filter((aba): aba is Aba => todas.includes(aba as Aba));
+    return [...new Set([...validas, ...todas])];
+  } catch {
+    return todas;
+  }
+}
 
 /** Largura da lateral em px: arrastável pela borda direita, com teto para não engolir os painéis. */
 const LARGURA = { min: 224, padrao: 256, max: 440 } as const;
@@ -162,7 +170,7 @@ export function Sidebar({
   kanban,
   onOpenKanban,
 }: SidebarProps) {
-  const navRef = useStagger<HTMLElement>("[data-nav-item]");
+  const navRef = useStagger<HTMLDivElement>("[data-nav-item]");
   const naoVistas = new Set(attention.map((item) => item.conversationKey));
 
   const [pickerAberto, setPickerAberto] = useState(false);
@@ -182,7 +190,44 @@ export function Sidebar({
     return () => window.clearInterval(relogio);
   }, []);
 
+  const [ordemAbas, setOrdemAbas] = useState(lerOrdemDasAbas);
+  const [aba, setAba] = useState<Aba>("geral");
+  // A aba de onde se saiu fica montada até o fim do deslize; depois some.
+  const [saindo, setSaindo] = useState<Aba | null>(null);
+  const direcao = useRef<1 | -1>(1);
+  const paineis = useRef<Partial<Record<Aba, HTMLElement | null>>>({});
+  const botoesAba = useRef<Partial<Record<Aba, HTMLButtonElement | null>>>({});
+  const indicador = useRef<HTMLSpanElement>(null);
+  function trocarAba(nova: Aba) {
+    if (nova === aba) return;
+    direcao.current = ordemAbas.indexOf(nova) > ordemAbas.indexOf(aba) ? 1 : -1;
+    setSaindo(aba);
+    setAba(nova);
+  }
+  useLayoutEffect(() => {
+    if (!saindo) return;
+    const quem = saindo;
+    deslizarAba(paineis.current[aba] ?? null, paineis.current[quem] ?? null, direcao.current,
+      () => setSaindo((atual) => (atual === quem ? null : atual)));
+  }, [aba]); // eslint-disable-line react-hooks/exhaustive-deps
+  function moverAba(id: string, antesDe: string | null) {
+    setOrdemAbas((atual) => {
+      const sem = atual.filter((item) => item !== id);
+      const pos = antesDe ? sem.indexOf(antesDe as Aba) : sem.length;
+      const nova = [...sem.slice(0, pos), id as Aba, ...sem.slice(pos)];
+      try { localStorage.setItem(CHAVE_ABAS, JSON.stringify(nova)); } catch { /* sem armazenamento: vale só agora */ }
+      return nova;
+    });
+  }
+
   const [largura, setLargura] = useState(lerLargura);
+  // O marcador segue a aba ativa; reordenar ou alargar a lateral também o reposiciona.
+  useLayoutEffect(() => {
+    moverIndicador(indicador.current, botoesAba.current[aba] ?? null);
+  }, [aba, ordemAbas, largura]);
+
+  // Avisos na aba das conversas: quantos pedem atenção e se algum agente está trabalhando agora.
+  const trabalhando = [...agentSessions, ...terminalSessions].some((session) => session.provider && session.state === "working");
   useEffect(() => {
     try { localStorage.setItem(CHAVE_LARGURA, String(largura)); } catch { /* sem armazenamento: vale só agora */ }
   }, [largura]);
@@ -225,173 +270,208 @@ export function Sidebar({
         className="lateral-alca"
       />
 
-      {/* Nav */}
-      <nav ref={navRef} className="px-2 py-3 flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-3">
-        <AttentionPanel items={attention} agora={agora} onFocusSession={onFocusSession} onDismiss={onDismissAttention} />
-
-        <WorkspaceList
-          workspaces={workspaces}
-          activeWorkspaceId={activeWorkspaceId}
-          attention={attention}
-          agentSessions={agentSessions}
-          naoVistas={naoVistas}
-          onSelect={onSelectWorkspace}
-          onCreate={onCreateWorkspace}
-          onHide={onHideWorkspace}
-          onShow={onShowWorkspace}
-          onDelete={onDeleteWorkspace}
-          onMove={onMoveWorkspace}
-          onRemoveProject={onRemoveProjectFromWorkspace}
-          onRename={onRenameWorkspace}
-        />
-
-        <div className="space-y-1">
-          <div className="flex items-center justify-between px-3 pt-1">
-            <p className="text-text-muted text-[10px] font-medium uppercase tracking-wider">Projects</p>
-            <button
-              data-nav-item
-              onClick={() => setPickerAberto(true)}
-              aria-label="Adicionar projeto"
-              className="text-text-muted hover:text-text-primary rounded-none p-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-            >
-              <FolderPlus className="w-3.5 h-3.5" aria-hidden="true" />
+      {/* Fileira fixa de abas: clique troca, arrastar reordena (fica salvo). */}
+      <div role="group" aria-label="Seções da lateral" className="lateral-abas">
+        <span ref={indicador} aria-hidden className="lateral-abas-marcador" />
+        {ordemAbas.map((id) => {
+          const { rotulo, icone: Icone } = ABAS[id];
+          const avisos = id === "geral" ? attention.length : 0;
+          const vivo = id === "geral" && trabalhando;
+          const extra = [avisos > 0 && `${avisos} pedindo atenção`, vivo && "agente trabalhando"].filter(Boolean).join(" · ");
+          return (
+            <button key={id} ref={(el) => { botoesAba.current[id] = el; }}
+              type="button" aria-pressed={aba === id} aria-controls={`lateral-aba-${id}`}
+              aria-label={extra ? `${rotulo} · ${extra}` : rotulo}
+              title={`${rotulo}${extra ? ` · ${extra}` : ""}\nArraste para mudar a ordem`}
+              data-ordem="abas" data-ordem-id={id}
+              onPointerDown={(evento) => arrastarParaOrdenar(evento, "abas", id, moverAba, "x")}
+              onClick={() => trocarAba(id)}
+              className={`lateral-aba${aba === id ? " is-ativa" : ""}`}>
+              <Icone className="h-4 w-4" aria-hidden />
+              {avisos > 0 && <span aria-hidden className="lateral-aba-contagem">{avisos > 9 ? "9+" : avisos}</span>}
+              {vivo && <span aria-hidden className="lateral-aba-vivo" />}
             </button>
-          </div>
-          {projects.length === 0 ? (
-            <p data-nav-item className="text-text-muted text-xs px-3 py-1.5">
-              Nenhum projeto ainda.
-            </p>
-          ) : (
-            projects.map((project) => (
-              <div key={project.id}
-                data-ordem="projetos" data-ordem-id={project.id}
-                onPointerDown={(evento) => arrastarParaOrdenar(evento, "projetos", project.id, onMoveProject)}
-                className={`lateral-item group mx-1 flex items-stretch border-l-2 ring-1 ring-inset transition-colors ${
-                  project.id === activeProjectId
-                    ? "lateral-item-ativo border-accent ring-accent/50"
-                    : "border-transparent ring-border-subtle/40 hover:ring-border-subtle"
-                }`}>
-                <button
-                  type="button"
-                  data-nav-item
-                  aria-current={project.id === activeProjectId ? "page" : undefined}
-                  onClick={() => onSelectProject(project.id)}
-                  className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                  title={`${project.path}
-Arraste para mudar a ordem`}
-                >
-                  <span className="lateral-avatar grid h-8 w-8 shrink-0 place-items-center border border-border-subtle">
-                    <FolderIcon className="h-3.5 w-3.5 text-accent" aria-hidden />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className={`block truncate text-xs leading-4 ${
-                      project.id === activeProjectId ? "font-semibold text-text-primary" : "text-text-secondary"
-                    }`}>{project.name}</span>
-                    <span aria-hidden className="mt-0.5 flex">
-                      <ResumoDeAgentes
-                        sessions={agentSessions.filter((session) => session.project_id === project.id)}
-                        naoVistas={naoVistas}
-                      />
-                    </span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Fechar projeto ${project.name}`}
-                  title="Fechar projeto"
-                  onClick={() => onCloseProject(project.id)}
-                  className="grid w-8 shrink-0 place-items-center text-text-muted opacity-60 hover:text-danger hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                >
-                  <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-              </div>
-            ))
-          )}
-        </div>
+          );
+        })}
+      </div>
 
-        {SECTIONS.map((section) => (
-          <SidebarSection key={section} label={section} icon={SECTION_ICON[section]} disabled={!activeProjectId}
-            contagem={section === "CHATS" || section === "TERMINALS"
-              ? terminalSessions.filter((session) => Boolean(session.provider) === (section === "CHATS")).length
-              : undefined}>
-            {/* CHATS = conversas com um agente de IA; TERMINALS = shells (npm run dev, git…). */}
-            {(section === "CHATS" || section === "TERMINALS")
-              && terminalSessions.some((session) => Boolean(session.provider) === (section === "CHATS"))
-              ? terminalSessions.filter((session) => Boolean(session.provider) === (section === "CHATS"))
-                  // Conversas: a mexida por último primeiro. Terminais ficam na ordem em que foram abertos.
-                  .sort((a, b) => section === "CHATS" ? (b.last_activity_at_ms ?? 0) - (a.last_activity_at_ms ?? 0) : 0)
-                  .map((session) => (
-                  <div key={session.id}
-                    className={`lateral-item group relative mx-1 flex items-stretch border-l-2 ring-1 ring-inset transition-colors ${
-                      session.id === activeSessionId
-                        ? "lateral-item-ativo ring-accent/50"
-                        : "ring-border-subtle/40 hover:ring-border-subtle"
-                    } ${
-                      session.provider ? destaqueDaLinha(statusDaConversa(session, naoVistas.has(conversationKey(session)))) : "border-transparent"
-                    }`}>
-                    <SessionLabel
-                      session={session}
-                      ativa={session.id === activeSessionId}
-                      naoVista={naoVistas.has(conversationKey(session))}
-                      conta={session.profile_id ? contas[session.profile_id] : undefined}
-                      agora={agora}
-                      onAttach={onAttachTerminal}
-                    />
-                    {/* Ações só no hover/foco, por cima do fim da linha: fora dele o espaço é do nome. */}
-                    <div className="absolute inset-y-0 right-0 hidden items-stretch border-l border-border-subtle bg-bg-elevated pl-0.5 shadow-[-12px_0_12px_-4px_rgb(var(--c-bg-elevated))] group-focus-within:flex group-hover:flex">
+      <div ref={navRef} className="relative min-h-0 flex-1 overflow-hidden">
+        {ordemAbas.filter((id) => id === aba || id === saindo).map((id) => (
+          <nav key={id} id={`lateral-aba-${id}`} aria-label={ABAS[id].rotulo}
+            aria-hidden={id !== aba || undefined}
+            ref={(el) => { paineis.current[id] = el; }}
+            className={`absolute inset-0 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-3${id !== aba ? " pointer-events-none" : ""}`}>
+            {id === "geral" ? (
+              <>
+                <AttentionPanel items={attention} agora={agora} onFocusSession={onFocusSession} onDismiss={onDismissAttention} />
+
+                <WorkspaceList
+                  workspaces={workspaces}
+                  activeWorkspaceId={activeWorkspaceId}
+                  attention={attention}
+                  agentSessions={agentSessions}
+                  naoVistas={naoVistas}
+                  onSelect={onSelectWorkspace}
+                  onCreate={onCreateWorkspace}
+                  onHide={onHideWorkspace}
+                  onShow={onShowWorkspace}
+                  onDelete={onDeleteWorkspace}
+                  onMove={onMoveWorkspace}
+                  onRemoveProject={onRemoveProjectFromWorkspace}
+                  onRename={onRenameWorkspace}
+                />
+
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between px-3 pt-1">
+                    <p className="text-text-muted text-[10px] font-medium uppercase tracking-wider">Projects</p>
                     <button
-                      type="button"
-                      aria-label={session.provider ? `Bifurcar conversa ${session.name}` : `Duplicar terminal ${session.name}`}
-                      title={session.provider
-                        ? "Bifurcar: abre uma conversa nova com todo o histórico desta, que segue independente"
-                        : "Duplicar: abre outro terminal na mesma pasta"}
-                      onClick={() => onDuplicateTerminal(session.id)}
-                      className="grid w-6 shrink-0 place-items-center text-text-muted opacity-60 hover:text-text-primary hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                      data-nav-item
+                      onClick={() => setPickerAberto(true)}
+                      aria-label="Adicionar projeto"
+                      className="text-text-muted hover:text-text-primary rounded-none p-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                     >
-                      {session.provider ? <GitBranchIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <CopyIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+                      <FolderPlus className="w-3.5 h-3.5" aria-hidden="true" />
                     </button>
-                    <button
-                      type="button"
-                      aria-label={`Reiniciar agente ${session.name}`}
-                      title="Reiniciar sessão"
-                      onClick={() => onRestartTerminal(session.id)}
-                      className="grid w-6 shrink-0 place-items-center text-text-muted opacity-60 hover:text-text-primary hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                    >
-                      <ReloadIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Fechar agente ${session.name}`}
-                      title="Encerrar e remover agente"
-                      onClick={() => onCloseTerminal(session.id)}
-                      className="grid w-6 shrink-0 place-items-center text-text-muted opacity-60 hover:text-danger hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                    >
-                      <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                    </button>
-                    </div>
                   </div>
-                ))
-              : section === "FILES"
-              ? (
-                  <FileTree
-                    projectPath={activeProjectPath}
-                    onOpenFile={onOpenFile}
-                    onFileRenamed={onFileRenamed}
-                    onPathDeleted={onPathDeleted}
-                  />
-                )
-              : section === "DOCKER"
-              ? <DockerPanel onRunInTerminal={onRunInTerminal} />
-              : section === "SKILLS"
-              ? <SkillsList projectPath={activeProjectPath} onOpenFile={onOpenFile} />
-              : section === "GIT"
-              ? <GitPanel projectPath={activeProjectPath} onOpenDiff={onOpenGitDiff} onOpenGraph={onOpenGitGraph} />
-              : section === "KANBAN"
-              ? <KanbanPanel projectId={activeProjectId} kanban={kanban} onOpenBoard={onOpenKanban} />
-              : undefined}
-          </SidebarSection>
+                  {projects.length === 0 ? (
+                    <p data-nav-item className="text-text-muted text-xs px-3 py-1.5">
+                      Nenhum projeto ainda.
+                    </p>
+                  ) : (
+                    projects.map((project) => (
+                      <div key={project.id}
+                        data-ordem="projetos" data-ordem-id={project.id}
+                        onPointerDown={(evento) => arrastarParaOrdenar(evento, "projetos", project.id, onMoveProject)}
+                        className={`lateral-item group mx-1 flex items-stretch border-l-2 ring-1 ring-inset transition-colors ${
+                          project.id === activeProjectId
+                            ? "lateral-item-ativo border-accent ring-accent/50"
+                            : "border-transparent ring-border-subtle/40 hover:ring-border-subtle"
+                        }`}>
+                        <button
+                          type="button"
+                          data-nav-item
+                          aria-current={project.id === activeProjectId ? "page" : undefined}
+                          onClick={() => onSelectProject(project.id)}
+                          className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                          title={`${project.path}
+Arraste para mudar a ordem`}
+                        >
+                          <span className="lateral-avatar grid h-8 w-8 shrink-0 place-items-center border border-border-subtle">
+                            <FolderIcon className="h-3.5 w-3.5 text-accent" aria-hidden />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className={`block truncate text-xs leading-4 ${
+                              project.id === activeProjectId ? "font-semibold text-text-primary" : "text-text-secondary"
+                            }`}>{project.name}</span>
+                            <span aria-hidden className="mt-0.5 flex">
+                              <ResumoDeAgentes
+                                sessions={agentSessions.filter((session) => session.project_id === project.id)}
+                                naoVistas={naoVistas}
+                              />
+                            </span>
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Fechar projeto ${project.name}`}
+                          title="Fechar projeto"
+                          onClick={() => onCloseProject(project.id)}
+                          className="grid w-8 shrink-0 place-items-center text-text-muted opacity-60 hover:text-danger hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                        >
+                          <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                {(["CHATS", "TERMINALS"] as const).map((section) => {
+                  // CHATS = conversas com um agente de IA; TERMINALS = shells (npm run dev, git…).
+                  const lista = terminalSessions.filter((session) => Boolean(session.provider) === (section === "CHATS"))
+                    // Conversas: a mexida por último primeiro. Terminais ficam na ordem em que foram abertos.
+                    .sort((a, b) => section === "CHATS" ? (b.last_activity_at_ms ?? 0) - (a.last_activity_at_ms ?? 0) : 0);
+                  return (
+                    <SidebarSection key={section} label={section} icon={section === "CHATS" ? ChatIcon : TerminalIcon}
+                      disabled={!activeProjectId} contagem={lista.length}>
+                      {lista.length > 0 ? lista.map((session) => (
+                        <div key={session.id}
+                          className={`lateral-item group relative mx-1 flex items-stretch border-l-2 ring-1 ring-inset transition-colors ${
+                            session.id === activeSessionId
+                              ? "lateral-item-ativo ring-accent/50"
+                              : "ring-border-subtle/40 hover:ring-border-subtle"
+                          } ${
+                            session.provider ? destaqueDaLinha(statusDaConversa(session, naoVistas.has(conversationKey(session)))) : "border-transparent"
+                          }`}>
+                          <SessionLabel
+                            session={session}
+                            ativa={session.id === activeSessionId}
+                            naoVista={naoVistas.has(conversationKey(session))}
+                            conta={session.profile_id ? contas[session.profile_id] : undefined}
+                            agora={agora}
+                            onAttach={onAttachTerminal}
+                          />
+                          {/* Ações só no hover/foco, por cima do fim da linha: fora dele o espaço é do nome. */}
+                          <div className="absolute inset-y-0 right-0 hidden items-stretch border-l border-border-subtle bg-bg-elevated pl-0.5 shadow-[-12px_0_12px_-4px_rgb(var(--c-bg-elevated))] group-focus-within:flex group-hover:flex">
+                          <button
+                            type="button"
+                            aria-label={session.provider ? `Bifurcar conversa ${session.name}` : `Duplicar terminal ${session.name}`}
+                            title={session.provider
+                              ? "Bifurcar: abre uma conversa nova com todo o histórico desta, que segue independente"
+                              : "Duplicar: abre outro terminal na mesma pasta"}
+                            onClick={() => onDuplicateTerminal(session.id)}
+                            className="grid w-6 shrink-0 place-items-center text-text-muted opacity-60 hover:text-text-primary hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                          >
+                            {session.provider ? <GitBranchIcon className="h-3.5 w-3.5" aria-hidden="true" /> : <CopyIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Reiniciar agente ${session.name}`}
+                            title="Reiniciar sessão"
+                            onClick={() => onRestartTerminal(session.id)}
+                            className="grid w-6 shrink-0 place-items-center text-text-muted opacity-60 hover:text-text-primary hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                          >
+                            <ReloadIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Fechar agente ${session.name}`}
+                            title="Encerrar e remover agente"
+                            onClick={() => onCloseTerminal(session.id)}
+                            className="grid w-6 shrink-0 place-items-center text-text-muted opacity-60 hover:text-danger hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                          >
+                            <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                          </button>
+                          </div>
+                        </div>
+                      )) : undefined}
+                    </SidebarSection>
+                  );
+                })}
+              </>
+            ) : ABAS[id].precisaProjeto && !activeProjectId ? (
+              <p className="px-3 py-1.5 text-xs text-text-muted">Abra um projeto para ver {ABAS[id].rotulo.toLowerCase()}.</p>
+            ) : (
+              <div className="space-y-1">
+                <p className="flex items-center gap-2 px-3 pt-1 text-[10px] font-medium uppercase tracking-wider text-text-muted">
+                  {(() => { const Icone = ABAS[id].icone; return <Icone className="h-3 w-3 shrink-0" aria-hidden />; })()}
+                  {ABAS[id].rotulo}
+                </p>
+                {id === "files" ? (
+                  <FileTree projectPath={activeProjectPath} onOpenFile={onOpenFile} onFileRenamed={onFileRenamed} onPathDeleted={onPathDeleted} />
+                ) : id === "docker" ? (
+                  <DockerPanel onRunInTerminal={onRunInTerminal} />
+                ) : id === "skills" ? (
+                  <SkillsList projectPath={activeProjectPath} onOpenFile={onOpenFile} />
+                ) : id === "git" ? (
+                  <GitPanel projectPath={activeProjectPath} onOpenDiff={onOpenGitDiff} onOpenGraph={onOpenGitGraph} />
+                ) : (
+                  <KanbanPanel projectId={activeProjectId} kanban={kanban} onOpenBoard={onOpenKanban} />
+                )}
+              </div>
+            )}
+          </nav>
         ))}
-      </nav>
+      </div>
 
       {/* Footer */}
       <div className="px-2 py-3 border-t border-border-subtle/60 space-y-0.5">

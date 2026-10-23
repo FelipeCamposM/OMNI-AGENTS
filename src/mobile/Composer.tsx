@@ -2,10 +2,11 @@ import { useEffect, useRef, useState, type ClipboardEvent, type FormEvent, type 
 import { AttachmentIcon, CloseIcon, LoaderIcon, MicIcon, SendIcon, StopIcon, WarningIcon } from "../components/ui/PixelIcon";
 import { Button } from "../components/ui/Button";
 import { Modal } from "../components/ui/Modal";
+import { CursorNeon } from "./CursorNeon";
 import { iconForPath, iconStyle } from "../features/files/fileIcons";
 import { tamanhoLegivel, type Anexo } from "./anexos";
 import type { Comando } from "./api";
-import { aplicarVocabulario, aprenderPalavras, falaDoNavegador, gravar, lerVocabulario, navegadorGrava, ouvir, substituicoes, type Escuta, type Gravacao, type Palavra } from "./voz";
+import { aplicarVocabulario, aprenderPalavras, FALA_SEM_SERVICO, falaDoNavegador, falaSemServico, gravar, lerVocabulario, navegadorGrava, ouvir, substituicoes, corrigir, transcrever, useVozInstalada, type Escuta, type Gravacao, type Palavra } from "./voz";
 
 interface ComposerProps {
   texto: string;
@@ -337,7 +338,7 @@ function BotaoDeVoz({ voz, texto, aoTexto, aoFim, travado }: { voz: Voz; texto: 
 
 /** Microfone pela fala do navegador: as palavras entram no campo enquanto a pessoa fala, sem modelo
  *  no PC. Nunca envia sozinho. */
-function BotaoDeFala({ texto, aoTexto, aoFim, travado }: { texto: () => string; aoTexto: (texto: string) => void; aoFim: () => void; travado: boolean }) {
+function BotaoDeFala({ texto, aoTexto, aoFim, travado, aoSemServico }: { texto: () => string; aoTexto: (texto: string) => void; aoFim: () => void; travado: boolean; aoSemServico?: () => void }) {
   const [ouvindo, setOuvindo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const escuta = useRef<Escuta | null>(null);
@@ -356,7 +357,11 @@ function BotaoDeFala({ texto, aoTexto, aoFim, travado }: { texto: () => string; 
     try {
       escuta.current = ouvir(
         (falado) => aoTexto(antes && falado ? `${antes} ${falado}` : antes || falado),
-        (motivo) => { escuta.current = null; setOuvindo(false); if (motivo) setErro(motivo); aoFim(); },
+        (motivo) => {
+          escuta.current = null; setOuvindo(false); aoFim();
+          // Com a voz do PC à mão, troca para ela em vez de mostrar o erro.
+          if (motivo === FALA_SEM_SERVICO && aoSemServico) aoSemServico(); else if (motivo) setErro(motivo);
+        },
       );
       setOuvindo(true);
     } catch (motivo) {
@@ -379,6 +384,23 @@ function BotaoDeFala({ texto, aoTexto, aoFim, travado }: { texto: () => string; 
   );
 }
 
+// Fora de conversa (ex.: criar fluxo): o engine usa só o vocabulário da pessoa, sem o do projeto.
+const VOZ_SEM_CONVERSA: Voz = { transcrever: (audio) => transcrever("-", audio), corrigir: (texto) => corrigir("-", texto) };
+
+/** Microfone avulso para outros campos: a mesma escolha do Composer (fala do navegador, senão a voz do PC). */
+export function Microfone({ texto, onTexto, travado = false }: { texto: string; onTexto: (texto: string) => void; travado?: boolean }) {
+  const atual = useRef(texto);
+  atual.current = texto;
+  const podeVozDoPc = useVozInstalada() && navegadorGrava();
+  const [semServico, setSemServico] = useState(falaSemServico);
+  const aoTexto = (novo: string) => { atual.current = novo; onTexto(novo); };
+  if (falaDoNavegador() && !(semServico && podeVozDoPc)) {
+    return <BotaoDeFala travado={travado} texto={() => atual.current} aoFim={() => undefined} aoTexto={aoTexto}
+      aoSemServico={podeVozDoPc ? () => setSemServico(true) : undefined} />;
+  }
+  return podeVozDoPc ? <BotaoDeVoz voz={VOZ_SEM_CONVERSA} travado={travado} texto={() => atual.current} aoFim={() => undefined} aoTexto={aoTexto} /> : null;
+}
+
 /**
  * Barra de digitação do chat: texto, anexos por botão ou colados, e enviar.
  *
@@ -392,6 +414,9 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
   const textoAtual = useRef(texto);
   textoAtual.current = texto;
   const ditado = useDitado(textoAtual, onTexto, Boolean(voz) || Boolean(falaDoNavegador()));
+  const podeVozDoPc = Boolean(voz) && navegadorGrava();
+  const [semServico, setSemServico] = useState(falaSemServico);
+  const usarFala = Boolean(falaDoNavegador()) && !(semServico && podeVozDoPc);
   // Menção aberta: onde começa o `@`, o que foi digitado depois dele e o que achou.
   const [mencao, setMencao] = useState<{ inicio: number; busca: string } | null>(null);
   const [sugestoes, setSugestoes] = useState<string[]>([]);
@@ -553,6 +578,7 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
           </ul>
         )}
         <label htmlFor="reply" className="sr-only">Sua resposta</label>
+        <div className="composer-campo-caixa">
         <textarea id="reply" ref={campo} rows={1} value={texto} maxLength={16000} placeholder={placeholder}
           className="composer-campo" onPaste={colar} onKeyDown={tecla}
           onChange={(event) => { onTexto(event.target.value); acompanharMencao(event.target.value, event.target.selectionStart ?? event.target.value.length); }}
@@ -560,6 +586,8 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
           onBlur={() => { ditado.conferir(); window.setTimeout(() => { setMencao(null); setBarra(null); }, 150); }}
           aria-autocomplete="list" aria-expanded={Boolean((mencao && sugestoes.length) || comandosVisiveis.length)}
           aria-controls={comandosVisiveis.length ? "comandos" : "mencoes"} />
+        <CursorNeon campo={campo} valor={texto} />
+        </div>
         {comandosVisiveis.length > 0 && (
           <ul id="comandos" role="listbox" aria-label="Comandos do agente" className="composer-mencoes">
             {comandosVisiveis.map((comando, indice) => (
@@ -607,12 +635,13 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
                 }} />
             </label>
             {/* Fala do navegador primeiro (tempo real, sem modelo); sem ela, o whisper do PC. */}
-            {falaDoNavegador() ? (
-              <BotaoDeFala travado={ocupado} texto={() => textoAtual.current} aoFim={ditado.terminou} aoTexto={(novo) => {
+            {usarFala ? (
+              <BotaoDeFala travado={ocupado} texto={() => textoAtual.current} aoFim={ditado.terminou}
+                aoSemServico={podeVozDoPc ? () => setSemServico(true) : undefined} aoTexto={(novo) => {
                 textoAtual.current = novo;
                 onTexto(novo);
               }} />
-            ) : voz && navegadorGrava() && (
+            ) : voz && podeVozDoPc && (
               <BotaoDeVoz voz={voz} travado={ocupado} texto={() => textoAtual.current} aoFim={ditado.terminou} aoTexto={(novo) => {
                 // O ref já anda junto: o próximo trecho chega antes do React renderizar este.
                 textoAtual.current = novo;

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { Button } from "../components/ui/Button";
 import { ChatIcon, CheckIcon, SendIcon } from "../components/ui/PixelIcon";
@@ -32,6 +33,8 @@ interface Props {
   onEscolher: (opcao: number | null) => void;
   /** Marcar-várias: segue para a próxima pergunta ou para a revisão (Tab). */
   onAvancar: () => void;
+  /** Várias perguntas seguidas: volta para a anterior, para trocar a resposta (← no terminal). */
+  onVoltar?: () => void;
 }
 
 /**
@@ -39,13 +42,26 @@ interface Props {
  * linha com a explicação embaixo, caixas de marcar quando dá para escolher várias, as etapas de
  * várias perguntas seguidas e a revisão final em lista.
  */
-export function CartaoDePergunta({ escolha, provider, busy, onEscolher, onAvancar }: Props) {
+export function CartaoDePergunta({ escolha, provider, busy, onEscolher, onAvancar, onVoltar }: Props) {
   const revisao = escolha.pergunta === "Review your answers";
   const respostas = revisao ? respostasDaRevisao(escolha.detalhe) : [];
   const detalhe = revisao ? null : escolha.detalhe;
+  // A tela do terminal só confirma a marca depois da ida e volta ao PC; o cartão marca na hora e,
+  // no marcar-várias, enfileira os toques feitos enquanto o anterior ainda está a caminho.
+  const [desejo, setDesejo] = useState<Record<number, boolean>>({});
+  const fila = useRef<number[]>([]);
+  useEffect(() => {
+    if (!busy && fila.current.length) onEscolher(fila.current.shift()!);
+  }, [busy, onEscolher]);
+  const marcada = (o: Escolha["opcoes"][number]) => desejo[o.numero] ?? Boolean(o.marcada);
+  function tocar(o: Escolha["opcoes"][number]) {
+    setDesejo((d) => ({ ...d, [o.numero]: escolha.multipla ? !(d[o.numero] ?? Boolean(o.marcada)) : true }));
+    if (busy) fila.current.push(o.numero);
+    else onEscolher(o.numero);
+  }
   const comuns = escolha.opcoes.filter((o) => o.rotulo !== LIVRE);
   const livre = escolha.opcoes.find((o) => o.rotulo === LIVRE);
-  const marcadas = comuns.filter((o) => o.marcada).length;
+  const marcadas = comuns.filter(marcada).length;
 
   return (
     <section className="pergunta" role="group" aria-label={t(escolha.pergunta)} aria-busy={busy}>
@@ -85,11 +101,11 @@ export function CartaoDePergunta({ escolha, provider, busy, onEscolher, onAvanca
         <ul className="pergunta-opcoes">
           {comuns.map((opcao) => (
             <li key={opcao.numero}>
-              <button type="button" disabled={busy} onClick={() => onEscolher(opcao.numero)}
-                className={`pergunta-opcao${opcao.marcada ? " is-marcada" : ""}`}
-                {...(escolha.multipla ? { role: "checkbox", "aria-checked": Boolean(opcao.marcada) } : {})}>
+              <button type="button" disabled={busy && !escolha.multipla} onClick={() => tocar(opcao)}
+                className={`pergunta-opcao${marcada(opcao) ? " is-marcada" : ""}`}
+                {...(escolha.multipla ? { role: "checkbox", "aria-checked": marcada(opcao) } : {})}>
                 <span className="pergunta-marca" aria-hidden>
-                  {escolha.multipla ? (opcao.marcada ? <CheckIcon className="h-3 w-3" /> : null) : opcao.numero}
+                  {escolha.multipla ? (marcada(opcao) ? <CheckIcon className="h-3 w-3" /> : null) : opcao.numero}
                 </span>
                 <span className="pergunta-opcao-texto">
                   <b>{t(opcao.rotulo)}</b>
@@ -108,6 +124,10 @@ export function CartaoDePergunta({ escolha, provider, busy, onEscolher, onAvanca
           </button>
         )}
         <span className="flex-1" />
+        {/* Só depois de alguma respondida: na primeira não há para onde voltar. */}
+        {onVoltar && escolha.etapas?.some((e) => e.respondida) && (
+          <Button variant="ghost" size="sm" disabled={busy} onClick={onVoltar}>← Voltar</Button>
+        )}
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => onEscolher(null)}>Fechar</Button>
         {escolha.multipla && (
           <Button variant="primary" size="sm" disabled={busy || marcadas === 0} onClick={onAvancar}>Continuar →</Button>

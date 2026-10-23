@@ -85,7 +85,7 @@ it("troca de projeto com conversa aberta, pesquisa globalmente e oferece voltar"
   vi.stubGlobal("fetch", servidor([
     conversa(),
     conversa({ id: "c2", title: "Auditar pagamentos", project_id: "p2" }),
-  ]));
+  ].map((c) => ({ ...c, live: true }))));
   render(<WebApp />);
 
   const primeira = await screen.findByRole("button", { name: /Abrir conversa Corrigir o login/ });
@@ -96,6 +96,8 @@ it("troca de projeto com conversa aberta, pesquisa globalmente e oferece voltar"
   await act(async () => { await userEvent.click(within(lateral).getByRole("button", { name: "Outro" })); });
   expect(within(lateral).getByRole("button", { name: /Abrir conversa Auditar pagamentos/ })).toBeInTheDocument();
   expect(within(lateral).queryByRole("button", { name: /Abrir conversa Corrigir o login/ })).not.toBeInTheDocument();
+  // Cada cartão diz de qual projeto é.
+  expect(within(within(lateral).getByRole("button", { name: /Abrir conversa Auditar pagamentos/ })).getByText("Outro")).toBeInTheDocument();
 
   await act(async () => { await userEvent.type(within(lateral).getByLabelText("Pesquisar conversas"), "login"); });
   expect(within(lateral).getByRole("button", { name: /Abrir conversa Corrigir o login/ })).toBeInTheDocument();
@@ -293,4 +295,50 @@ it("cria um terminal sem agente no projeto, abre no centro e fecha", async () =>
   });
   await waitFor(() => expect(enviados.some((item) => item.url === "/terminais/t1/fechar")).toBe(true));
   await waitFor(() => expect(screen.queryByRole("button", { name: "Fechar terminal" })).not.toBeInTheDocument());
+});
+
+it("lateral em abas (Conversas | Prévia) e uso da conta da conversa no topo, com todas num clique", async () => {
+  const contas = [
+    { id: "p", provider: "claude", name: "Padrão", usage: { status: "ok", primary: { used_percent: 56 }, secondary: { used_percent: 8 }, reason: null } },
+    { id: "u", provider: "claude", name: "EmailUber", usage: { status: "ok", primary: { used_percent: 24 }, secondary: { used_percent: 4 }, reason: null } },
+  ];
+  const base = servidor([conversa()]);
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) =>
+    url === "/contas" ? new Response(JSON.stringify(contas))
+      : url === "/previas" ? new Response(JSON.stringify({ abertas: [3000], ativas: [] }))
+        : base(url, init)));
+  history.replaceState(null, "", "/pc#/c/c");
+  render(<WebApp />);
+  const uso = await screen.findByRole("button", { name: "Uso das contas" });
+  await waitFor(() => expect(within(uso).getByText("Padrão")).toBeInTheDocument());
+  expect(within(uso).getByText("56%")).toBeInTheDocument();
+  expect(screen.queryByText("EmailUber")).not.toBeInTheDocument();
+  await act(async () => { await userEvent.click(uso); });
+  expect(await screen.findByText("EmailUber")).toBeInTheDocument();
+  await act(async () => { await userEvent.keyboard("{Escape}"); });
+  expect(screen.queryByText("EmailUber")).not.toBeInTheDocument();
+
+  const lateral = screen.getByRole("complementary", { name: "Projetos e conversas" });
+  await act(async () => { await userEvent.click(within(lateral).getByRole("tab", { name: "Prévia" })); });
+  expect(await within(lateral).findByText("localhost:3000")).toBeInTheDocument();
+  // Nova sessão e Novo terminal continuam embaixo, em qualquer aba.
+  expect(within(lateral).getByRole("button", { name: "Novo terminal" })).toBeInTheDocument();
+});
+
+it("aba Histórico separada: agrupa por período, filtra por projeto e mostra o projeto de cada conversa", async () => {
+  vi.stubGlobal("fetch", servidor([
+    conversa({ updated_at_ms: Date.now() }),
+    conversa({ id: "c2", title: "Auditar pagamentos", project_id: "p2", updated_at_ms: Date.now() - 40 * 86_400_000 }),
+  ]));
+  render(<WebApp />);
+  const lateral = await screen.findByRole("complementary", { name: "Projetos e conversas" });
+  await screen.findByRole("button", { name: /Abrir conversa Corrigir o login/ });
+  expect(within(lateral).getByText("Últimas conversas")).toBeInTheDocument();
+  await act(async () => { await userEvent.click(within(lateral).getByRole("button", { name: /Ver todo o histórico/ })); });
+  const painel = within(lateral).getByRole("tabpanel", { name: "Histórico" });
+  expect(within(painel).getByText("Hoje")).toBeInTheDocument();
+  expect(within(painel).getByText("Mais antigas")).toBeInTheDocument();
+  await act(async () => { await userEvent.selectOptions(within(painel).getByLabelText("Projeto do histórico"), "p2"); });
+  expect(within(painel).queryByRole("button", { name: /Corrigir o login/ })).not.toBeInTheDocument();
+  expect(within(within(painel).getByRole("button", { name: /Auditar pagamentos/ })).getByText("Outro")).toBeInTheDocument();
 });

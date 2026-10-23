@@ -15,3 +15,8 @@ export function ImagePane({ tab }: ImagePaneProps) {
     </div>
   );
 }
+
+/** PDF no leitor nativo do WebView (zoom, busca, páginas). No Monaco aparecia o binário como texto. */
+export function PdfPane({ tab }: ImagePaneProps) {
+  return <iframe src={convertFileSrc(tab.resourceId ?? "")} title={tab.title} className="h-full w-full border-0 bg-[#0e0e14]" />;
+}

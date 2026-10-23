@@ -1,4 +1,4 @@
-import { exists, mkdir, readDir, readTextFile, remove, rename } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, readDir, readTextFile, remove, rename, writeTextFile } from "@tauri-apps/plugin-fs";
 import { baseName, copyIntoProject, joinPath } from "../files/filesService";
 import { MULTI_ACCOUNT_PROVIDERS, type AgentCliId, type Profile } from "../terminal/terminalService";
 
@@ -126,6 +126,31 @@ export async function listSkills(scope: SkillScope): Promise<SkillInfo[]> {
 /** Skills ativas do projeto aberto (`.claude/skills/<nome>/SKILL.md`) — o que a barra lateral lista. */
 export async function listProjectSkills(projectRoot: string): Promise<SkillInfo[]> {
   return (await readSkillDir(joinPath(projectRoot, ".claude", "skills"), true)).sort(byName);
+}
+
+/** Pasta da skill a partir do nome digitado: minúsculas, sem acento, palavras unidas por hífen. */
+export function slugDaSkill(nome: string): string {
+  return nome.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+/** Cria `.claude/skills/<slug>/SKILL.md` no projeto com o frontmatter preenchido; devolve o caminho do SKILL.md. */
+export async function criarSkillNoProjeto(projectRoot: string, nome: string): Promise<string> {
+  const slug = slugDaSkill(nome);
+  if (!slug) throw new Error("Dê um nome com letras ou números.");
+  const pasta = joinPath(projectRoot, ".claude", "skills", slug);
+  if (await exists(pasta)) throw new Error(`Já existe uma skill "${slug}" neste projeto.`);
+  await mkdir(pasta, { recursive: true });
+  const arquivo = joinPath(pasta, "SKILL.md");
+  await writeTextFile(arquivo, `---
+name: ${slug}
+description: Quando usar esta skill (o agente decide por esta frase).
+---
+
+# ${nome.trim()}
+
+Passos e regras que o agente deve seguir.
+`);
+  return arquivo;
 }
 
 /** Liga/desliga movendo a pasta entre `skills/` e `skills-disabled/`. Move o link, não o destino. */

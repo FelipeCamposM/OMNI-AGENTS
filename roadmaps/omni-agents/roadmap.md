@@ -3551,6 +3551,37 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
 - [x] Prévia no navegador, fala do navegador na web/celular, link externo do app no navegador do sistema, versão no topo
   da web. CI verde (`cb57d5f`), release `v0.7.5` publicada como latest; `latest.json` servindo 0.7.5.
 
+### Exportar conversa para outro agente + uso do Antigravity na web (sem release)
+
+- [x] `crates/omni-core/src/exportar.rs`: `pacote()` monta o Markdown (objetivo = 1º pedido, arquivos alterados com +/−
+  somados do `Item.diff`, últimos 15 comandos, últimas falas até 12k caracteres) e passa por `sem_segredos()` (prefixos
+  `sk-`/`ghp_`/`AKIA`… e `X_TOKEN=valor`). `salvar()` grava em `<projeto>/.omni/exports/<data>-<slug>.md` com
+  `.gitignore` próprio (`*`). `prompt_inicial()` = só o caminho (limite de 32k da linha de comando). chrono ganhou `clock`
+  (já estava no lock). `conversations::itens_cached` separado de `timeline_cached`.
+- [x] Engine (`mobile.rs`): `GET /conversas/{id}/exportar` (prévia / copiar) e `POST` `{provider, profile_id}` → grava o
+  pacote e abre a conversa nova na hora (`spawn_plano`, extraído de `spawn_from_mobile`), comando `<cli> "<prompt>"`.
+  Vale para conversa do índice e do histórico (projeto achado pela pasta).
+- [x] Front: `src/mobile/ExportarConversa.tsx` (botão nos chips da conversa, app e web): modal com agente (sugere outro
+  que não o atual) e conta, "Exportar" e "Copiar como Markdown". Web vai para a conversa nova; no PC ela aparece em CHATS.
+- [x] Uso do Antigravity na web: `/contas` lê a última consulta salva (`account_usage(.., false)`), `/contas/{id}/uso`
+  consulta o `/usage` do agy; `UsoDasContas` mostra o nome "Antigravity".
+- [x] Testes: core `pacote_tem_objetivo…`, `segredos_em_variavel…`; front `ExportarConversa.test.tsx`, `UsoDasContas.test.tsx`.
+- [ ] Próximo: resumo com o Haiku e prévia editável antes de exportar; "Continuação de …" ligando as duas conversas.
+
+### Fala do navegador: "Sem conexão com o reconhecimento" (sem release)
+
+- [x] Erro `network` do Web Speech = navegador sem o serviço de fala (Brave, Opera, Vivaldi, Chromium) ou sem rede.
+  `src/mobile/voz.ts`: mensagem `FALA_SEM_SERVICO` explica e manda para Chrome/Edge; marca a aba (`sessionStorage`).
+  `Composer.tsx`: com a voz do PC instalada, troca para o whisper do PC (`BotaoDeVoz`) em vez de mostrar o erro.
+  Teste em `FalaDoNavegador.test.tsx`.
+
+### PDF abria como texto no editor (sem release)
+
+- [x] Arquivo `.pdf` caía no Monaco e mostrava o binário. `PdfPane` (`src/features/files/ImagePane.tsx`) abre no leitor
+  nativo do WebView2 via `<iframe src={convertFileSrc(...)}>`; `isPdfPath` em `filesService.ts`, rota em `PaneView.tsx`.
+  CSP ganhou `frame-src 'self' asset: http://asset.localhost https://asset.localhost` (travado em `csp.test.ts`).
+  Teste em `PaneView.test.tsx`.
+
 ### Release v0.7.6 publicada (2026-10-21)
 
 - [x] Armazenamento + limpeza, conta mestra (hard link), Agentes refeita, tarefas no topo, arrasto flutuante, microfone
@@ -3762,6 +3793,24 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
   `useCountUp` com `inicio` (o % sobe do zero e corre até o número novo após uma consulta). Respeitam "animações" e o
   reduzir movimento do sistema. Medido no navegador a 60/120/250 ms; teste do painel espera a contagem. 446 front.
 
+### Lateral em abas com ícones fixos (sem release)
+
+- [x] `src/components/Sidebar.tsx`: fileira de ícones no topo — Conversas (atenção, workspaces, projetos, CHATS e
+  TERMINALS juntos), Arquivos, Git, Docker, Skills e Kanban. Cada aba ocupa a lateral inteira; as que dependem de
+  projeto pedem um quando não há. A seção COMMANDS (sempre vazia) saiu.
+- [x] Troca com deslize GSAP (`deslizarAba` em `src/lib/motion.ts`): ir para uma aba à direita traz a nova pela direita
+  e leva a velha pela esquerda, e vice-versa; a velha fica montada só até o fim. Marcador do tema desliza até o ícone
+  ativo (`moverIndicador`).
+- [x] Ordem das abas configurável arrastando os ícones (salva em `omni-lateral-abas`); `arrastarParaOrdenar` ganhou
+  `eixo = "x"` para fileiras, com linha de inserção vertical (`.lateral-aba[data-soltar]`).
+- [x] Aba Conversas avisa: contagem amarela de atenção e ponto verde pulsando quando algum agente está trabalhando
+  (também no nome acessível). Botões `aria-pressed` (não `role="tab"`: o App.test conta as abas dos painéis).
+- [x] Conferido em print com página temporária (removida); deslize medido a 120 ms. Teste novo em `Sidebar.test.tsx`.
+- [x] Aba Skills cria e importa: "+ Nova" pede o nome e cria `.claude/skills/<slug>/SKILL.md` com frontmatter
+  (`criarSkillNoProjeto`/`slugDaSkill` em `skillsService.ts`) e já abre o arquivo; "Importar" copia uma pasta com
+  SKILL.md para o projeto (`installSkill`). `useProjectSkills` devolve `[skills, recarregar]`. Testes em
+  `skillsService.test.ts`.
+
 ### Conta mestra das conversas + tela de Agentes nova (sem release)
 
 - [x] `crates/omni-core/src/mestra.rs`: uma conta mestra por IA (`mestras.json` no engine; sem escolha = primeira
@@ -3787,3 +3836,113 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
 - [x] Diff nas ações de edição (21/10): `feed::Item.diff` (`mais`/`menos` exatos + até 80 linhas `+`/`-`/` `) vindo do `Edit`/`MultiEdit` (LCS de linhas), `Write` (tudo `+`) e `apply_patch` do Codex; vai em `conversations::Message.diff`. `LinhaDeAcao` em `src/mobile/Chat.tsx` mostra `+N` verde / `−N` vermelho e abre o diff no clique (`.acao-diff` em `mobile.css`). Teste `edicao_traz_linhas_adicionadas_e_removidas` e `ChatDesenho.test.tsx`. Próximo: rota sob demanda se a página pesar.
 - [ ] Próximo: rebuild do engine para a troca de conta usar o link; depois "Juntar na mestra" em Armazenamento para
   as outras 10 duplicadas (~270 MB; 5 divergentes perdem a versão mais velha, que vai para a Lixeira).
+
+### Arquivo citado inexistente mostrava erro cru (sem release)
+
+- [x] Clicar num arquivo citado na Conversa que não existe no disco (ex.: `.claude/settings.local.json` ainda não
+  criado) abria o painel com "failed to open file … (os error 2)". `src/features/files/filesService.ts`
+  `readTextFile` traduz os error 2/3 em "Arquivo não encontrado: … Ele não existe no disco…" (vale para editor e
+  Markdown). Teste em `src/test/filesService.test.ts`.
+- [x] (22/10) Agora nem abre a aba: `src/App.tsx` checa `exists` antes de abrir o citado; não existindo, o evento
+  rejeita (`src/main.tsx` virou Promise com `{caminho, ok, falha}`) e o botão no chat (`src/mobile/Chat.tsx`
+  `Arquivo`) mostra "Não existe no disco" ao lado por 4s (`.bubble-arquivo-falta` em `index.css`). Teste em
+  `src/test/ArquivoCitado.test.tsx`.
+
+### Panorama: tudo o que roda no OMNI num canvas (sem release)
+
+- [x] (22/10) Botão "Panorama" no topo, à esquerda do Uso. Abre uma tela (view `panorama` em `src/App.tsx`) que fecha no
+  X e no Esc, como as Configurações. `src/features/panorama/panoramaModel.ts` monta o modelo (workspaces → projetos
+  → agentes/terminais vivos por conversa + abas que não são sessão; sessões de projeto fechado em "Fora dos
+  workspaces"; KPIs). `Panorama.tsx`: canvas com arrastar/zoom no cursor/Centralizar, hub OMNI ligado a cada
+  workspace e às ilhas por curvas medidas do DOM, faíscas correndo pelas ligações (rAF, mais rápidas onde tem agente
+  trabalhando), entrada em cascata (GSAP), mascotes por agente (Claude anda, Codex gira, Antigravity levita com
+  sombra, Cursor balança com caret), pastas e marcas à deriva no fundo. Clique: agente/terminal → `FOCUS_SESSION`,
+  projeto → `SHOW_WORKSPACE`+`SELECT_PROJECT`, aba → + `SELECT_TAB`, workspace → `SHOW_WORKSPACE`. CSS próprio em
+  `panorama.css`. Respeita "menos movimento". Testes `src/test/Panorama.test.tsx` + caso no `App.test.tsx`.
+  Próximo: mini-mapa, busca no canvas, prévia da última fala do agente no nó.
+- [x] (22/10) Correções do Panorama: (1) faíscas cortavam no meio — cada poll das sessões remedia as ligações, trocava
+  o array e o efeito recomeçava o relógio; agora relógio único (`inicio` em ref) e `setArestas` só troca se mudou.
+  Medida das ligações por `offsetLeft/Top` (layout), não `getBoundingClientRect`: a entrada GSAP deslocava os nós e as
+  curvas terminavam no ar. (2) Conversas abertas não apareciam: o modelo filtrava sessão `stopped`; agora toda aba de
+  agente/terminal com sessão aparece (qualquer estado, rótulo "parada"), mais as sessões rodando sem aba (uma por
+  conversa). Aba de agente sem CLI escolhida vira aba com ícone de robô.
+- [x] (22/10) Nós varando os cards: hover em `transition: transform` + entrada GSAP (rodando 2x no StrictMode) fazia o
+  GSAP capturar um transform do meio da transição como final — nós presos ~40px abaixo. Hover agora usa as
+  propriedades `translate`/`scale` e a entrada tem `clearProps`. Faíscas em px/s (220; 420 com agente trabalhando).
+
+### Roda de hora das tarefas mais suave (sem release)
+
+- [x] (22/10) `src/features/todo/SeletorDePrazo.tsx` `Roda`: giro próprio com mola em rAF (posição em float, encaixe
+  desligado enquanto gira) no lugar do `scrollTo` suave, que recomeçava a cada clique e dava tranco. Clique de roda
+  em sequência rápida (<90 ms) acelera 1,1,2,3,4,5 itens; trackpad continua proporcional. Corrigido também o reset do
+  contador de sentido (zerava a cada passo). Teste "giro rápido da roda acelera" em `src/test/todo.test.tsx`.
+- [x] (22/10) Cards repaginados: borda em gradiente com faixa de luz, halo cônico girando na ilha com agente trabalhando, linha de contadores (trabalhando/pedindo você/agentes/terminais/abas/branch), grupos com contagem, nós com trilho e fundo na cor da marca (`--marca`: Claude laranja, Antigravity azul…), pílulas de estado, seta "›" no hover, terminal em verde mostrando só o nome do shell, abas em pílula.
+- [x] (22/10) Panorama com cantos retos como o resto do app: todo `border-radius` de `panorama.css` virou `var(--glass-radius)` (0px); só pontos de status e a sombra do Antigravity seguem redondos.
+
+### Fotos nas Extensões (sem release)
+
+- [x] (22/10) `crates/omni-core/src/extensoes.rs` `logo_do_pacote`: o `Plugin` ganha `logo` (`data:` URI, ≤256 KB) lido do
+  `logo`/`icon`/`composerIcon` de qualquer manifesto do pacote (`.claude-plugin`/`.cursor-plugin`/`.codex-plugin`;
+  o do Claude não tem o campo, os outros sim) ou de um `logo*`/`icon*`/`<nome-do-plugin>*` na raiz/`assets/`. Só
+  imagem e só dentro da pasta do pacote (canonicalize + starts_with). Claude pelo `installPath`, Codex por
+  `plugins/cache/<marketplace>/<nome>/<versão mais nova>`, Cursor pela pasta local. Embutido para valer no app e na
+  web sem liberar asset scope. Front: `src/features/extensoes/IconeDaExtensao.tsx` — logo > marca já desenhada
+  (GitHub, Vercel, Docker, npm, Claude, OpenAI, Cursor, Antigravity, pelo nome ou URL) > inicial colorida (cor da
+  marca nas conhecidas: Figma, Stripe, Supabase, Notion, Slack, Google…). Em MCPs, plugins e conectores. Testes no
+  Rust e em `ExtensoesSettings.test.tsx`. Favicon de MCP remoto ficou de fora (precisa de internet).
+
+### Microfone no "Criar fluxo com IA" (sem release)
+- [x] `Microfone` exportado de `src/mobile/Composer.tsx` (mesma escolha do chat: fala do navegador, senão a voz do PC) e usado no `DialogoDeFluxoComIa` (`src/features/fluxos/FluxosView.tsx`).
+- [x] Engine: `/conversas/{id}/voz` e `/voz/corrigir` aceitam id sem conversa (`-`) — `pasta_da_voz` em `crates/omni-engine/src/mobile.rs` usa só o vocabulário da pessoa.
+- [x] Teste em `src/test/FalaDoNavegador.test.tsx`.
+
+### Web: lateral em abas e uso no topo (sem release)
+- [x] `src/web/WebApp.tsx`: lateral com abas **Conversas** (busca, projetos, conversas, terminais) e **Prévia no navegador**
+  (`PreviasLocais`), deslizando como no app (`deslizarAba`/`moverIndicador`). Cada painel rola sozinho; Nova sessão e
+  Novo terminal ficam fixos embaixo. Conversas/terminais sem caixa própria (altura natural), linhas mais altas.
+- [x] `src/web/UsoDasContas.tsx` → `UsoNoTopo`: no cabeçalho, conta da conversa (nome, 5H, semana) e popover com todas as
+  contas (fecha no Esc/clique fora). Saiu da coluna da direita, que ficou só com Precisa de você / Trabalhando agora.
+- [x] Polimento em `src/web/web.css` (rótulos com ícone e contador, cartões na direita, degradês). Teste em `WebApp.test.tsx`.
+- [x] Histórico em aba própria na lateral da web (Conversas | Histórico | Prévia): agrupado por Hoje/Ontem/7 dias/30
+  dias/Mais antigas, busca e filtro por projeto, ocultas no fim. Na aba Conversas: "Abertas no PC" do projeto (com o
+  projeto em destaque no título) e "Últimas conversas" (6 de todos os projetos) + "Ver todo o histórico".
+- [x] Cartão de conversa (`ConversationList`, web e celular) mostra o projeto como etiqueta acima do título.
+- [x] Popover de uso (`UsoDasContas animar`): abre crescendo do botão, cartões em cascata, barras enchendo e % contando
+  do zero (GSAP, respeita movimento reduzido); chip do topo brilha quando a leitura muda.
+
+- [x] **Pergunta do agente marca na hora** (2026-10-22): `src/mobile/CartaoDePergunta.tsx` marca a opção no clique (otimista) e, no marcar-várias, enfileira toques feitos enquanto o anterior vai ao PC; `key` por pergunta em `MobileApp.tsx` zera o estado; o cartão não esmaece mais inteiro enquanto envia (`mobile.css`). Teste `src/test/CartaoDePergunta.test.tsx`.
+
+- [x] **Parar sem travar o próximo prompt** (2026-10-22): Esc antes de a CLI ler o prompt devolve o texto ao campo do terminal e o `ready` recusava tudo ("Entrada do CLI não reconhecida"). Rota nova `POST /conversas/{id}/parar` (`crates/omni-engine/src/mobile.rs`): Esc e, com `interaction::sobra_no_campo`, Ctrl+U até o campo esvaziar; `limpou` faz `MobileApp.tsx` devolver o texto ao campo da conversa. Teste `prompt_devolvido_ao_campo_conta_como_sobra_so_com_o_turno_parado`; `WebChat.test` usa a rota nova.
+- [x] **Web: sem scroll horizontal em Projetos** (`src/web/web.css`, `overflow-x: hidden`: o `translate` do hover vazava 2px).
+
+- [x] **Pergunta do agente: Voltar e resposta rápida** (2026-10-22): `Resposta::Voltar` (`crates/omni-engine/src/mobile.rs`, corpo `{voltar:true}`) manda ← na barra de abas das perguntas; `CartaoDePergunta` mostra "← Voltar" depois de alguma respondida. Lentidão: depois de responder, `escolher` em `MobileApp.tsx` relê a timeline a cada 100 ms (até 1,5 s) até a pergunta mudar, em vez de esperar o polling de 3 s da conversa parada. Não confirmado contra um Claude Code real: se a ← não voltar, trocar a tecla.
+- [x] **Entrada animada das mensagens na conversa (app e web)** — bloco que chega com a conversa
+  aberta (fala do agente, ações, aviso, comando) sobe e acende; a resposta do agente se revela de
+  cima para baixo (máscara CSS, 350–1200 ms conforme o tamanho); cada ação nova no bloco ao vivo
+  desliza. O que já estava na tela ao abrir não anima, nem a fala do usuário que substitui o balão
+  otimista (este anima ao nascer). `prefers-reduced-motion` desliga tudo. `src/mobile/MobileApp.tsx`
+  (`conhecidos`/`entraram`, `chaveDoBloco`), `src/mobile/Chat.tsx` (prop `entra`), `src/mobile/mobile.css`
+  (`.entra`, `chat-revela`, `acao-entra`); teste `src/test/EntradaDeMensagens.test.tsx`.
+  - [x] **Revisão: resposta "digitada"** — a máscara saiu; o plugin `rehypeDigitar` (`src/mobile/Chat.tsx`,
+    roda depois do sanitize) quebra o texto em `<span class="palavra">` com atraso crescente (≤25 ms
+    por palavra, resposta inteira em ~1,6 s), cada palavra acende desfocada → nítida, e um cursor neon
+    pisca no fim até sumir. Código acende inteiro (quebrar o `código` solto mataria o link de
+    arquivo). Entrada do balão mais suave (520 ms, ease-out longo, leve blur/scale). Mensagens
+    anteriores buscadas ao rolar não animam. Só o texto inicial do balão é digitado.
+- [x] **Cursor do campo de digitação personalizado** — `#reply` com `caret-color` no accent do tema e,
+  onde há `caret-animation: manual`, pulsa suave (accent → 20%) em vez de piscar seco.
+  `src/mobile/mobile.css` (fim). Sem movimento com `prefers-reduced-motion`.
+- [x] **Cursor neon desenhado (campo de digitação)** — substitui o `caret-color` animado. `src/mobile/CursorNeon.tsx`:
+  espelho invisível mede a posição do cursor no `<textarea>`; barra de 3 px no accent com brilho em
+  camadas + halo, desliza (transform 120 ms), "soco" de luz a cada tecla (remonta a luz) e respira
+  parado; some com seleção ou sem foco. Altura = altura da letra (com a da linha ficava baixo).
+  Nativo transparente (`#reply`), `.composer-campo-caixa` relativo. Teste `src/test/CursorNeon.test.tsx`.
+- [x] **Busca nas Configurações + acabamento premium** — `src/components/SettingsSearch.tsx`: índice
+  (`ITENS_DE_BUSCA`: seção, título do cartão/campo, sinônimos) + as próprias seções; busca sem
+  acento, todas as palavras, título pesa mais que sinônimo. Campo no topo (cresce e brilha no foco,
+  `Ctrl+F` ou `/` focam, Esc limpa/solta), painel com trecho aceso, ↑↓ Enter, estado vazio com
+  sugestões. Escolher troca a seção, rola até o cartão (`acenderNaTela`, tenta ~1,5 s p/ seções que
+  carregam dados) e ele pulsa no accent. Menu lateral apaga seções sem resultado e mostra contagem.
+  Visual (`src/index.css`, bloco "acabamento e busca"): fio de luz no topo, cabeçalho da seção com
+  barra/gradiente, menu e cartões em cascata, borda dos cartões acende no hover. Teste
+  `src/test/SettingsSearch.test.tsx`. Ao criar cartão novo nas Configurações, adicionar ao índice.

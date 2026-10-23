@@ -197,4 +197,21 @@ describe("Sidebar", () => {
     const ordem = [...nomes].sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)).map((n) => n.textContent);
     expect(ordem).toEqual(["Recente", "Meio", "Antiga"]);
   });
+
+  it("abas no topo: a das conversas avisa atenção e agente trabalhando; trocar mostra a outra", async () => {
+    const trabalhando: TerminalSession = {
+      id: "s9", name: "Refatorar", provider: "claude", project_id: "p", cwd: "C:/p", shell: "bash", state: "working", pid: 1, output_seq: 0, rows: 24, cols: 80,
+    };
+    renderSidebar({ agentSessions: [trabalhando] });
+
+    const conversas = screen.getByRole("button", { name: "Conversas · 1 pedindo atenção · agente trabalhando" });
+    expect(conversas).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("navigation", { name: "Conversas" })).toHaveTextContent("Cliente X");
+
+    await userEvent.click(screen.getByRole("button", { name: "Git" }));
+    expect(screen.getByRole("button", { name: "Git" })).toHaveAttribute("aria-pressed", "true");
+    expect(conversas).toHaveAttribute("aria-pressed", "false");
+    // Sem projeto aberto a aba explica em vez de ficar vazia.
+    expect(await screen.findByText("Abra um projeto para ver git.")).toBeInTheDocument();
+  });
 });

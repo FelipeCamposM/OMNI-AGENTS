@@ -145,8 +145,10 @@ export interface Comando { nome: string; descricao: string; origem: string }
 
 /** Quem abre um arquivo citado na conversa. Só o app do PC tem onde abrir (`usarAbrirArquivo` em
  *  `src/main.tsx`); na web e no celular fica `null` e o caminho continua texto. */
-let abridor: ((caminho: string) => void) | null = null;
-export function usarAbrirArquivo(novo: ((caminho: string) => void) | null) {
+/** Rejeita com o motivo quando não há o que abrir (arquivo que não existe no disco). */
+type Abridor = (caminho: string) => void | Promise<void>;
+let abridor: Abridor | null = null;
+export function usarAbrirArquivo(novo: Abridor | null) {
   abridor = novo;
 }
 export function abridorDeArquivo() {

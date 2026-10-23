@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { AppSettings, Background, GlassLevel, MotionLevel, Theme } from "../types/settings";
 import { UpdateCard } from "./UpdateCard";
+import { acenderNaTela, SettingsSearch, type Achado } from "./SettingsSearch";
 import { BACKGROUND_EFFECTS, isBackgroundEffect } from "./backgrounds/registry";
 import { PALETAS } from "../lib/palettes";
 import { CHANGELOG } from "../lib/changelog";
@@ -87,6 +88,16 @@ interface SettingsViewProps {
 export function SettingsView({ settings, onChange, onReset, initialSection, projectPath, projectPaths = [], onClose }: SettingsViewProps) {
   const [section, setSection] = useState<SectionId>(initialSection ?? "geral");
   const atual = SECTIONS.find((item) => item.id === section) ?? SECTIONS[0];
+  const conteudo = useRef<HTMLDivElement>(null);
+  // Com busca digitada: quantos resultados cada seção tem (as sem nenhum apagam no menu).
+  const [porSecao, setPorSecao] = useState<Map<string, number> | null>(null);
+  const aoBuscar = useCallback((achados: Achado[] | null) => {
+    setPorSecao(achados && new Map(achados.reduce((m, a) => m.set(a.secao.id, (m.get(a.secao.id) ?? 0) + 1), new Map<string, number>())));
+  }, []);
+  function irPara(achado: Achado) {
+    setSection(achado.secao.id as SectionId);
+    acenderNaTela(() => conteudo.current, achado.item.alvo ?? achado.item.titulo);
+  }
 
   // Reabrir pelo sino noutra pendência tem de pular de seção mesmo com a
   // tela já montada — o estado inicial sozinho não faria nada.
@@ -104,6 +115,7 @@ export function SettingsView({ settings, onChange, onReset, initialSection, proj
           <h1 className="pixel-text text-text-primary text-base">Configurações</h1>
           <p className="text-text-secondary text-xs">Preferências do OMNI neste computador. Tudo salva na hora.</p>
         </div>
+        <SettingsSearch secoes={SECTIONS} onIr={irPara} onConsulta={aoBuscar} />
         <Button
           size="sm"
           variant="ghost"
@@ -125,20 +137,22 @@ export function SettingsView({ settings, onChange, onReset, initialSection, proj
                 key={s.id}
                 onClick={() => setSection(s.id)}
                 aria-current={section === s.id ? "page" : undefined}
-                className="settings-menu-item"
+                className={`settings-menu-item${porSecao && !porSecao.has(s.id) ? " is-apagado" : ""}`}
+                style={{ animationDelay: `${SECTIONS.indexOf(s) * 28}ms` }}
               >
                 <span className="settings-menu-icone" aria-hidden><Icon className="h-4 w-4" /></span>
                 <span className="min-w-0">
                   <span className="settings-menu-nome">{s.label}</span>
                   <span className="settings-menu-desc">{s.desc}</span>
                 </span>
+                {porSecao?.has(s.id) && <span className="settings-menu-achados" aria-label={`${porSecao.get(s.id)} resultado(s)`}>{porSecao.get(s.id)}</span>}
               </button>
             );
           })}
         </nav>
 
         {/* `key`: trocar de seção remonta o conteúdo, e a entrada anima de novo. */}
-        <div key={section} className="settings-conteudo">
+        <div key={section} ref={conteudo} className="settings-conteudo">
           <div className="settings-secao glass">
             <atual.icon className="h-4 w-4 text-accent" aria-hidden />
             <h2 className="pixel-text text-text-primary text-sm">{atual.label}</h2>

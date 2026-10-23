@@ -29,6 +29,14 @@ describe("App shell", () => {
     expect(screen.getByText(/nenhum projeto ainda/i)).toBeInTheDocument();
   });
 
+  it("Panorama abre pelo topo e fecha no Esc", async () => {
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Panorama" }));
+    expect(screen.getByRole("heading", { name: "Panorama" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("heading", { name: "Panorama" })).not.toBeInTheDocument();
+  });
+
   it("adiciona um projeto pelo seletor de diretório", async () => {
     mockOpen.mockResolvedValueOnce("C:\\dev\\meu-projeto");
     render(<App />);

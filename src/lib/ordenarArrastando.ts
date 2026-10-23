@@ -8,9 +8,10 @@ import { motionOn } from "./motion";
  *
  * Cada item marca `data-ordem="<lista>"` e `data-ordem-id="<id>"`. Durante o arraste o item sob o
  * ponteiro ganha `data-soltar="antes" | "depois"` (a linha de inserção é CSS). Ao soltar:
- * `aoSoltar(id, beforeId)`, com `beforeId = null` para o fim da lista.
+ * `aoSoltar(id, beforeId)`, com `beforeId = null` para o fim da lista. `eixo = "x"` para uma fileira
+ * (antes/depois pela metade horizontal do alvo).
  */
-export function arrastarParaOrdenar(evento: ReactPointerEvent, lista: string, id: string, aoSoltar: (id: string, beforeId: string | null) => void) {
+export function arrastarParaOrdenar(evento: ReactPointerEvent, lista: string, id: string, aoSoltar: (id: string, beforeId: string | null) => void, eixo: "x" | "y" = "y") {
   if (evento.button !== 0) return;
   const origem = evento.currentTarget as HTMLElement;
   const { clientX, clientY, pointerId } = evento;
@@ -41,15 +42,14 @@ export function arrastarParaOrdenar(evento: ReactPointerEvent, lista: string, id
   function posicionar(x: number, y: number) {
     if (fantasma) fantasma.style.transform = `translate(${x - pega.x}px, ${y - pega.y}px)`;
   }
-  /** Leva o fantasma até `y` (o lugar onde o item vai ficar, ou de onde saiu) e some com ele. */
-  function pousar(y: number | null) {
+  /** Leva o fantasma até `alvo` (o lugar onde o item vai ficar, ou de onde saiu) e some com ele. */
+  function pousar(alvo: { left: number; top: number }) {
     const el = fantasma;
     fantasma = null;
     if (!el) return;
     if (!motionOn() || !el.animate) { el.remove(); return; }
-    const caixa = origem.getBoundingClientRect();
     const de = el.style.transform;
-    const para = y === null ? de : `translate(${caixa.left}px, ${y}px)`;
+    const para = `translate(${alvo.left}px, ${alvo.top}px)`;
     el.classList.add("ordenar-fantasma-pousando");
     el.animate([{ transform: de, opacity: 1 }, { transform: para, opacity: 0 }], { duration: 180, easing: "cubic-bezier(.2, .8, .3, 1)", fill: "forwards" })
       .finished.finally(() => el.remove());
@@ -76,7 +76,7 @@ export function arrastarParaOrdenar(evento: ReactPointerEvent, lista: string, id
     const item = document.elementFromPoint(proximo.clientX, proximo.clientY)?.closest<HTMLElement>(`[data-ordem="${lista}"]`) ?? null;
     if (!item) { marcar(null); destino = undefined; return; }
     const caixa = item.getBoundingClientRect();
-    const antes = proximo.clientY < caixa.top + caixa.height / 2;
+    const antes = eixo === "x" ? proximo.clientX < caixa.left + caixa.width / 2 : proximo.clientY < caixa.top + caixa.height / 2;
     const todos = itens();
     const seguinte = todos[todos.indexOf(item) + 1];
     destino = antes ? item.dataset.ordemId! : (seguinte?.dataset.ordemId ?? null);
@@ -85,10 +85,11 @@ export function arrastarParaOrdenar(evento: ReactPointerEvent, lista: string, id
   function limpar() {
     // Soltou num lugar válido: pousa na linha de inserção. Senão (Esc, fora da lista): volta para a origem.
     const linha = marcado?.getBoundingClientRect();
-    const altura = origem.getBoundingClientRect().height;
-    pousar(destino !== undefined && destino !== id && linha
-      ? (marcado?.dataset.soltar === "antes" ? linha.top - altura / 2 : linha.bottom - altura / 2)
-      : origem.getBoundingClientRect().top);
+    const caixa = origem.getBoundingClientRect();
+    const antes = marcado?.dataset.soltar === "antes";
+    pousar(!(destino !== undefined && destino !== id && linha) ? caixa
+      : eixo === "x" ? { top: caixa.top, left: (antes ? linha.left : linha.right) - caixa.width / 2 }
+      : { left: caixa.left, top: (antes ? linha.top : linha.bottom) - caixa.height / 2 });
     if (origem.hasPointerCapture?.(pointerId)) origem.releasePointerCapture?.(pointerId);
     window.removeEventListener("pointermove", mover);
     window.removeEventListener("pointerup", soltar);

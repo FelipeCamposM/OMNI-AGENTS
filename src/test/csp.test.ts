@@ -29,6 +29,7 @@ const DIRETIVAS = {
   "img-src": "miniatura de imagem, PDF e depth map",
   "media-src": "prévia de vídeo e áudio",
   "connect-src": "pdf.js buscando o PDF",
+  "frame-src": "PDF aberto no leitor nativo do WebView",
 };
 
 function diretiva(nome: string): string {

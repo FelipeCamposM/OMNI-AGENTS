@@ -37,6 +37,18 @@ export function falaDoNavegador(): (new () => Reconhecedor) | null {
 
 export interface Escuta { parar: () => void; cancelar: () => void }
 
+/** Erro `network` da fala do navegador: ele não alcança o serviço de fala. Brave, Opera, Vivaldi e o
+ *  Chromium puro sempre dão isso (não têm o serviço do Google); Chrome e Edge, só sem internet. */
+export const FALA_SEM_SERVICO = "A fala deste navegador não está disponível (Brave, Opera e Chromium não têm o serviço). Use o Chrome ou o Edge, ou baixe a voz no PC em Configurações.";
+const CHAVE_SEM_SERVICO = "omni-fala-sem-servico";
+/** Já deu `network` nesta aba: o microfone passa a usar a voz do PC, se houver. */
+export function falaSemServico(): boolean {
+  try { return sessionStorage.getItem(CHAVE_SEM_SERVICO) === "1"; } catch { return false; }
+}
+function marcarSemServico() {
+  try { sessionStorage.setItem(CHAVE_SEM_SERVICO, "1"); } catch { /* sem armazenamento: tenta de novo na próxima */ }
+}
+
 /**
  * Escuta contínua: `aoTexto` recebe a fala inteira até agora (final + parcial) a cada palavra. O Chrome
  * encerra sozinho depois de um silêncio; aqui religa até a pessoa parar, guardando o que já veio.
@@ -63,7 +75,7 @@ export function ouvir(aoTexto: (falado: string) => void, aoFim: (erro: string | 
     r.onerror = (evento) => {
       // "no-speech" é só silêncio; "aborted" é o nosso cancelar.
       if (evento.error === "not-allowed" || evento.error === "service-not-allowed") { erro = "Sem acesso ao microfone. Libere a permissão do navegador e tente de novo."; ativo = false; }
-      else if (evento.error === "network") { erro = "Sem conexão com o reconhecimento de fala do navegador."; ativo = false; }
+      else if (evento.error === "network") { erro = FALA_SEM_SERVICO; ativo = false; marcarSemServico(); }
     };
     r.onend = () => {
       guardado = juntar(guardado, atual);
