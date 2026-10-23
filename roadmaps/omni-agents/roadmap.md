@@ -3946,3 +3946,9 @@ Relato: "fiz um fork e ficou totalmente vazio, tem que aparecer o mesmo históri
   Visual (`src/index.css`, bloco "acabamento e busca"): fio de luz no topo, cabeçalho da seção com
   barra/gradiente, menu e cartões em cascata, borda dos cartões acende no hover. Teste
   `src/test/SettingsSearch.test.tsx`. Ao criar cartão novo nas Configurações, adicionar ao índice.
+
+### Release v0.7.7 publicada (2026-10-23)
+
+- [x] Busca nas Configurações, Panorama, exportar conversa, resposta "digitada" + cursor neon, perguntas instantâneas com
+  Voltar, Parar devolve o texto, logos das extensões, redesign da web. Saiu pelo fluxo de release (`bd39d35`), build do
+  GitHub verde, release `v0.7.7` publicada como latest; `latest.json` servindo 0.7.7.
