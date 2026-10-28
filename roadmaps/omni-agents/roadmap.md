@@ -41,7 +41,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
-### Criar fluxo a partir de uma conversa (2026-10-25, sem release)
+### Criar fluxo a partir de uma conversa (2026-10-25, v0.7.8)
 
 - [x] "Criar fluxo com IA" ganhou o seletor **Basear numa conversa** (`DialogoDeFluxoComIa`, `src/features/fluxos/FluxosView.tsx`):
   lista as conversas do projeto aberto (`conversasDoProjeto`/`listarConversasParaFluxo` em `fluxosService.ts`) e manda o
@@ -52,7 +52,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 - [x] Teste: `src/test/FluxoDeConversa.test.ts`.
 - Próximo (se pedir): botão "Virar fluxo" direto no menu da conversa; pacote com todos os pedidos do usuário.
 
-### Faxina de documentação + acervo de telas + aprovação remota + ramos paralelos (2026-10-25, sem release)
+### Faxina de documentação + acervo de telas + aprovação remota + ramos paralelos (2026-10-25, v0.7.8)
 
 - [x] `CLAUDE.md` reescrito para o OMNI (o anterior era quase todo do CAMPS-UTILS). Roadmap antigo arquivado em
   `roadmap-historico.md`; este ficou só com pendências e entregas novas.
@@ -71,7 +71,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 - Limite: ramos paralelos dividem o mesmo worktree. Próximo, se doer: worktree por ramo + merge no Juntar.
 - Precisa de `npm run dev` (engine recompila) para valer; app instalado só na próxima release.
 
-### Diálogo de Resume + "não reconhecida" depois do /compact (2026-10-25, sem release)
+### Diálogo de Resume + "não reconhecida" depois do /compact (2026-10-25, v0.7.8)
 
 - [x] "Resume this conversation?" (conversa ociosa e grande) e "Resume from summary" travavam a sessão (menu sem
   número). Os dois respeitam `resumeReturnDismissed` no `.claude.json` da conta (achado no binário da 2.1.310): o
@@ -83,7 +83,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 - Compactação aos 400k não rodou naquela sessão porque o processo era anterior à v0.7.3 (env
   `CLAUDE_CODE_AUTO_COMPACT_WINDOW`) e depois bateu o limite de uso (compactar também gasta limite). A env segue válida na 2.1.310.
 
-### Troca de conta e compactação automáticas no engine (2026-10-26, sem release)
+### Troca de conta e compactação automáticas no engine (2026-10-26, v0.7.8)
 
 - [x] Saíram do `TerminalPane` (só rodavam com a aba aberta no desktop) para `crates/omni-engine/src/automatico.rs`, um
   laço de 2 s sobre as sessões vivas: vale com a janela fechada e para quem usa só web/celular, e não manda duas vezes
@@ -104,19 +104,19 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 - Perdeu: o aviso "conta X disponível" no horário do reset (a conta volta ao rodízio igual, só sem selo).
 - Precisa de `npm run dev` para valer; app instalado só na próxima release.
 
-### Cursor neon fora do lugar com texto longo (2026-10-26, sem release)
+### Cursor neon fora do lugar com texto longo (2026-10-26, v0.7.8)
 
 - Passando de 10rem o campo liga a barra de rolagem e o texto quebra antes; o espelho que mede o cursor
   (`CursorNeon.tsx`) usava a largura cheia, então o cursor aparecia numa linha e a letra entrava em outra.
   Agora o espelho usa a largura útil (`clientWidth`, sem a barra).
 
-### Parar logo depois de enviar deixava o texto no campo da CLI (2026-10-27, sem release)
+### Parar logo depois de enviar deixava o texto no campo da CLI (2026-10-27, v0.7.8)
 
 - O `/parar` saía na primeira leitura com o campo vazio; clicando rápido, a CLI ainda não tinha devolvido o
   prompt (ou a colagem ainda chegava), o texto aparecia depois e a conversa ficava "não reconhecida". Agora
   só sai com o campo livre por ~1,5 s seguidos (máx. 7,5 s), apagando o que voltar nesse meio-tempo.
 
-### Servidores locais na lateral (2026-10-27, sem release)
+### Servidores locais na lateral (2026-10-27, v0.7.8)
 
 - Aba nova "Servidores locais" (`ServidoresPanel.tsx`, `src-tauri/src/servidores.rs`): de que projeto é cada
   localhost rodando no PC, agrupado por pasta (Next abre 2 portas = 1 linha), com tipo (Vite, Next, Django…).
@@ -130,7 +130,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 - Testes: `servidores.rs` (leitura real encurtada), `ServidoresPanel.test.tsx`; diagnóstico ignorado
   `servidores_deste_pc`.
 
-### Conta extra sumindo da lista (2026-10-27, sem release)
+### Conta extra sumindo da lista (2026-10-27, v0.7.8)
 
 - Causa: `list_profiles` gravava o `profiles.json` a cada leitura, e várias leituras rodam juntas. No Windows,
   ler no meio do `rename` de outra gravação falha; a leitura caía no padrão vazio e a gravação seguinte
@@ -140,7 +140,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   registro é readotada (teste `conta_orfa_com_login_volta_para_a_lista`).
 - App instalado: entrada da `emailuber` devolvida à mão ao `profiles.json` (backup `.bak-2026-10-27`).
 
-### Celular com acabamento novo (2026-10-27, sem release)
+### Celular com acabamento novo (2026-10-27, v0.7.8)
 
 - `src/mobile/mobile.css`: camada "Acabamento do celular" no fim, só dentro de `.m-shell` (a visão Conversa do PC
   não muda). Sai a sombra preta deslocada; entram superfícies em degradê, filete do tema, halo e grade de fundo,
@@ -151,7 +151,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   cor do estado (`TopBar` ganhou `marca`). Conferido em print com o engine instalado.
 - Pendente: favicon do projeto também no celular (precisa de rota no engine servindo o arquivo).
 
-### Ícone real de MCP, plugin e conector, também na conversa (2026-10-27, sem release)
+### Ícone real de MCP, plugin e conector, também na conversa (2026-10-27, v0.7.8)
 
 - `src-tauri/src/icones_remotos.rs` (`icone_da_extensao(destino, nome)`): MCP remoto → `initialize`/`serverInfo.icons`;
   senão favicon (`<link rel=icon>`/apple-touch, depois `/favicon.ico`) do host, da marca pelo nome (lista: `stitch` →
@@ -166,7 +166,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 - Deps `reqwest` (`rustls-no-provider`) + `rustls` (ring) + `base64`: as do updater, lock sem crate nova.
 - Engine mudou (rota nova): o app instalado só pega na próxima release.
 
-### Favicon como símbolo de projeto e workspace (2026-10-27, sem release)
+### Favicon como símbolo de projeto e workspace (2026-10-27, v0.7.8)
 
 - `src/features/projects/iconesDoProjeto.ts`: varre o projeto (4 níveis, sem build/ocultas/`dist-*`) atrás de
   favicon/icon/logo/apple-touch; ordem: favicon, mais raso, svg/png antes de ico. Cache por pasta na sessão.
@@ -178,7 +178,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   favicons por projeto, com o atual marcado, entrada em cascata. CSS `.icone-*` no fim do `index.css`.
 - Conferido em print com as pastas reais do OMNI-AGENTS e do STUDYRATS. Testes em `iconesDoProjeto.test.tsx`.
 
-### Configurações → Agentes reorganizada (2026-10-27, sem release)
+### Configurações → Agentes reorganizada (2026-10-27, v0.7.8)
 
 - Na linguagem da lateral: uma faixa por IA (antes colunas desencontradas), contas lado a lado dentro dela,
   sem borda colorida por estado; cor do tema como destaque, estado em pontinho que pulsa, avatar com
@@ -186,7 +186,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   Cursor sem medidor de uso (não tem). Compactação em linhas: explicação à esquerda, escolha compacta à
   direita (`ag-ajuste`). Conferido em prévia com dados falsos (escuro e claro), não no app rodando.
 
-### Web do PC reorganizada + tarefas no engine (2026-10-28, sem release)
+### Web do PC reorganizada + tarefas no engine (2026-10-28, v0.7.8)
 
 - Coluna da direita saiu: "Precisa de você" (aprovações de fluxo + pedidos) mora no topo da lateral, com
   avatar do agente, pontinho de estado e o projeto. "Abertas no PC" do projeto em grupos: Pedindo você /
@@ -201,3 +201,10 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 - Tela estreita (celular abrindo a web): uma coisa por vez — lista ou o que foi aberto, com voltar.
 - Conferido em prévia com engine de mentira + conversas falsas (1600px e 600px), não no app rodando.
   Pendente: o celular (`index.html`) não ganhou passe visual novo nesta rodada.
+
+### Release v0.7.8 (2026-10-28)
+
+- Publicada: commit `177f823`, tag `v0.7.8`, `latest.json` respondendo 0.7.8. Entregas acima marcadas v0.7.8.
+- Instalador NSIS com visual novo (`src-tauri/installer/sidebar.bmp` 164x314 e `header.bmp` 150x57, gerados com PIL a
+  partir de `icons/icon.png`), ícone do app e idioma `PortugueseBR` (`bundle.windows.nsis`). Compilado localmente; telas
+  do instalador não conferidas rodando.
