@@ -23,6 +23,8 @@ export interface Plugin {
   arquivo: string;
   /** Logo do pacote (`data:` URI), quando o manifesto traz. */
   logo?: string;
+  /** Site do manifesto (homepage/repositório/autor): de onde o app busca o ícone sem logo. */
+  site?: string;
 }
 
 export interface ExtensoesDaConta {
@@ -65,8 +67,16 @@ export interface FonteDeExtensoes {
   definirPrincipal: (provider: string, contaId: string) => Promise<void>;
   /** "Mostrar no Explorer" só existe no app do PC. */
   explorer: boolean;
+  /** Ícone real de MCP (URL ou comando), conector (`conector:<nome>`) ou plugin (`pacote:<site>`), em `data:`;
+   *  `nome` ajuda a achar a marca. Só o app do PC busca. */
+  icone?: (destino: string, nome: string) => Promise<string | null>;
+}
+
+/** Pergunta ao servidor MCP (`serverInfo.icons`) ou pega o favicon do site; o Rust guarda em cache. */
+export async function iconeDaExtensao(destino: string, nome: string): Promise<string | null> {
+  return (await invoke<string | null>("icone_da_extensao", { destino, nome })) ?? null;
 }
 
 export function fonteDoApp(projectPath: string | null): FonteDeExtensoes {
-  return { listar: () => listarExtensoes(projectPath), lerCompartilhamento, definirCompartilhamento, definirPrincipal, explorer: true };
+  return { listar: () => listarExtensoes(projectPath), lerCompartilhamento, definirCompartilhamento, definirPrincipal, explorer: true, icone: iconeDaExtensao };
 }

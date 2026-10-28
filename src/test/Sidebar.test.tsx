@@ -214,4 +214,10 @@ describe("Sidebar", () => {
     // Sem projeto aberto a aba explica em vez de ficar vazia.
     expect(await screen.findByText("Abra um projeto para ver git.")).toBeInTheDocument();
   });
+
+  it("botão da linha do workspace abre a escolha de ícone", async () => {
+    renderSidebar({ onSetWorkspaceIcon: vi.fn() });
+    await userEvent.click(screen.getByRole("button", { name: "Escolher ícone do workspace Cliente X" }));
+    expect(await screen.findByRole("dialog", { name: "Ícone de Cliente X" })).toBeInTheDocument();
+  });
 });

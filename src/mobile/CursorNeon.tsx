@@ -18,6 +18,10 @@ function medir(campo: HTMLTextAreaElement) {
   const espelho = document.createElement("div");
   for (const p of MEDIDAS) espelho.style[p] = estilo[p];
   Object.assign(espelho.style, { position: "absolute", visibility: "hidden", top: "0", left: "-9999px", borderStyle: "solid", whiteSpace: "pre-wrap", overflowWrap: "break-word" });
+  // Largura útil de verdade: com a barra de rolagem ligada (texto longo) o texto quebra antes, e o
+  // espelho com a largura cheia punha o cursor numa linha enquanto a letra entrava em outra.
+  const bordas = parseFloat(estilo.borderLeftWidth) + parseFloat(estilo.borderRightWidth) || 0;
+  Object.assign(espelho.style, { boxSizing: "border-box", width: `${campo.clientWidth + bordas}px` });
   espelho.textContent = campo.value.slice(0, campo.selectionStart ?? campo.value.length);
   const marca = document.createElement("span");
   marca.textContent = "​";

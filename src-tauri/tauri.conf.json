@@ -1,6 +1,6 @@
 {
   "productName": "OMNI AGENTS",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "identifier": "com.omni.agents",
   "build": {
     "frontendDist": "../dist",
@@ -51,7 +51,13 @@
     ],
     "windows": {
       "nsis": {
-        "installerHooks": "installer-hooks.nsh"
+        "installerHooks": "installer-hooks.nsh",
+        "installerIcon": "icons/icon.ico",
+        "sidebarImage": "installer/sidebar.bmp",
+        "headerImage": "installer/header.bmp",
+        "languages": [
+          "PortugueseBR"
+        ]
       }
     },
     "macOS": {

@@ -3,7 +3,7 @@ import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { AgentIcon } from "../../components/ui/AgentIcon";
 import { Button } from "../../components/ui";
 import { CloudIcon, FolderIcon, PackageIcon, ReloadIcon, ServerIcon, StarFilledIcon, StarIcon } from "../../components/ui/PixelIcon";
-import { IconeDaExtensao } from "./IconeDaExtensao";
+import { IconeDaExtensao, type BuscarIcone } from "./IconeDaExtensao";
 import { fonteDoApp, type ExtensoesDaConta, type FonteDeExtensoes, type Mcp, type Plugin } from "./extensoesService";
 
 type Provider = "claude" | "codex" | "cursor";
@@ -191,9 +191,9 @@ export function ExtensoesSettings({ projectPath, fonte: fonteRecebida }: {
                 <span className="ext-contagem">{conta[tipoAtual].length}</span>
               </header>
             )}
-            {tipoAtual === "mcps" && <ListaDeMcps mcps={conta.mcps} projectPath={projectPath} vazio={COMO_ADICIONAR[ia].mcps} />}
-            {tipoAtual === "plugins" && <ListaDePlugins plugins={conta.plugins} vazio={COMO_ADICIONAR[ia].plugins} />}
-            {tipoAtual === "conectores" && <ListaDeConectores conectores={conta.conectores} vazio={COMO_ADICIONAR[ia].conectores} />}
+            {tipoAtual === "mcps" && <ListaDeMcps mcps={conta.mcps} projectPath={projectPath} vazio={COMO_ADICIONAR[ia].mcps} buscar={fonte.icone} />}
+            {tipoAtual === "plugins" && <ListaDePlugins plugins={conta.plugins} vazio={COMO_ADICIONAR[ia].plugins} buscar={fonte.icone} />}
+            {tipoAtual === "conectores" && <ListaDeConectores conectores={conta.conectores} vazio={COMO_ADICIONAR[ia].conectores} buscar={fonte.icone} />}
             <OndeFica arquivos={conta.arquivos} explorer={fonte.explorer} />
           </section>
         ))}
@@ -204,7 +204,7 @@ export function ExtensoesSettings({ projectPath, fonte: fonteRecebida }: {
 
 const ESCOPO: Record<Mcp["escopo"], string> = { global: "Todo projeto", pasta: "Só numa pasta", projeto: "Do projeto" };
 
-function ListaDeMcps({ mcps, projectPath, vazio }: { mcps: Mcp[]; projectPath: string | null; vazio: ReactNode }) {
+function ListaDeMcps({ mcps, projectPath, vazio, buscar }: { mcps: Mcp[]; projectPath: string | null; vazio: ReactNode; buscar?: BuscarIcone }) {
   if (mcps.length === 0) return <Vazio icone={<ServerIcon className="h-5 w-5" />} texto="Nenhum MCP configurado." dica={vazio} />;
   // Os que valem no projeto aberto primeiro; depois os de outras pastas.
   const aqui = (mcp: Mcp) => mcp.escopo !== "pasta" || (projectPath && mesmaPasta(mcp.pasta, projectPath));
@@ -215,7 +215,7 @@ function ListaDeMcps({ mcps, projectPath, vazio }: { mcps: Mcp[]; projectPath: s
         <li key={`${mcp.nome}-${mcp.escopo}-${mcp.pasta ?? ""}-${indice}`}
           className={`ext-item${mcp.ativo ? "" : " is-desligado"}${projectPath && !aqui(mcp) ? " is-fora" : ""}`}>
           <div className="ext-item-linha">
-            <IconeDaExtensao nome={mcp.nome} destino={mcp.destino} />
+            <IconeDaExtensao nome={mcp.nome} destino={mcp.destino} remoto={mcp.destino} buscar={buscar} />
             <span className={`ext-item-icone is-${mcp.tipo === "stdio" ? "local" : "remoto"}`} aria-hidden title={mcp.tipo === "stdio" ? "Local" : "Remoto"}>
               {mcp.tipo === "stdio" ? <ServerIcon className="h-3 w-3" /> : <CloudIcon className="h-3 w-3" />}
             </span>
@@ -240,13 +240,14 @@ function ListaDeMcps({ mcps, projectPath, vazio }: { mcps: Mcp[]; projectPath: s
   );
 }
 
-function ListaDePlugins({ plugins, vazio }: { plugins: Plugin[]; vazio: ReactNode }) {
+function ListaDePlugins({ plugins, vazio, buscar }: { plugins: Plugin[]; vazio: ReactNode; buscar?: BuscarIcone }) {
   if (plugins.length === 0) return <Vazio icone={<PackageIcon className="h-5 w-5" />} texto="Nenhum plugin instalado." dica={vazio} />;
   return (
     <ul className="ext-grade">
       {plugins.map((plugin) => (
         <li key={`${plugin.nome}@${plugin.origem ?? ""}`} className={`ext-plugin${plugin.ativo ? "" : " is-desligado"}`}>
-          <IconeDaExtensao nome={plugin.nome} logo={plugin.logo} destino={plugin.origem ?? undefined} />
+          <IconeDaExtensao nome={plugin.nome} logo={plugin.logo} destino={plugin.origem ?? undefined}
+            remoto={`pacote:${plugin.site ?? ""}`} buscar={buscar} />
           <span className="min-w-0 flex-1">
             <span className="ext-item-nome block truncate">{plugin.nome}</span>
             <span className="ext-plugin-meta">
@@ -261,7 +262,7 @@ function ListaDePlugins({ plugins, vazio }: { plugins: Plugin[]; vazio: ReactNod
   );
 }
 
-function ListaDeConectores({ conectores, vazio }: { conectores: string[]; vazio: ReactNode }) {
+function ListaDeConectores({ conectores, vazio, buscar }: { conectores: string[]; vazio: ReactNode; buscar?: BuscarIcone }) {
   if (conectores.length === 0) return <Vazio icone={<CloudIcon className="h-5 w-5" />} texto="Nenhum conector do claude.ai conectado nesta conta." dica={vazio} />;
   return (
     <>
@@ -271,7 +272,7 @@ function ListaDeConectores({ conectores, vazio }: { conectores: string[]; vazio:
       </p>
       <ul className="ext-conectores">
         {conectores.map((nome) => (
-          <li key={nome} className="ext-conector"><IconeDaExtensao nome={nome} />{nome}</li>
+          <li key={nome} className="ext-conector"><IconeDaExtensao nome={nome} remoto={`conector:${nome}`} buscar={buscar} />{nome}</li>
         ))}
       </ul>
     </>

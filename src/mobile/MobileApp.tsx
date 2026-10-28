@@ -7,7 +7,7 @@ import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { Select } from "../components/ui/Select";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
-import { ArchiveIcon, ArrowLeftIcon, AttachmentIcon, ChatIcon, EditIcon, FolderIcon, GitBranchIcon, NotesIcon, PlayIcon, ReloadIcon, WarningIcon } from "../components/ui/PixelIcon";
+import { AlertIcon, ArchiveIcon, ArrowLeftIcon, AttachmentIcon, ChatIcon, EditIcon, FolderIcon, GitBranchIcon, NotesIcon, PlayIcon, ReloadIcon, SearchIcon, WarningIcon } from "../components/ui/PixelIcon";
 import { NOME_DO_AGENTE, request, requestSeMudou, esquecerVersao, actionKey, ApiError, type Comando, type Conversation, type Mensagem, type Projects, type Timeline } from "./api";
 import { AgentWorking, BlocoDeAcoes, LinhaDeAviso, LinhaDeComando, MessageBubble, PairingScreen } from "./Chat";
 import { Composer } from "./Composer";
@@ -26,6 +26,7 @@ import { useDados } from "./useDados";
 import { usePoll } from "./usePoll";
 import { corrigir, transcrever, useVozInstalada } from "./voz";
 import { UsoDasContas } from "../web/UsoDasContas";
+import { AprovacoesDeFluxo } from "./AprovacoesDeFluxo";
 import { PreviasLocais } from "../web/PreviasLocais";
 
 const STATES: Record<string,string> = { working: "Trabalhando", answered: "Resposta disponível", approval_required: "Aprovação pendente", stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido" };
@@ -93,8 +94,10 @@ function idadeDaLista(publishedAtMs: number): string | null {
 
 /* ─────────────────────────────────────────────────────────────── estrutura */
 
-function TopBar({ titulo, subtitulo, onVoltar, onAtualizar }: {
+function TopBar({ titulo, subtitulo, onVoltar, onAtualizar, marca }: {
   titulo: ReactNode; subtitulo?: ReactNode; onVoltar?: () => void; onAtualizar: () => Promise<void>;
+  /** Avatar ao lado do título (a IA da conversa, com o anel do estado). */
+  marca?: ReactNode;
 }) {
   const [girando, setGirando] = useState(false);
   return (
@@ -104,6 +107,7 @@ function TopBar({ titulo, subtitulo, onVoltar, onAtualizar }: {
             <ArrowLeftIcon aria-hidden className="h-5 w-5" />
           </button>
         : <OmniLogo className="neon-glow m-topo-logo" />}
+      {marca}
       <div className="m-topo-texto">
         <div className="m-topo-titulo">{titulo}</div>
         {subtitulo && <div className="m-topo-sub">{subtitulo}</div>}
@@ -116,15 +120,45 @@ function TopBar({ titulo, subtitulo, onVoltar, onAtualizar }: {
   );
 }
 
+/** Topo do início: saudação pela hora, a data e uma frase do que está acontecendo agora. */
+function Saudacao({ trabalhando, aguardando, aviso, children }: { trabalhando: number; aguardando: number; aviso: string | null; children: ReactNode }) {
+  const agora = new Date();
+  const hora = agora.getHours();
+  const ola = hora < 5 ? "Boa madrugada" : hora < 12 ? "Bom dia" : hora < 18 ? "Boa tarde" : "Boa noite";
+  const data = agora.toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" });
+  const frase = aguardando > 0
+    ? `${aguardando} ${aguardando === 1 ? "conversa espera" : "conversas esperam"} por você`
+    : trabalhando > 0
+    ? `${trabalhando} ${trabalhando === 1 ? "agente trabalhando" : "agentes trabalhando"} agora`
+    : "Tudo em dia por aqui";
+  return (
+    <section className="m-ola" aria-label="Resumo">
+      <span className="m-ola-brilho" aria-hidden />
+      <p className="m-ola-data">{data}</p>
+      <h1 className="m-ola-titulo">{ola}</h1>
+      <p className="m-ola-frase" data-tom={aguardando > 0 ? "alerta" : trabalhando > 0 ? "ativo" : "neutro"}>
+        <span className="m-ola-ponto" aria-hidden />{frase}
+      </p>
+      {aviso && <p className="m-ola-aviso">{aviso}</p>}
+      {children}
+    </section>
+  );
+}
+
 function Vazio({ children }: { children: ReactNode }) {
   return <p className="m-vazio">{children}</p>;
 }
 
-export function Secao({ titulo, children, acao }: { titulo: string; children: ReactNode; acao?: ReactNode }) {
+export function Secao({ titulo, children, acao, icone, total }: {
+  titulo: string; children: ReactNode; acao?: ReactNode; icone?: ReactNode; total?: number;
+}) {
   return (
     <section className="m-secao">
       <div className="m-secao-cabecalho">
+        {icone && <span className="m-secao-icone" aria-hidden>{icone}</span>}
         <h2 className="m-secao-titulo">{titulo}</h2>
+        {total !== undefined && total > 0 && <span className="m-secao-total">{total}</span>}
+        <span className="m-secao-linha" aria-hidden />
         {acao}
       </div>
       {children}
@@ -137,6 +171,13 @@ export function Secao({ titulo, children, acao }: { titulo: string; children: Re
 /** Pasta oculta (`.worker-data`), temporária (`AppData/Local/Temp`) ou worktree de execução: agente
  *  rodado por outro programa, teste ou fluxo, não projeto de alguém. Só aparece em "Mostrar todos" e na busca. */
 export const PASTA_TEMPORARIA = /[\\/](\.[^\\/]+|Temp|tmp|worktrees)([\\/]|$)/i;
+
+/** Um dos 8 tons de `.m-monograma[data-cor]`, sempre o mesmo para o mesmo nome. */
+function corDoNome(nome: string): number {
+  let soma = 0;
+  for (const letra of nome) soma = (soma * 31 + letra.charCodeAt(0)) >>> 0;
+  return soma % 8;
+}
 
 /** `D:\a\b\PROJETO` → `a/b`: a pasta de onde o projeto vem, curta o bastante para caber no card. */
 function pastaCurta(caminho: string): string {
@@ -170,7 +211,10 @@ export function ProjectList({ projects, conversations, abrir, limite = Infinity,
     return <li key={project.id}>
       <button type="button" className="m-card glass glass-hover" onClick={() => abrir(project.id)} title={project.path}
         aria-label={`Abrir projeto ${project.name}, ${doProjeto.length} conversa(s)`}>
-        <span className="m-card-icone"><FolderIcon aria-hidden className="h-5 w-5" /></span>
+        <span className="m-card-icone m-monograma" data-cor={corDoNome(project.name)} aria-hidden>
+          {project.name.replace(/[^\p{L}\p{N}]/gu, "").slice(0, 2).toUpperCase() || <FolderIcon className="h-5 w-5" />}
+          {trabalhando > 0 && <span className="m-monograma-vivo" />}
+        </span>
         <span className="m-card-corpo">
           <span className="m-card-titulo">{project.name}</span>
           <span className="m-card-sub">
@@ -195,13 +239,16 @@ export function ProjectList({ projects, conversations, abrir, limite = Infinity,
   </>;
 }
 
-export function ConversationList({ conversations, perfis, projetos = [], mostrarProjeto = false, abrir, vazio, ativa = null, naoVistas }: {
+export function ConversationList({ conversations, perfis, projetos = [], mostrarProjeto = false, abrir, vazio, ativa = null, naoVistas, aoLado, abertas }: {
   conversations: Conversation[]; perfis: Projects["profiles"]; projetos?: Projects["projects"];
   mostrarProjeto?: boolean; abrir: (id: string) => void; vazio: string;
   /** Conversa aberta ao lado (web): fica marcada na lista. */
   ativa?: string | null;
   /** Conversas com aviso que você ainda não viu — o que separa "finalizado" do neutro, como no PC. */
   naoVistas?: ReadonlySet<string>;
+  /** Web: abre a conversa ao lado das que já estão abertas. */
+  aoLado?: (id: string) => void;
+  abertas?: readonly string[];
 }) {
   if (conversations.length === 0) return <Vazio>{vazio}</Vazio>;
   return <ul className="m-lista">{conversations.map(c => {
@@ -234,6 +281,8 @@ export function ConversationList({ conversations, perfis, projetos = [], mostrar
           {haQuanto(c.updated_at_ms) && <time className="m-card-tempo">{haQuanto(c.updated_at_ms)}</time>}
         </span>
       </button>
+      {aoLado && !abertas?.includes(c.id) && <button type="button" className="m-card-aolado" onClick={() => aoLado(c.id)}
+        aria-label={`Abrir ${c.title} ao lado`} title="Abrir ao lado">+</button>}
     </li>;
   })}</ul>;
 }
@@ -1185,12 +1234,16 @@ export function MobileApp() {
 
   let titulo: ReactNode = <span className="pixel-text">OMNI AGENTS</span>;
   let subtitulo: ReactNode = null;
+  let marca: ReactNode = null;
   let conteudo: ReactNode;
 
   if (rota.tela === "conversa") {
     if (conversa) {
       const aprovar = Boolean(conversa.capabilities?.approve);
       titulo = conversa.title;
+      marca = <span className="m-topo-marca" data-estado={aprovar ? "aprovacao" : conversa.state ?? "parado"} aria-hidden>
+        {conversa.provider ? <AgentIcon provider={conversa.provider} size={18} /> : <ChatIcon className="h-4 w-4" />}
+      </span>;
       subtitulo = <>
         <span className={`m-dot ${tomDoEstado(conversa.state, aprovar)}`} aria-hidden />
         {conversa.provider && <AgentIcon provider={conversa.provider} size={12} className="shrink-0" />}
@@ -1219,7 +1272,7 @@ export function MobileApp() {
       subtitulo = <span className="truncate">{projeto.path}</span>;
       conteudo = <>
         {catalog && projeto.path && <NovaSessao project={projeto} catalog={catalog} onCriada={refresh} />}
-        <Secao titulo="Conversas">
+        <Secao titulo="Conversas" icone={<ChatIcon className="h-3.5 w-3.5" />} total={doProjeto.length}>
           <SegmentedControl<"todas" | "atencao"> value={onlyAttention ? "atencao" : "todas"}
             onChange={valor => setOnlyAttention(valor === "atencao")}
             options={[{ value: "todas", label: "Todas" }, { value: "atencao", label: `Atenção (${aguardando})` }]} />
@@ -1247,51 +1300,59 @@ export function MobileApp() {
     const termo = query.trim().toLocaleLowerCase("pt-BR");
     const projetosDaBusca = projetos.filter(p => `${p.name} ${p.path}`.toLocaleLowerCase("pt-BR").includes(termo));
     conteudo = <>
-      {aviso && <p className="m-aviso">{aviso}</p>}
+      <Saudacao trabalhando={trabalhandoAgora} aguardando={attention.length} aviso={aviso}>
       {/* Painel do início: o que está acontecendo agora, em três números. "Precisa de você" filtra. */}
       <div className="m-resumo">
         <button type="button" className="m-resumo-item glass" data-tom="ativo" onClick={() => setOnlyAttention(false)}>
+          <PlayIcon aria-hidden className="m-resumo-icone" />
           <span className="m-resumo-num">{trabalhandoAgora}</span>
           <span className="m-resumo-rotulo">Trabalhando</span>
         </button>
         <button type="button" className="m-resumo-item glass" data-tom="alerta" aria-pressed={onlyAttention}
           onClick={() => setOnlyAttention(valor => !valor)}>
+          <AlertIcon aria-hidden className="m-resumo-icone" />
           <span className="m-resumo-num">{attention.length}</span>
           <span className="m-resumo-rotulo">Aguardando</span>
         </button>
         <button type="button" className="m-resumo-item glass" data-tom="neutro" onClick={() => setOnlyAttention(false)}>
+          <FolderIcon aria-hidden className="m-resumo-icone" />
           <span className="m-resumo-num">{projetos.length}</span>
           <span className="m-resumo-rotulo">Projetos</span>
         </button>
       </div>
+      </Saudacao>
+      <AprovacoesDeFluxo />
       <section className="m-uso glass" aria-label="Uso das IAs"><UsoDasContas contaAtiva={null} /></section>
       <section className="m-uso glass" aria-label="Prévia no navegador"><PreviasLocais /></section>
-      <Input type="search" value={query} onChange={event => setQuery(event.target.value)}
-        placeholder="Pesquisar projetos e conversas" aria-label="Pesquisar projetos e conversas" className="m-busca" />
+      <label className="m-busca-caixa">
+        <SearchIcon aria-hidden className="m-busca-lupa" />
+        <Input type="search" value={query} onChange={event => setQuery(event.target.value)}
+          placeholder="Pesquisar projetos e conversas" aria-label="Pesquisar projetos e conversas" className="m-busca" />
+      </label>
       {query
         ? <>
-            <Secao titulo="Projetos">
+            <Secao titulo="Projetos" icone={<FolderIcon className="h-3.5 w-3.5" />} total={projetosDaBusca.length}>
               <ProjectList projects={projetosDaBusca} conversations={visiveis} vazio="Nenhum projeto encontrado."
                 abrir={id => ir({ tela: "projeto", projeto: id })} />
             </Secao>
-            <Secao titulo="Conversas">
+            <Secao titulo="Conversas" icone={<ChatIcon className="h-3.5 w-3.5" />} total={resultadoDaBusca.length}>
               <ConversationList conversations={resultadoDaBusca} perfis={perfis} projetos={projetos}
                 mostrarProjeto abrir={abrirConversa} naoVistas={naoVistas} vazio="Nenhuma conversa encontrada." />
             </Secao>
           </>
         : onlyAttention
-        ? <Secao titulo="Precisa de você">
+        ? <Secao titulo="Precisa de você" icone={<AlertIcon className="h-3.5 w-3.5" />} total={attention.length}>
             <ConversationList conversations={attention} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
               naoVistas={naoVistas} vazio="Nada esperando por você agora." />
           </Secao>
         : <>
             {visiveis.length > 0 && (
-              <Secao titulo="Recentes">
+              <Secao titulo="Recentes" icone={<ChatIcon className="h-3.5 w-3.5" />}>
                 <ConversationList conversations={visiveis.slice(0, 3)} perfis={perfis} projetos={projetos} mostrarProjeto
                   abrir={abrirConversa} naoVistas={naoVistas} vazio="" />
               </Secao>
             )}
-            <Secao titulo="Projetos">
+            <Secao titulo="Projetos" icone={<FolderIcon className="h-3.5 w-3.5" />} total={projetos.length}>
               <ProjectList projects={projetos} conversations={visiveis} limite={6} abrir={id => ir({ tela: "projeto", projeto: id })} />
             </Secao>
           </>}
@@ -1299,7 +1360,7 @@ export function MobileApp() {
   }
 
   return <div className={rota.tela === "conversa" ? "m-shell m-shell-chat" : "m-shell"}>
-    <TopBar titulo={titulo} subtitulo={subtitulo} onAtualizar={atualizar}
+    <TopBar titulo={titulo} subtitulo={subtitulo} marca={marca} onAtualizar={atualizar}
       onVoltar={rota.tela === "inicio" ? undefined : () => voltar(pai)} />
     <main className="m-conteudo">
       {error && <p role="alert" className="m-alerta">Não foi possível conectar: {error}</p>}

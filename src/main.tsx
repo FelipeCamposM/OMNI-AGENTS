@@ -2,7 +2,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import "./index.css";
-import { usarAbrirArquivo, usarTransporte } from "./mobile/api";
+import { invoke } from "@tauri-apps/api/core";
+import { usarAbrirArquivo, usarBuscadorDeIcone, usarTransporte } from "./mobile/api";
 import { EVENTO_ABRIR_ARQUIVO } from "./mobile/anexos";
 import { transporteDoEngine } from "./features/conversa/transporteDoEngine";
 
@@ -14,6 +15,9 @@ usarTransporte(transporteDoEngine);
 usarAbrirArquivo((caminho) => new Promise<void>((ok, falha) => {
   window.dispatchEvent(new CustomEvent(EVENTO_ABRIR_ARQUIVO, { detail: { caminho, ok, falha } }));
 }));
+
+// Ícone da ferramenta chamada na conversa: o PC busca na rede e salva para a web/celular também.
+usarBuscadorDeIcone(async (chave) => (await invoke<string | null>("icone_da_ferramenta", { chave })) ?? null);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

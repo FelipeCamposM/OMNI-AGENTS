@@ -97,6 +97,18 @@ pub struct TerminalSession {
     /// transcript em disco.
     #[serde(default)]
     pub external_session_id: Option<String>,
+    /// O que o OMNI fez sozinho nesta sessão (troca de conta no limite, `/compact`, "continue"): o
+    /// selo da aba. Quem decide e age é o engine, com ou sem janela aberta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub automatico: Option<AvisoAutomatico>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AvisoAutomatico {
+    /// `working`, `success` ou `warning`.
+    pub tom: String,
+    pub texto: String,
+    pub detalhe: String,
 }
 
 /// Escrita atômica de JSON: grava em `.tmp` ao lado e renomeia por cima. Um crash no meio deixa o

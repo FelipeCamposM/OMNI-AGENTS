@@ -3,12 +3,13 @@
 //! O OMNI **nunca** guarda credencial: só nome, provider, caminho do config dir e datas (§9.4). A
 //! autenticação continua sendo do CLI, que grava dentro do config dir apontado pela env var.
 
-use omni_protocol::{atomic_write_json, read_json_or_default};
+use omni_protocol::atomic_write_json;
 use serde::{Deserialize, Serialize};
 use std::{
-    env, fs,
+    env, fs, io,
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    sync::Mutex,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 /// Reexportado do `omni-core`: o engine precisa da mesma tabela para abrir sessão pedida pelo
@@ -114,12 +115,68 @@ fn slugify(name: &str, taken: &[String]) -> String {
         .unwrap_or(base)
 }
 
-fn load() -> ProfileStore {
-    store_path().map(|path| read_json_or_default(&path)).unwrap_or_default()
+/// Uma leitura-e-gravação por vez. A tela pede a lista de contas de várias pontas ao mesmo tempo;
+/// no Windows, ler no meio do `rename` de outra gravação falha por um instante, a leitura caía no
+/// "arquivo vazio" e a gravação seguinte apagava as contas extras (a conta sumia da lista com a
+/// pasta e o login intactos).
+static TRAVA: Mutex<()> = Mutex::new(());
+
+/// Lê o `profiles.json`. Só arquivo inexistente vira lista vazia; falha de leitura tenta de novo e,
+/// persistindo, vira erro — quem chamou não grava em cima.
+fn load() -> Result<ProfileStore, String> {
+    let path = store_path()?;
+    let mut tentativas = 0;
+    loop {
+        match fs::read(&path) {
+            Ok(bytes) => return serde_json::from_slice(&bytes).map_err(|error| format!("profiles.json ilegível: {error}")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(ProfileStore::default()),
+            Err(error) if tentativas >= 20 => return Err(format!("profiles.json: {error}")),
+            Err(_) => { tentativas += 1; std::thread::sleep(Duration::from_millis(25)); }
+        }
+    }
 }
 
 fn save(store: &ProfileStore) -> Result<(), String> {
     atomic_write_json(&store_path()?, store).map_err(|error| error.to_string())
+}
+
+fn trava() -> std::sync::MutexGuard<'static, ()> {
+    TRAVA.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Lê, aplica `f` e grava, com a trava. Erro de leitura não grava nada.
+fn editar<R>(f: impl FnOnce(&mut ProfileStore) -> Result<R, String>) -> Result<R, String> {
+    let _trava = trava();
+    let mut store = with_defaults(load()?);
+    let resposta = f(&mut store)?;
+    save(&store)?;
+    Ok(resposta)
+}
+
+/// Conta com login numa pasta do OMNI (`profiles/<provider>/<id>`) que não está na lista volta para
+/// ela. Rede para o `profiles.json` que perdeu contas: apagar pelo app remove a pasta junto, então
+/// pasta com login e sem registro só sobra de perda.
+fn adotar_orfas(store: &mut ProfileStore, raiz: &Path) {
+    for provider in ["claude", "codex"] {
+        let Ok(pastas) = fs::read_dir(raiz.join(provider)) else { continue };
+        for pasta in pastas.flatten().map(|entrada| entrada.path()).filter(|p| p.is_dir()) {
+            let registrada = store.profiles.iter().any(|p| Path::new(&p.config_dir) == pasta);
+            if registrada || !credential_present(provider, &pasta) { continue; }
+            let nome = pasta.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let taken: Vec<String> = store.profiles.iter().map(|p| p.id.clone()).collect();
+            store.profiles.push(Profile {
+                id: slugify(&nome, &taken),
+                provider: provider.to_owned(),
+                name: nome,
+                config_dir: pasta.to_string_lossy().into_owned(),
+                builtin: false,
+                created_at_ms: now_ms(),
+                last_used_at_ms: None,
+                authenticated: false,
+                email: None,
+            });
+        }
+    }
 }
 
 /// Providers que o app suporta hoje. O Gemini saiu em 2026-09: o Google desligou o login por
@@ -149,6 +206,7 @@ fn with_defaults(mut store: ProfileStore) -> ProfileStore {
             email: None,
         });
     }
+    if let Ok(raiz) = profiles_root() { adotar_orfas(&mut store, &raiz); }
     store
 }
 
@@ -211,10 +269,15 @@ fn base64url_decode(input: &str) -> Option<Vec<u8>> {
 
 #[tauri::command(async)]
 pub fn list_profiles() -> Vec<Profile> {
-    let store = with_defaults(load());
-    // Os builtin recém-criados precisam sobreviver ao próximo boot, senão o `last_used_at`
-    // gravado depois cairia num arquivo sem eles.
-    let _ = save(&store);
+    let _trava = trava();
+    // Sem conseguir ler, mostra só as padrão e **não grava**: gravar aqui era o que apagava contas.
+    let Ok(lido) = load() else { return hydrate(with_defaults(ProfileStore::default())).profiles };
+    let ids = |store: &ProfileStore| store.profiles.iter().map(|p| p.id.clone()).collect::<Vec<_>>();
+    let antes = ids(&lido);
+    let store = with_defaults(lido);
+    // Os builtin recém-criados (e contas readotadas) precisam sobreviver ao próximo boot, senão o
+    // `last_used_at` gravado depois cairia num arquivo sem eles. Sem mudança, nada de gravar.
+    if ids(&store) != antes { let _ = save(&store); }
     hydrate(store).profiles
 }
 
@@ -246,7 +309,7 @@ pub fn create_profile(provider: String, name: String) -> Result<Profile, String>
             "O CLI do {provider} não suporta diretório de configuração alternativo — só o perfil padrão."
         ));
     }
-    let mut store = with_defaults(load());
+    editar(|store| {
     let taken: Vec<String> = store.profiles.iter().map(|profile| profile.id.clone()).collect();
     let id = slugify(&name, &taken);
     let config_dir = profiles_root()?.join(&provider).join(&id);
@@ -264,27 +327,24 @@ pub fn create_profile(provider: String, name: String) -> Result<Profile, String>
         email: None,
     };
     store.profiles.push(profile.clone());
-    save(&store)?;
     Ok(profile)
+    })
 }
 
 #[tauri::command(async)]
 pub fn rename_profile(profile_id: String, name: String) -> Result<(), String> {
-    let mut store = with_defaults(load());
-    let profile = store
-        .profiles
-        .iter_mut()
-        .find(|profile| profile.id == profile_id)
-        .ok_or("Perfil não encontrado")?;
-    profile.name = name.trim().to_owned();
-    save(&store)
+    editar(|store| {
+        let profile = store.profiles.iter_mut().find(|profile| profile.id == profile_id).ok_or("Perfil não encontrado")?;
+        profile.name = name.trim().to_owned();
+        Ok(())
+    })
 }
 
 /// Remove o registro **e** o config dir — é lá que mora a credencial daquela conta, e deixá-la
 /// para trás num diretório órfão seria pior do que apagar.
 #[tauri::command(async)]
 pub fn delete_profile(profile_id: String) -> Result<(), String> {
-    let mut store = with_defaults(load());
+    editar(|store| {
     let profile = store
         .profiles
         .iter()
@@ -299,7 +359,8 @@ pub fn delete_profile(profile_id: String) -> Result<(), String> {
         let _ = fs::remove_dir_all(&profile.config_dir);
     }
     store.profiles.retain(|item| item.id != profile_id);
-    save(&store)
+    Ok(())
+    })
 }
 
 /// Conta mestra das conversas de cada IA (`omni_core::mestra`): `provider → id da conta`, já com
@@ -322,11 +383,11 @@ pub fn definir_mestra(profile_id: String) -> Result<(), String> {
 }
 
 pub fn touch(profile_id: &str) {
-    let mut store = with_defaults(load());
-    if let Some(profile) = store.profiles.iter_mut().find(|profile| profile.id == profile_id) {
+    let _ = editar(|store| {
+        let profile = store.profiles.iter_mut().find(|profile| profile.id == profile_id).ok_or("Perfil não encontrado")?;
         profile.last_used_at_ms = Some(now_ms());
-        let _ = save(&store);
-    }
+        Ok(())
+    });
 }
 
 #[cfg(test)]
@@ -345,6 +406,21 @@ mod tests {
             authenticated: false,
             email: None,
         }
+    }
+
+    /// `profiles.json` que perdeu a conta: pasta com login volta para a lista; sem login, não.
+    #[test]
+    fn conta_orfa_com_login_volta_para_a_lista() {
+        let raiz = tempfile::tempdir().expect("raiz");
+        let com_login = raiz.path().join("claude").join("emailuber");
+        fs::create_dir_all(&com_login).unwrap();
+        fs::write(com_login.join(".credentials.json"), "{}").unwrap();
+        fs::create_dir_all(raiz.path().join("claude").join("sem-login")).unwrap();
+        let mut store = ProfileStore::default();
+        adotar_orfas(&mut store, raiz.path());
+        adotar_orfas(&mut store, raiz.path());
+        let ids: Vec<_> = store.profiles.iter().map(|p| (p.id.as_str(), p.provider.as_str())).collect();
+        assert_eq!(ids, vec![("emailuber", "claude")]);
     }
 
     /// Com `serde(skip)` o front nunca recebia `authenticated`, e o failover descartava toda conta.

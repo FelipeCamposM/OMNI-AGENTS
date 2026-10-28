@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { engineApi } from "../terminal/terminalService";
 
-export type TipoDeNo = "entrada" | "agente" | "condicao" | "aprovacao" | "sala" | "pr" | "comando" | "fim";
+export type TipoDeNo = "entrada" | "agente" | "condicao" | "aprovacao" | "sala" | "pr" | "comando" | "juntar" | "fim";
 
 export interface NoDoFluxo {
   id: string;
@@ -41,7 +41,7 @@ export interface ItemDoHistorico { kind: "text" | "tool" | "command" | "notice";
 
 /** Saídas de cada tipo, na ordem em que aparecem no nó ("" = a saída normal). */
 export const SAIDAS: Record<TipoDeNo, string[]> = {
-  entrada: [""], agente: [""], sala: [""], pr: [""], fim: [],
+  entrada: [""], agente: [""], sala: [""], pr: [""], juntar: [""], fim: [],
   condicao: ["sim", "nao", "esgotado"], comando: ["sim", "nao", "esgotado"], aprovacao: ["sim", "nao"],
 };
 
@@ -52,6 +52,7 @@ export const TIPOS: { tipo: TipoDeNo; nome: string; dica: string }[] = [
   { tipo: "sala", nome: "Time", dica: "Agentes conversando em rodadas até o consenso; sai uma ata" },
   { tipo: "pr", nome: "Pull request", dica: "Commit, push e gh pr create no branch da execução" },
   { tipo: "comando", nome: "Comando", dica: "Roda um comando (testes, build, script): deu certo → sim; falhou → não" },
+  { tipo: "juntar", nome: "Juntar", dica: "Espera todos os ramos paralelos que chegam nele e junta as saídas" },
   { tipo: "fim", nome: "Fim", dica: "Termina o fluxo" },
 ];
 
@@ -81,6 +82,28 @@ export const abrirConversaDoNo = (id: string, no: string) => api<{ session_id: s
 export interface FluxoGerado { fluxo: Fluxo; agentes_novos: import("../agentes/agentesService").ModeloDeAgente[] }
 /** Leva uns 30–90 s: o Claude monta o fluxo inteiro (e corrige uma vez se o JSON vier errado). */
 export const criarFluxoComIa = (descricao: string, projectPath: string | null) => invoke<FluxoGerado>("fluxos_criar_com_ia", { descricao, projectPath });
+
+/** "Basear numa conversa": as do projeto aberto (todas, sem projeto), mais recentes primeiro. */
+export function conversasDoProjeto(
+  conversas: { id: string; title: string; project_id: string; updated_at_ms?: number; hidden?: boolean }[],
+  projetos: { id: string; path: string }[], projectPath: string | null,
+) {
+  const norma = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const id = projectPath ? projetos.find((p) => norma(p.path) === norma(projectPath))?.id : undefined;
+  return conversas.filter((c) => !c.hidden && (!projectPath || c.project_id === id))
+    .sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0)).slice(0, 40);
+}
+export const listarConversasParaFluxo = async (projectPath: string | null) => {
+  const [conversas, catalogo] = await Promise.all([
+    api<Parameters<typeof conversasDoProjeto>[0]>("GET", "/conversas"), api<{ projects: { id: string; path: string }[] }>("GET", "/projetos"),
+  ]);
+  return conversasDoProjeto(conversas, catalogo.projects, projectPath);
+};
+/** O mesmo pacote do "Exportar para outro agente" (sem segredos), como referência para a IA. */
+export const pedidoComConversa = async (texto: string, conversaId: string) => {
+  const { markdown } = await api<{ markdown: string }>("GET", `/conversas/${e(conversaId)}/exportar`);
+  return `${texto.trim() || "Transforme o que foi feito nesta conversa num fluxo reutilizável."}\n\n## Conversa de referência\n\n${markdown}`;
+};
 
 /** Aceita o JSON de um fluxo (`{id, nome, nos, conexoes}`) ou o formato da IA (`{fluxo, agentes_novos}`). */
 export function lerJsonDeFluxo(texto: string): FluxoGerado {

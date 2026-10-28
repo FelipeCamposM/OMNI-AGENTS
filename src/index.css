@@ -1973,6 +1973,7 @@ body.redimensionando-lateral .xterm, body.redimensionando-lateral iframe { point
 .fx-no.is-sala { --fx-cor: 168 85 247; }
 .fx-no.is-pr { --fx-cor: 148 163 184; }
 .fx-no.is-comando { --fx-cor: 45 212 191; }
+.fx-no.is-juntar { --fx-cor: 244 114 182; }
 .fx-no.is-fim { --fx-cor: var(--c-text-muted); }
 .fx-no-topo { display: flex; align-items: center; gap: .4rem; margin-bottom: .3rem; }
 .fx-no-icone { display: grid; place-items: center; width: 1.4rem; height: 1.4rem; color: rgb(var(--fx-cor, var(--c-accent))); background: rgb(var(--c-bg-primary)); border: 1px solid rgb(var(--c-border-subtle)); }
@@ -2033,6 +2034,7 @@ body.redimensionando-lateral .xterm, body.redimensionando-lateral iframe { point
 :is(.fx-suspenso-menu, .fx-menu-rapido) .is-sala, .fx-etapa-num.is-sala { --fx-cor: 168 85 247; }
 :is(.fx-suspenso-menu, .fx-menu-rapido) .is-pr, .fx-etapa-num.is-pr { --fx-cor: 148 163 184; }
 :is(.fx-suspenso-menu, .fx-menu-rapido) .is-comando, .fx-etapa-num.is-comando { --fx-cor: 45 212 191; }
+:is(.fx-suspenso-menu, .fx-menu-rapido) .is-juntar, .fx-etapa-num.is-juntar { --fx-cor: 244 114 182; }
 .fx-opcao-fluxo { display: flex; align-items: flex-start; gap: .55rem; padding: .55rem .6rem; font-size: .75rem; color: rgb(var(--c-text-secondary)); background: rgb(var(--c-overlay) / .04); border: 1px solid rgb(var(--c-border-subtle)); cursor: pointer; }
 .fx-opcao-fluxo input { margin-top: .15rem; accent-color: rgb(var(--c-accent)); }
 .fx-opcao-fluxo b { display: block; color: rgb(var(--c-text-primary)); }
@@ -2328,3 +2330,65 @@ body.ordenando-lista, body.ordenando-lista * { cursor: grabbing !important; user
 }
 :root[data-motion="desligadas"] .lateral-aba-vivo { animation: none; }
 @media (prefers-reduced-motion: reduce) { .lateral-aba-vivo { animation: none; } }
+
+/* ══ Símbolo de projeto/workspace (`components/EscolherIcone.tsx`) ══
+   Avatar da lateral vira botão: favicon do projeto (ou pasta/caixa) com lápis no hover. O seletor é um
+   popover no desenho do painel de Uso: cabeçalho com filete do tema, opções fixas e a grade de favicons. */
+.icone-img { width: 100%; height: 100%; object-fit: contain; image-rendering: auto; }
+.icone-avatar { position: relative; padding: 5px; overflow: visible; cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
+.icone-avatar:hover, .icone-avatar.is-aberto { border-color: rgb(var(--c-accent) / .7); box-shadow: 0 0 0 3px rgb(var(--c-accent) / .12), 0 0 14px rgb(var(--c-accent) / .3); }
+.icone-avatar:active { transform: scale(.94); }
+.icone-avatar:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: 1px; }
+.icone-avatar-lapis {
+  position: absolute; right: -4px; bottom: -4px; display: grid; place-items: center; width: 14px; height: 14px;
+  color: rgb(var(--c-bg-primary)); background: rgb(var(--c-accent)); opacity: 0; transform: scale(.6);
+  transition: opacity .15s, transform .15s;
+}
+.icone-avatar:hover .icone-avatar-lapis, .icone-avatar:focus-visible .icone-avatar-lapis, .icone-avatar.is-aberto .icone-avatar-lapis { opacity: 1; transform: scale(1); }
+
+.icone-painel {
+  position: fixed; z-index: 200; display: flex; flex-direction: column;
+  width: min(22.5rem, calc(100vw - 1rem)); max-height: min(32.5rem, calc(100vh - 1rem));
+  font-size: 11px; color: rgb(var(--c-text-secondary));
+  background: rgb(var(--c-bg-surface)); border: 1px solid rgb(var(--c-border));
+  box-shadow: 0 24px 60px rgb(0 0 0 / .5), 0 0 0 1px rgb(var(--c-outline) / .6);
+}
+.icone-painel::before { content: ""; position: absolute; inset: -1px -1px auto; height: 2px; background: linear-gradient(90deg, rgb(var(--c-accent)), rgb(var(--c-accent) / .15)); }
+.icone-cabeca { display: flex; align-items: center; gap: .65rem; padding: .8rem .85rem .75rem; background: linear-gradient(180deg, rgb(var(--c-accent) / .08), transparent); border-bottom: 1px solid rgb(var(--c-border-subtle)); }
+.icone-cabeca-icone { display: grid; place-items: center; flex-shrink: 0; width: 2rem; height: 2rem; color: rgb(var(--c-accent)); background: rgb(var(--c-accent) / .14); border: 1px solid rgb(var(--c-accent) / .35); }
+.icone-titulo { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8125rem; font-weight: 700; color: rgb(var(--c-text-primary)); }
+.icone-sub { display: block; margin-top: .1rem; font-size: 10px; color: rgb(var(--c-text-muted)); }
+.icone-corpo { display: flex; flex-direction: column; gap: .85rem; overflow-y: auto; padding: .75rem; }
+.icone-opcoes { display: flex; flex-direction: column; gap: .35rem; }
+.icone-opcao {
+  display: flex; align-items: center; gap: .6rem; width: 100%; padding: .45rem .55rem; text-align: left;
+  background: rgb(var(--c-bg-primary) / .55); border: 1px solid rgb(var(--c-border-subtle)); transition: border-color .15s, background-color .15s;
+}
+.icone-opcao:hover { border-color: rgb(var(--c-border)); background: rgb(var(--c-bg-primary) / .85); }
+.icone-opcao.is-marcada { border-color: rgb(var(--c-accent) / .6); background: linear-gradient(90deg, rgb(var(--c-accent) / .12), rgb(var(--c-bg-primary) / .55) 70%); box-shadow: inset 2px 0 0 rgb(var(--c-accent)); }
+.icone-opcao-simbolo { display: grid; place-items: center; flex-shrink: 0; width: 1.75rem; height: 1.75rem; padding: 3px; color: rgb(var(--c-accent)); background: rgb(var(--c-overlay) / .06); border: 1px solid rgb(var(--c-border-subtle)); }
+.icone-opcao-rotulo { display: block; font-size: 11px; font-weight: 700; color: rgb(var(--c-text-primary)); }
+.icone-opcao-dica { display: block; font-size: 10px; color: rgb(var(--c-text-muted)); }
+.icone-check { flex-shrink: 0; color: rgb(var(--c-accent)); }
+.icone-grupo { display: flex; flex-direction: column; gap: .45rem; }
+.icone-grupo-titulo { display: flex; align-items: center; gap: .45rem; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: rgb(var(--c-text-primary)); }
+.icone-grupo-linha { flex: 1; height: 1px; background: linear-gradient(90deg, rgb(var(--c-border)), transparent); }
+.icone-grupo-qtd { font-weight: 500; text-transform: none; letter-spacing: 0; color: rgb(var(--c-text-muted)); }
+.icone-vazio { padding: .5rem; text-align: center; color: rgb(var(--c-text-muted)); border: 1px dashed rgb(var(--c-border-subtle)); }
+.icone-grade { display: grid; grid-template-columns: repeat(auto-fill, minmax(5rem, 1fr)); gap: .4rem; margin: 0; padding: 0; list-style: none; }
+.icone-ladrilho {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: .3rem; width: 100%; padding: .5rem .35rem .4rem;
+  background: rgb(var(--c-bg-primary) / .55); border: 1px solid rgb(var(--c-border-subtle)); transition: border-color .15s, background-color .15s, transform .15s;
+}
+.icone-ladrilho:hover { border-color: rgb(var(--c-accent) / .5); background: rgb(var(--c-accent) / .06); transform: translateY(-1px); }
+.icone-ladrilho:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: 1px; }
+.icone-ladrilho.is-marcado { border-color: rgb(var(--c-accent)); background: rgb(var(--c-accent) / .1); box-shadow: 0 0 0 2px rgb(var(--c-accent) / .2), 0 0 16px rgb(var(--c-accent) / .25); }
+/* Fundo xadrez discreto: favicon transparente aparece sobre claro e escuro. */
+.icone-ladrilho-fundo {
+  display: grid; place-items: center; width: 2.5rem; height: 2.5rem; padding: 4px;
+  background: repeating-conic-gradient(rgb(var(--c-overlay) / .07) 0 25%, transparent 0 50%) 0 0 / 10px 10px;
+  border: 1px solid rgb(var(--c-border-subtle));
+}
+.icone-ladrilho-nome { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; font-weight: 700; color: rgb(var(--c-text-primary)); }
+.icone-ladrilho-pasta { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; color: rgb(var(--c-text-muted)); }
+.icone-ladrilho-check { position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 14px; height: 14px; color: rgb(var(--c-bg-primary)); background: rgb(var(--c-accent)); }

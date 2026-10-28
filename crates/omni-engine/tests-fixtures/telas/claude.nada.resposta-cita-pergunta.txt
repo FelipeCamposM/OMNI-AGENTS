@@ -1,0 +1,10 @@
+❯ explica o login
+● O login chama a API e, se der certo, pergunta: Do you want to proceed? (y/n)
+  1. Sim
+  2. Não
+
+✻ Baked for 4s
+
+────────────────────────────────────────
+❯ 
+────────────────────────────────────────

@@ -1,0 +1,10 @@
+› Test of the approval UI: run the shell command 'cmd /c echo oi'
+• Running cmd /c echo oi
+  Would you like to run the following command?
+  Environment: local
+  Reason: validar a interface
+  $ cmd /c echo oi
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `cmd /c echo oi` (p)
+  3. No, and tell Codex what to do differently (esc)
+  Press enter to confirm or esc to cancel

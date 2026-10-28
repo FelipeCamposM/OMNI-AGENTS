@@ -20,7 +20,7 @@ import { ArestaDoFluxo, type ArestaOmni } from "./ArestaDoFluxo";
 import { NoDoFluxoView, type NoOmni } from "./NoDoFluxo";
 import {
   abrirConversaDoNo, acaoNaExecucao, apagarFluxo, aprovarNo, criarFluxoComIa, etapasDoFluxo, fluxoVazio, historicoDoNo, iniciarExecucao,
-  lerJsonDeFluxo, listarExecucoes, listarFluxos, obterExecucao, salvarFluxo, TIPOS, validarFluxo,
+  lerJsonDeFluxo, listarConversasParaFluxo, listarExecucoes, listarFluxos, obterExecucao, pedidoComConversa, salvarFluxo, TIPOS, validarFluxo,
   type Execucao, type Fluxo, type FluxoGerado, type FluxoSalvo, type ItemDoHistorico, type NoDoFluxo, type ResumoDaExecucao, type TipoDeNo,
 } from "./fluxosService";
 
@@ -29,7 +29,7 @@ const tiposDeAresta = { omni: ArestaDoFluxo };
 const erroDe = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const STATUS_EXEC: Record<string, string> = { rodando: "Rodando", pausado: "Pausado", aguardando: "Esperando você", concluido: "Concluído", falhou: "Falhou", cancelado: "Cancelado" };
 const COR_SAIDA: Record<string, string> = { sim: "#22c55e", nao: "#ef4444", esgotado: "#eab308" };
-const NOME_TIPO: Record<TipoDeNo, string> = { entrada: "Entrada", agente: "Agente", condicao: "Condição", aprovacao: "Aprovação", sala: "Time", pr: "Pull request", comando: "Comando", fim: "Fim" };
+const NOME_TIPO: Record<TipoDeNo, string> = { entrada: "Entrada", agente: "Agente", condicao: "Condição", aprovacao: "Aprovação", sala: "Time", pr: "Pull request", comando: "Comando", juntar: "Juntar", fim: "Fim" };
 const duracao = (ms: number) => { const s = Math.max(0, Math.round(ms / 1000)); return s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}min ${s % 60}s` : `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}min`; };
 
 interface Props {
@@ -757,7 +757,7 @@ function DialogoDeExecucao({ fluxo, agentes, projeto, iniciando, onCancelar, onI
             {etapas.map((n, i) => {
               const a = agentes.find((x) => x.name === n.agente);
               const detalhe = n.tipo === "agente" ? a?.description : n.tipo === "condicao" ? `Se reprovar, volta para corrigir (até ${String(n.config.max_voltas ?? 3)} vezes).`
-                : n.tipo === "aprovacao" ? "Para e espera você aprovar." : n.tipo === "comando" ? `Roda: ${String(n.config.comando ?? "")}` : n.tipo === "sala" ? "Os agentes discutem em rodadas até o consenso." : n.tipo === "pr" ? "Commit, push e pull request no GitHub." : n.tipo === "entrada" ? "Você descreve a tarefa abaixo." : "";
+                : n.tipo === "aprovacao" ? "Para e espera você aprovar." : n.tipo === "comando" ? `Roda: ${String(n.config.comando ?? "")}` : n.tipo === "sala" ? "Os agentes discutem em rodadas até o consenso." : n.tipo === "juntar" ? "Espera os ramos paralelos e junta o que cada um entregou." : n.tipo === "pr" ? "Commit, push e pull request no GitHub." : n.tipo === "entrada" ? "Você descreve a tarefa abaixo." : "";
               return <li key={n.id}><span className={`fx-etapa-num is-${n.tipo}`}>{i + 1}</span><span><b>{n.titulo || NOME_TIPO[n.tipo]}</b>{n.agente ? <em> · {n.agente}</em> : null}{detalhe && <small>{detalhe}</small>}</span></li>;
             })}
           </ol>
@@ -796,9 +796,14 @@ function DialogoDeFluxoComIa({ projectPath, onCancelar, onUsar }: { projectPath:
   const [gerado, setGerado] = useState<FluxoGerado | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [conversas, setConversas] = useState<{ id: string; title: string }[]>([]);
+  const [conversa, setConversa] = useState("");
+  // Engine antigo sem a rota: o seletor só não aparece.
+  useEffect(() => { listarConversasParaFluxo(projectPath).then(setConversas).catch(() => {}); }, [projectPath]);
   async function gerar() {
     setOcupado(true); setErro(null); setGerado(null);
-    try { setGerado(await criarFluxoComIa(texto, projectPath)); } catch (e) { setErro(erroDe(e)); } finally { setOcupado(false); }
+    try { setGerado(await criarFluxoComIa(conversa ? await pedidoComConversa(texto, conversa) : texto, projectPath)); }
+    catch (e) { setErro(erroDe(e)); } finally { setOcupado(false); }
   }
   return (
     <div className="fx-dialogo-fundo" onMouseDown={(e) => { if (e.target === e.currentTarget && !ocupado) onCancelar(); }}>
@@ -806,13 +811,20 @@ function DialogoDeFluxoComIa({ projectPath, onCancelar, onUsar }: { projectPath:
         <h3 className="pixel-text">Criar fluxo com IA</h3>
         <p className="fx-dica">Descreva (ou fale, pelo microfone) o processo como você explicaria para alguém do time. A IA monta as etapas, as condições e os loops, usa os seus agentes e cria os que faltarem.</p>
         <Textarea autoFocus rows={5} value={texto} onChange={(e) => setTexto(e.target.value)} disabled={ocupado} aria-label="Descreva o fluxo"
-          placeholder="Ex.: recebe um bug; um agente investiga a causa; o dev corrige; o QA testa em loop até 2 vezes; um revisor de segurança verifica e eu aprovo antes do PR." />
+          placeholder={conversa ? "Opcional: o que mudar ou deixar de fora (ex.: a versão vira a tarefa digitada; pare para eu aprovar antes de publicar)." : "Ex.: recebe um bug; um agente investiga a causa; o dev corrige; o QA testa em loop até 2 vezes; um revisor de segurança verifica e eu aprovo antes do PR."} />
+        {conversas.length > 0 && (
+          <Field label="Basear numa conversa (opcional)">
+            <Select size="sm" value={conversa} onChange={setConversa} searchable disabled={ocupado}
+              options={[{ value: "", label: "Nenhuma: só a descrição" }, ...conversas.map((c) => ({ value: c.id, label: c.title || "Sem título" }))]} />
+          </Field>
+        )}
+        {conversa && <p className="fx-dica">O que foi feito nela (pedidos, arquivos, comandos e as últimas mensagens, sem chaves nem senhas) vira as etapas. Tentativas que deram errado ficam de fora.</p>}
         {erro && <p role="alert" className="fx-erro">{erro}</p>}
         {gerado && <PreviaDoGerado g={gerado} />}
         <div className="flex justify-end gap-2">
           <div className="composer-direita" style={{ margin: "0 auto 0 0" }}><Microfone texto={texto} onTexto={setTexto} travado={ocupado} /></div>
           <Button variant="ghost" onClick={onCancelar} disabled={ocupado}>Cancelar</Button>
-          <Button variant={gerado ? "ghost" : "primary"} onClick={() => void gerar()} disabled={ocupado || texto.trim().length < 10}>
+          <Button variant={gerado ? "ghost" : "primary"} onClick={() => void gerar()} disabled={ocupado || (!conversa && texto.trim().length < 10)}>
             {ocupado ? <><ReloadIcon aria-hidden className="h-3.5 w-3.5 animate-spin" />Montando… (~1 min)</> : gerado ? "Gerar de novo" : <><SparkleIcon aria-hidden className="h-3.5 w-3.5" />Gerar fluxo</>}
           </Button>
           {gerado && <Button variant="primary" onClick={() => onUsar(gerado)}>Abrir no editor</Button>}

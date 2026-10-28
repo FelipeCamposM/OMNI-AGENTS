@@ -588,6 +588,7 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/previas/{porta}/fechar",post(previas_fechar))
         .route("/contas/{id}/uso",post(atualizar_uso))
         .route("/compactacao",get(compactacao_ler).post(compactacao_salvar))
+        .route("/tarefas",get(tarefas_ler).post(tarefas_salvar))
         .route("/limpeza",get(limpeza_ler).post(limpeza_salvar))
         .route("/limpeza/agora",post(limpeza_agora))
         .route("/copias",get(copias_ler).post(copias_juntar))
@@ -595,6 +596,7 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/extensoes",get(extensoes))
         .route("/extensoes/compartilhar",post(compartilhar_extensoes))
         .route("/extensoes/principal",post(definir_principal))
+        .route("/extensoes/icone",get(icone_de_extensao))
         .route("/conversas/{id}/arquivos",get(arquivos_da_conversa))
         .route("/conversas/{id}/comandos",get(comandos_da_conversa))
         .route("/terminais",get(listar_terminais).post(abrir_terminal))
@@ -1312,12 +1314,15 @@ async fn parar(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<S
         let (sessao_id, provider) = sessao.meta.lock().map(|meta| (meta.id.clone(), meta.provider.clone().unwrap_or_default()))
             .map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Sessão indisponível"))?;
         write_terminal(&state,&sessao_id,"\x1b").map_err(|erro|error(StatusCode::CONFLICT,&erro.to_string()))?;
-        let mut limpou = false;
+        let (mut limpou, mut livre) = (false, 0);
         // ponytail: Ctrl+U apaga até o começo da linha; texto de várias linhas leva um por linha, daí o laço.
-        for _ in 0..30 {
+        // Parar logo depois de enviar: o campo aparece vazio por um instante e só depois a CLI devolve
+        // o texto (ou a colagem ainda chega). Por isso só sai com o campo livre por ~1,5 s seguidos.
+        for _ in 0..50 {
             std::thread::sleep(std::time::Duration::from_millis(150));
             let Ok(context) = sessao.interaction.lock() else { break };
-            if interaction::ready(context.parser.screen(),&provider) { break; }
+            if interaction::ready(context.parser.screen(),&provider) { livre += 1; if livre >= 10 { break; } continue; }
+            livre = 0;
             let sobra = interaction::sobra_no_campo(context.parser.screen(),&provider);
             drop(context);
             if sobra { limpou = true; let _ = write_terminal(&state,&sessao_id,"\x15"); }
@@ -1801,6 +1806,25 @@ async fn compactacao_salvar(State(state): State<Arc<EngineState>>, Json(body): J
     Ok(Json(body))
 }
 
+/// Tarefas pessoais (as do topo do app), a mesma lista no PC, na web e no celular. A lista inteira vai
+/// e volta: quem gravou por último vence (ponytail: sem merge; basta para uma pessoa só).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub(crate) struct Tarefa { id: String, texto: String, #[serde(default)] feita: bool, #[serde(default)] prazo: Option<i64> }
+const TAREFAS_MAX: usize = 500;
+
+async fn tarefas_ler(State(state): State<Arc<EngineState>>) -> Json<Vec<Tarefa>> {
+    Json(omni_protocol::read_json_or_default(&state.state_file.with_file_name("tarefas.json")))
+}
+
+async fn tarefas_salvar(State(state): State<Arc<EngineState>>, Json(lista): Json<Vec<Tarefa>>) -> Result<Json<Vec<Tarefa>>,ApiError> {
+    if lista.len() > TAREFAS_MAX || lista.iter().any(|t| t.id.is_empty() || t.id.len() > 80 || t.texto.chars().count() > 2000) {
+        return Err(error(StatusCode::BAD_REQUEST,"Lista de tarefas inválida"));
+    }
+    omni_protocol::atomic_write_json(&state.state_file.with_file_name("tarefas.json"),&lista)
+        .map_err(|_| error(StatusCode::INTERNAL_SERVER_ERROR,"Não foi possível salvar"))?;
+    Ok(Json(lista))
+}
+
 /// Configurações → Armazenamento → limpeza automática (`limpeza.json`). Desligada até alguém ligar.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
@@ -2181,6 +2205,16 @@ async fn extensoes(State(state): State<Arc<EngineState>>, Query(q): Query<Extens
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler as extensões"))
 }
 
+/// Ícone de uma extensão pela chave (`mcp:stitch`, `plugin:vercel`, `conector:gmail`), para a conversa
+/// mostrar em quem a ferramenta chamada é. Só lê o que o app do PC já salvou (`<engine>/icones/`).
+#[derive(Deserialize)] struct IconeQuery { chave: String }
+async fn icone_de_extensao(State(state): State<Arc<EngineState>>, Query(q): Query<IconeQuery>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let dir = state.state_file.parent().unwrap().to_path_buf();
+        Json(json!({ "icone": omni_core::extensoes::icone_conhecido(&dir, &q.chave) }))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler o ícone"))
+}
+
 #[derive(Deserialize)] #[serde(deny_unknown_fields)] struct CompartilharBody { ligado: bool }
 async fn compartilhar_extensoes(State(state): State<Arc<EngineState>>, Json(body): Json<CompartilharBody>) -> Result<Json<Value>, ApiError> {
     tokio::task::spawn_blocking(move || {
@@ -2297,6 +2331,20 @@ fn retomar(state: &Arc<EngineState>, action: &Action, plano: &Retomada) -> Resul
     omni_core::conversations::write_index(&dir,&indice)?;
     if plano.provider == "claude" { passar_pela_confianca(state,&sessao.id); }
     Ok(())
+}
+
+/// Troca de conta do `automatico` (limite de uso): o mesmo "reabrir com outra conta" do botão.
+pub(crate) fn trocar_de_conta(state: &Arc<EngineState>, conversation_id: &str, conta: &str) -> Result<()> {
+    reabrir_com(state, conversation_id, &Ajustes { profile_id: Some(conta.to_owned()), model: None, effort: None })
+}
+
+/// Mensagem que o OMNI manda sozinho (`/compact`, "continue"): a mesma fila do chat, com as mesmas
+/// conferências de campo livre.
+pub(crate) fn enfileirar_sozinho(state: &Arc<EngineState>, conversation_id: &str, chave: &str, texto: String) -> Result<()> {
+    let mut headers = HeaderMap::new();
+    headers.insert("idempotency-key", chave.parse()?);
+    enqueue(state, conversation_id, &headers, ActionKind::Fila(texto)).map(|_| ())
+        .map_err(|(_, Json(corpo))| anyhow!(corpo["error"].as_str().unwrap_or("Fila recusou").to_owned()))
 }
 
 fn reabrir_com(state: &Arc<EngineState>, conversation_id: &str, ajustes: &Ajustes) -> Result<()> {
@@ -2735,6 +2783,18 @@ mod tests {
         let caminho = serde_json::from_str::<Value>(&body).unwrap()["caminho"].as_str().unwrap().to_string();
         assert_eq!(std::fs::read(&caminho).unwrap(), b"\x89PNG\r\n\x1a\n");
         assert!(caminho.ends_with("print.png"));
+    }
+    /// Tarefas: grava a lista inteira e lê de volta; lista malformada não chega ao disco.
+    #[tokio::test] async fn tarefas_vao_e_voltam_inteiras() {
+        let (_dir,state) = fixture();
+        let app = router(state);
+        let lista = r#"[{"id":"t1","texto":"revisar PR","feita":false,"prazo":1793000000000},{"id":"t2","texto":"deploy","feita":true}]"#;
+        assert_eq!(app.clone().oneshot(req("POST","/tarefas","http://127.0.0.1:47322",lista)).await.unwrap().status(),StatusCode::OK);
+        let lida = app.clone().oneshot(req("GET","/tarefas","","")).await.unwrap();
+        let corpo: Value = serde_json::from_slice(&axum::body::to_bytes(lida.into_body(),usize::MAX).await.unwrap()).unwrap();
+        assert_eq!(corpo[0]["texto"],"revisar PR");
+        assert_eq!(corpo[1]["feita"],true);
+        assert_eq!(app.oneshot(req("POST","/tarefas","http://127.0.0.1:47322",r#"[{"id":"","texto":"x"}]"#)).await.unwrap().status(),StatusCode::BAD_REQUEST);
     }
     #[tokio::test] async fn painel_junta_lista_e_catalogo_e_responde_304_sem_mudanca() {
         let (_dir,state) = fixture();

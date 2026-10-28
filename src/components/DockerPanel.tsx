@@ -165,7 +165,7 @@ export function DockerPanel({ onRunInTerminal }: DockerPanelProps) {
   );
 }
 
-function IconButton({
+export function IconButton({
   label,
   onClick,
   disabled,

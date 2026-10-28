@@ -5,12 +5,14 @@ mod mobile;
 mod engine_client;
 mod git_client;
 mod docker_client;
+mod servidores;
 mod ssh;
 mod target_files;
 mod history;
 mod instalacao;
 mod profiles;
 mod extensoes;
+mod icones_remotos;
 mod relatorio;
 mod agentes;
 mod fluxos;
@@ -52,6 +54,8 @@ pub fn run() {
             extensoes::compartilhamento_de_extensoes,
             extensoes::definir_compartilhamento_de_extensoes,
             extensoes::definir_conta_principal,
+            icones_remotos::icone_da_extensao,
+            icones_remotos::icone_da_ferramenta,
             agent_runtime::agent_runtime,
             mobile::mobile_settings,
             mobile::publish_workspace,
@@ -88,6 +92,8 @@ pub fn run() {
             git_client::git_status,
             docker_client::docker_containers,
             docker_client::docker_container_action,
+            servidores::servidores_locais,
+            servidores::servidor_matar,
             git_client::git_diff,
             git_client::git_stage,
             git_client::git_unstage,

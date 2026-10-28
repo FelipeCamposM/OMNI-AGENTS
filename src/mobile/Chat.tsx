@@ -12,7 +12,8 @@ import {
 } from "../components/ui/PixelIcon";
 import { iconForPath, iconStyle } from "../features/files/fileIcons";
 import { nomeDoCaminho, semMarcasDeImagem, separarAnexos } from "./anexos";
-import { abridorDeArquivo, NOME_DO_AGENTE, pareceArquivo, request, type Mensagem } from "./api";
+import { chaveDaFerramenta } from "../features/extensoes/chaveDoIcone";
+import { abridorDeArquivo, buscarIconeDeExtensao, NOME_DO_AGENTE, pareceArquivo, request, type Mensagem } from "./api";
 
 /** Os quadros do spinner do Claude Code, em vai-e-volta — é o que faz parecer que ele "respira". */
 const QUADROS = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
@@ -352,7 +353,30 @@ const ICONE_DA_ACAO: Record<string, ComponentType<{ className?: string; "aria-hi
 
 const DE_TERMINAL = new Set(["Bash", "PowerShell", "Shell"]);
 
+/** Uma busca por extensão na sessão; falha (engine antigo, sem rede) vira "sem ícone". */
+const iconesBuscados = new Map<string, Promise<string | null>>();
+
+function useIconeDaExtensao(chave: string | null) {
+  const [icone, setIcone] = useState<string | null>(null);
+  useEffect(() => {
+    setIcone(null);
+    if (!chave) return;
+    let vivo = true;
+    let busca = iconesBuscados.get(chave);
+    if (!busca) {
+      busca = buscarIconeDeExtensao(chave).catch(() => null);
+      iconesBuscados.set(chave, busca);
+    }
+    void busca.then((achado) => { if (vivo) setIcone(achado); });
+    return () => { vivo = false; };
+  }, [chave]);
+  return icone;
+}
+
 function IconeDaAcao({ tool }: { tool?: string }) {
+  // Ferramenta de MCP/plugin/conector mostra a marca de quem foi chamado (o ícone da aba Extensões).
+  const marca = useIconeDaExtensao(chaveDaFerramenta(tool));
+  if (marca) return <img aria-hidden alt="" src={marca} className="acao-icone acao-icone-marca" draggable={false} />;
   // Comando vira um `$`, como no terminal: o ícone de terminal, pequeno, parecia uma caixa de seleção.
   if (DE_TERMINAL.has(tool ?? "")) return <span aria-hidden className="acao-icone acao-prompt">$</span>;
   const Icone = ICONE_DA_ACAO[tool ?? ""] ?? ToolsIcon;

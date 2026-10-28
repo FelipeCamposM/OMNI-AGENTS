@@ -230,6 +230,16 @@ export function workspaceReducer(state: WorkspaceState, action: WorkspaceAction)
           : state.activeProjectId;
       return { ...state, projects, activeProjectId, updatedAt: new Date().toISOString() };
     }
+    case "SET_PROJECT_ICON":
+      return {
+        ...state,
+        projects: state.projects.map((project) => {
+          if (project.id !== action.projectId) return project;
+          const { icone: _, ...resto } = project;
+          return action.icone === undefined ? resto : { ...resto, icone: action.icone };
+        }),
+        updatedAt: new Date().toISOString(),
+      };
     case "MOVE_PROJECT": {
       const projects = moverAntes(state.projects, action.projectId, action.beforeId);
       return projects === state.projects ? state : { ...state, projects, updatedAt: new Date().toISOString() };

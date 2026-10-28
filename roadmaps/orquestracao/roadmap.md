@@ -63,8 +63,8 @@ Instruções do agente (system prompt)...
       Teste sem CLI (aprovação) + execução real conferida (QA num repo temporário: worktree, sessão, custo, veredito).
 - [x] Rotas no engine (`mobile.rs`): `GET/POST /fluxos/execucoes`, `GET /fluxos/execucoes/{id}`,
       `POST .../{pausar|retomar|cancelar}`, `GET .../nos/{no}/historico`, `POST .../nos/{no}/aprovar`, `POST .../nos/{no}/conversa`.
-- [ ] Ramos paralelos de verdade (hoje os próximos nós rodam em sequência, no mesmo worktree) e nó de merge.
-- [ ] Aprovação de fluxo na fila "Precisa de você" da web/celular (as rotas já aceitam; falta a tela).
+- [x] Ramos paralelos (2026-10-25): a fila roda em lotes, cada passo numa thread (`executar`, `crates/omni-engine/src/fluxos.rs`), e o nó **Juntar** espera todos os ramos. Ainda no mesmo worktree (ver `ponytail:` no executor).
+- [x] Aprovação de fluxo na fila "Precisa de você" da web/celular (2026-10-25, `src/mobile/AprovacoesDeFluxo.tsx`).
 - [ ] Escolher conta com uso disponível (hoje: conta do modelo, senão a principal da CLI).
 
 ### Etapa 3 — Editor visual estilo n8n (feita, 2026-10-17)

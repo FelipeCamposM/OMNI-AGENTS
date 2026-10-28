@@ -81,7 +81,7 @@ pub struct Execucao {
 
 type Viva = Arc<Mutex<Execucao>>;
 fn execucoes() -> &'static Mutex<HashMap<String, Viva>> { static M: OnceLock<Mutex<HashMap<String, Viva>>> = OnceLock::new(); M.get_or_init(Default::default) }
-/// Processo da CLI rodando agora, por execução — é o que pausar/cancelar mata.
+/// Processo rodando agora, por `<execução>/<nó>` (ramos paralelos têm um cada) — é o que pausar/cancelar mata.
 fn processos() -> &'static Mutex<HashMap<String, u32>> { static M: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new(); M.get_or_init(Default::default) }
 
 fn pasta_execucoes(state: &EngineState) -> PathBuf { state.state_file.with_file_name("execucoes") }
@@ -181,13 +181,29 @@ fn mexer<T>(state: &EngineState, v: &Viva, f: impl FnOnce(&mut Execucao) -> T) -
 fn executar(state: &Arc<EngineState>, id: &str) {
     let Ok(v) = viva(id) else { return };
     loop {
-        let passo = mexer(state, &v, |e| {
+        // A fila inteira de uma vez: os próximos de um nó com várias saídas ligadas são ramos
+        // paralelos e rodam juntos. Já marcados "rodando" aqui, para outro executor (o que `aprovar`
+        // solta enquanto um ramo ainda trabalha) não dar a execução por concluída no meio.
+        let lote = mexer(state, &v, |e| {
             if e.status != "rodando" { return None; }
-            if e.fila.is_empty() { e.status = "concluido".into(); return None; }
-            Some(e.fila.remove(0))
+            if e.fila.is_empty() {
+                if !e.nos.values().any(|n| n.status == "rodando") { e.status = "concluido".into(); }
+                return None;
+            }
+            let lote = std::mem::take(&mut e.fila);
+            for p in &lote { if let Some(n) = e.nos.get_mut(&p.no) { n.status = "rodando".into(); } }
+            Some(lote)
         });
-        let Some(passo) = passo else { break };
-        if let Err(erro) = processar(state, &v, &passo) {
+        let Some(lote) = lote else { break };
+        // ponytail: ramos paralelos dividem o mesmo worktree; dois agentes no mesmo arquivo brigam.
+        // Worktree por ramo + merge no Juntar se isso aparecer.
+        let viva_ref = &v;
+        let erros: Vec<(Passo, anyhow::Error)> = std::thread::scope(|s| {
+            let tarefas: Vec<_> = lote.into_iter().map(|passo| s.spawn(move || { let r = processar(state, viva_ref, &passo); (passo, r) })).collect();
+            tarefas.into_iter().filter_map(|t| t.join().ok().and_then(|(passo, r)| r.err().map(|erro| (passo, erro)))).collect()
+        });
+        if erros.is_empty() { continue; }
+        for (passo, erro) in erros {
             let pausado = erro.to_string() == PAUSADO;
             mexer(state, &v, |e| {
                 if let Some(n) = e.nos.get_mut(&passo.no) {
@@ -198,13 +214,13 @@ fn executar(state: &Arc<EngineState>, id: &str) {
                 if pausado {
                     // Volta para o começo da fila: retomar continua este nó.
                     e.fila.insert(0, passo.clone());
-                } else if e.status == "rodando" {
+                } else if e.status == "rodando" || e.status == "aguardando" {
                     e.status = "falhou".into();
                     e.erro = Some(format!("{}: {erro}", passo.no));
                 }
             });
-            break;
         }
+        break;
     }
 }
 
@@ -225,6 +241,7 @@ fn processar(state: &Arc<EngineState>, v: &Viva, passo: &Passo) -> Result<()> {
     let caminho: String = match no.tipo {
         TipoDeNo::Entrada => { definir_saida(state, v, &no.id, ctx.entrada.clone()); String::new() }
         TipoDeNo::Fim => { definir_saida(state, v, &no.id, ctx.anterior.clone()); String::new() }
+        TipoDeNo::Juntar => { let junto = v.lock().map(|e| fluxos::saida_do_juntar(&e.fluxo, &no.id, &ctx.saidas)).unwrap_or_default(); definir_saida(state, v, &no.id, junto); String::new() }
         TipoDeNo::Agente => {
             let retomar = v.lock().ok().and_then(|e| e.nos.get(&no.id).filter(|n| n.status == "rodando" && n.session_id.is_some() && n.saida.is_empty()).and_then(|n| n.session_id.clone()));
             let prompt = fluxos::montar_prompt(&no, &ctx);
@@ -283,6 +300,11 @@ fn seguir(state: &EngineState, v: &Viva, no: &str, saida: &str) {
         if let Some(n) = e.nos.get_mut(no) { if !saida.is_empty() { n.caminho = Some(saida.to_owned()); } }
         let proximos: Vec<String> = fluxos::proximos(&e.fluxo, no, saida).into_iter().map(|n| n.id.clone()).collect();
         for p in proximos {
+            // Juntar: só entra na fila quando o último ramo chega (os outros já terminaram).
+            if e.fluxo.nos.iter().any(|n| n.id == p && n.tipo == TipoDeNo::Juntar) {
+                let faltam = fluxos::antecessores(&e.fluxo, &p).into_iter().any(|a| a != no && e.nos.get(a).is_none_or(|n| n.status != "concluido"));
+                if faltam || e.fila.iter().any(|x| x.no == p) { continue; }
+            }
             // Voltar a um nó (loop QA → dev): ele roda de novo do zero, sem retomar a sessão anterior.
             if let Some(n) = e.nos.get_mut(&p) { n.status = "pendente".into(); n.session_id = None; n.saida.clear(); }
             e.fila.push(Passo { no: p, de: Some(no.to_owned()) });
@@ -374,7 +396,7 @@ fn rodar_agente(state: &EngineState, v: &Viva, no: &str, agente: &str, prompt: &
     sem_janela(&mut c);
     let mut filho = c.spawn().with_context(|| format!("não consegui abrir {}", modelo.cli))?;
     let run_id = v.lock().map_err(|_| anyhow!("execucao"))?.id.clone();
-    processos().lock().expect("processos").insert(run_id.clone(), filho.id());
+    processos().lock().expect("processos").insert(format!("{run_id}/{no}"), filho.id());
     mexer(state, v, |e| if let Some(n) = e.nos.get_mut(no) {
         n.cli = Some(modelo.cli.clone()); n.conta = perfil.as_ref().map(|p| p.id.clone());
         n.modelo = (!modelo.modelo.is_empty()).then(|| modelo.modelo.clone()); n.esforco = (!modelo.esforco.is_empty()).then(|| modelo.esforco.clone());
@@ -412,8 +434,8 @@ fn rodar_agente(state: &EngineState, v: &Viva, no: &str, agente: &str, prompt: &
         }
     }
     let status = filho.wait()?;
-    processos().lock().expect("processos").remove(&run_id);
-    if v.lock().map(|e| e.status != "rodando").unwrap_or(true) { return Err(anyhow!(PAUSADO)); }
+    processos().lock().expect("processos").remove(&format!("{run_id}/{no}"));
+    if v.lock().map(|e| !matches!(e.status.as_str(), "rodando" | "aguardando")).unwrap_or(true) { return Err(anyhow!(PAUSADO)); }
     if let Some(erro) = erro_cli { return Err(anyhow!(erro)); }
     if !status.success() && final_texto.is_empty() {
         let mut erro = String::new();
@@ -436,7 +458,7 @@ fn rodar_comando(state: &EngineState, v: &Viva, no: &str, comando: &str, pasta: 
     sem_janela(&mut c);
     let mut filho = c.spawn().with_context(|| format!("não consegui rodar: {comando}"))?;
     let run_id = v.lock().map_err(|_| anyhow!("execucao"))?.id.clone();
-    processos().lock().expect("processos").insert(run_id.clone(), filho.id());
+    processos().lock().expect("processos").insert(format!("{run_id}/{no}"), filho.id());
     mexer(state, v, |e| if let Some(n) = e.nos.get_mut(no) { n.atividade = format!("$ {comando}"); });
 
     let log = pasta_execucoes(state).join(&run_id);
@@ -466,8 +488,8 @@ fn rodar_comando(state: &EngineState, v: &Viva, no: &str, comando: &str, pasta: 
     }
     for l in leitores { let _ = l.join(); }
     let status = filho.wait()?;
-    processos().lock().expect("processos").remove(&run_id);
-    if v.lock().map(|e| e.status != "rodando").unwrap_or(true) { return Err(anyhow!(PAUSADO)); }
+    processos().lock().expect("processos").remove(&format!("{run_id}/{no}"));
+    if v.lock().map(|e| !matches!(e.status.as_str(), "rodando" | "aguardando")).unwrap_or(true) { return Err(anyhow!(PAUSADO)); }
     let fim = format!("{}\n{}", fluxos::cauda(&saida, 12_000).trim_end(), if status.success() { "✓ terminou sem erro".to_owned() } else { format!("✗ saiu com código {}", status.code().unwrap_or(-1)) });
     let _ = writeln!(arquivo, "{}", json!({"type": "comando", "text": fim.lines().last().unwrap_or_default()}));
     Ok((status.success(), fim))
@@ -521,11 +543,14 @@ fn abrir_pr(v: &Viva, no: &fluxos::No) -> Result<String> {
 }
 
 fn matar_processo(id: &str) {
-    let Some(pid) = processos().lock().ok().and_then(|p| p.get(id).copied()) else { return };
-    let mut c = if cfg!(windows) { let mut c = Command::new("taskkill"); c.args(["/F", "/T", "/PID", &pid.to_string()]); c }
-        else { let mut c = Command::new("kill"); c.arg(pid.to_string()); c };
-    sem_janela(&mut c);
-    let _ = c.stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let prefixo = format!("{id}/");
+    let pids: Vec<u32> = processos().lock().map(|p| p.iter().filter(|(k, _)| k.starts_with(&prefixo)).map(|(_, pid)| *pid).collect()).unwrap_or_default();
+    for pid in pids {
+        let mut c = if cfg!(windows) { let mut c = Command::new("taskkill"); c.args(["/F", "/T", "/PID", &pid.to_string()]); c }
+            else { let mut c = Command::new("kill"); c.arg(pid.to_string()); c };
+        sem_janela(&mut c);
+        let _ = c.stdout(Stdio::null()).stderr(Stdio::null()).status();
+    }
 }
 
 pub fn pausar(state: &EngineState, id: &str) -> Result<()> {
@@ -684,6 +709,33 @@ mod tests {
         espera("concluido");
         let gravada: Execucao = serde_json::from_slice(&fs::read(pasta_execucoes(&state).join(format!("{}.json", e.id))).unwrap()).unwrap();
         assert_eq!((gravada.status.as_str(), gravada.nos["f"].status.as_str(), gravada.nos["a"].caminho.as_deref()), ("concluido", "concluido", Some("sim")));
+    }
+    /// Entrada com duas saídas ligadas: os dois comandos rodam ao mesmo tempo (um começa antes de o
+    /// outro acabar) e o Juntar só roda depois dos dois, com as duas saídas.
+    #[test]
+    fn ramos_paralelos_rodam_juntos_e_o_juntar_espera_os_dois() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(EngineState { persist_lock: Mutex::new(()), mobile: mobile::MobileRuntime::new(dir.path()),
+            token: "t".into(), state_file: dir.path().join("sessions.json"), sessions: Mutex::new(HashMap::new()), id_sequence: AtomicU64::new(1) });
+        let projeto = dir.path().join("proj");
+        fs::create_dir_all(&projeto).unwrap();
+        // ~1 s no laço do próprio cmd (sem depender de ping/timeout).
+        let espera = |marca: &str| if cfg!(windows) { format!("(for /L %i in (1,1,20000) do @set x=%i) && echo {marca}") } else { format!("sleep 1 && echo {marca}") };
+        let fluxo: Fluxo = serde_json::from_value(json!({"id": "p", "nome": "P", "na_pasta_do_projeto": true, "nos": [
+            {"id": "e", "tipo": "entrada"},
+            {"id": "a", "tipo": "comando", "titulo": "Ramo A", "config": {"comando": espera("saida-a")}},
+            {"id": "b", "tipo": "comando", "titulo": "Ramo B", "config": {"comando": espera("saida-b")}},
+            {"id": "j", "tipo": "juntar"}, {"id": "f", "tipo": "fim"}],
+            "conexoes": [{"de": "e", "para": "a"}, {"de": "e", "para": "b"},
+                {"de": "a", "para": "j", "saida": "sim"}, {"de": "b", "para": "j", "saida": "sim"}, {"de": "j", "para": "f"}]})).unwrap();
+        let id = iniciar(&state, fluxo, projeto.to_string_lossy().into(), "p".into(), "x".into()).unwrap().id;
+        let e = (0..400).find_map(|_| { let e = obter(&id).unwrap(); if e.status != "rodando" { Some(e) } else { std::thread::sleep(std::time::Duration::from_millis(20)); None } }).expect("não parou");
+        assert_eq!(e.status, "concluido", "{:?}", e.erro);
+        let (a, b) = (&e.nos["a"], &e.nos["b"]);
+        assert!(a.inicio_ms < b.fim_ms && b.inicio_ms < a.fim_ms, "rodou em sequência: a {}–{}, b {}–{}", a.inicio_ms, a.fim_ms, b.inicio_ms, b.fim_ms);
+        let junto = &e.nos["j"].saida;
+        assert!(junto.contains("## Ramo A") && junto.contains("saida-a") && junto.contains("## Ramo B") && junto.contains("saida-b"), "{junto}");
+        assert_eq!(e.nos["f"].saida, *junto, "o Juntar rodou uma vez só e levou as duas saídas adiante");
     }
 }
 

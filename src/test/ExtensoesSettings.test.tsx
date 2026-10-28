@@ -50,3 +50,13 @@ it("foto da extensão: logo do plugin, marca conhecida ou inicial", async () => 
   rerender(<IconeDaExtensao nome="Notion" />);
   expect(container.querySelector(".ext-foto")).toHaveTextContent("N");
 });
+
+it("foto da extensão: ícone remoto (servidor/site) vence a marca desenhada e a inicial", async () => {
+  const { IconeDaExtensao } = await import("../features/extensoes/IconeDaExtensao");
+  const buscar = vi.fn(async (destino: string) => (destino === "conector:Figma" ? "data:image/png;base64,NN==" : null));
+  const { container, rerender } = render(<IconeDaExtensao nome="Figma" remoto="conector:Figma" buscar={buscar} />);
+  await waitFor(() => expect(container.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,NN=="));
+  rerender(<IconeDaExtensao nome="local" destino="npx pacote" remoto="npx pacote" buscar={buscar} />);
+  expect(container.querySelector("img")).toBeNull();
+  expect(buscar).toHaveBeenCalledWith("npx pacote", "local");
+});

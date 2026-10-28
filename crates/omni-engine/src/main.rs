@@ -1,3 +1,4 @@
+mod automatico;
 mod fluxos;
 mod interaction;
 mod mobile;
@@ -189,6 +190,7 @@ async fn main() -> Result<()> {
 
     mobile::start(state.clone());
     mobile::limpeza_automatica(state.clone());
+    automatico::iniciar(state.clone());
     fluxos::carregar(&state);
 
     loop {
@@ -425,26 +427,31 @@ impl Compactacao {
     }
 }
 
-/// `"autoCompactEnabled": true` no settings.json da conta. Edita o texto, não regrava o JSON: o
-/// serde reordenaria as chaves do arquivo do usuário.
+/// `"autoCompactEnabled": true` no settings.json da conta.
 fn garantir_autocompact(config_dir: &Path) {
-    let caminho = config_dir.join("settings.json");
-    let texto = fs::read_to_string(&caminho).unwrap_or_default();
-    let novo = match texto.find("\"autoCompactEnabled\"") {
+    garantir_verdadeiro(&config_dir.join("settings.json"), "autoCompactEnabled");
+}
+
+/// `"chave": true` num JSON do usuário. Edita o texto, não regrava o JSON: o serde reordenaria as
+/// chaves do arquivo.
+fn garantir_verdadeiro(caminho: &Path, chave: &str) {
+    let texto = fs::read_to_string(caminho).unwrap_or_default();
+    let aspas = format!("\"{chave}\"");
+    let novo = match texto.find(&aspas) {
         Some(inicio) => {
             let resto = &texto[inicio..];
             let Some(fim) = resto.find([',', '}', '\n']) else { return };
             if resto[..fim].contains("true") { return; }
-            format!("{}\"autoCompactEnabled\": true{}", &texto[..inicio], &resto[fim..])
+            format!("{}{aspas}: true{}", &texto[..inicio], &resto[fim..])
         }
         None => match texto.trim().strip_prefix('{') {
-            Some(corpo) if corpo.trim() == "}" => "{\n  \"autoCompactEnabled\": true\n}\n".to_string(),
-            Some(_) => texto.replacen('{', "{\n  \"autoCompactEnabled\": true,", 1),
-            None if texto.trim().is_empty() => "{\n  \"autoCompactEnabled\": true\n}\n".to_string(),
+            Some(corpo) if corpo.trim() == "}" => format!("{{\n  {aspas}: true\n}}\n"),
+            Some(_) => texto.replacen('{', &format!("{{\n  {aspas}: true,"), 1),
+            None if texto.trim().is_empty() => format!("{{\n  {aspas}: true\n}}\n"),
             None => return, // arquivo estranho: não mexe
         },
     };
-    let _ = fs::write(&caminho, novo);
+    let _ = fs::write(caminho, novo);
 }
 
 fn ambiente_do_terminal_com(command: &mut CommandBuilder, env: &[(String, String)], dentro_do_claude: bool) {
@@ -722,6 +729,12 @@ fn compartilhar_extensoes(state: &Arc<EngineState>, provider: Option<&str>, prof
     if provider == "claude" {
         if let Some(perfil) = omni_core::profiles(dir).into_iter().find(|perfil| perfil.id == profile_id) {
             garantir_autocompact(Path::new(&perfil.config_dir));
+            // "Resume this conversation?" (conversa ociosa e grande) e "Resume from summary" travavam
+            // a sessão: menu sem número, fora do que a conversa reconhece. Os dois respeitam esta
+            // chave do `.claude.json` (Claude Code 2.1.310; é o que o "Don't ask me again" grava).
+            // Só vale com arquivo existente: criar um `.claude.json` vazio faria a CLI pedir login.
+            let estado = omni_core::usage::claude_state_path(&perfil);
+            if estado.exists() { garantir_verdadeiro(&estado, "resumeReturnDismissed"); }
         }
     }
 }
@@ -769,6 +782,7 @@ pub(crate) fn spawn_terminal_inner(
         profile_id: origin.profile_id,
         conversation_id: origin.conversation_id,
         external_session_id: origin.external_session_id,
+        automatico: None,
     };
     let session = Arc::new(LiveSession {
         interaction: Mutex::new(interaction::Interaction::new(rows.max(1), cols.max(1))),
@@ -1037,6 +1051,10 @@ fn restart_session(state: &Arc<EngineState>, session_id: &str) -> Result<EngineR
             context.parser = vt100::Parser::new(meta.rows, meta.cols, 0);
             context.input_revision += 1;
             context.turn_active = false;
+            // Processo novo, nenhum turno ainda: o aviso de limite que o `--resume` reexibe é
+            // histórico (ver `append_output`). Sem zerar, a troca de conta disparava outra troca.
+            context.turnos_iniciados = 0;
+            context.avisos_antes_do_turno = (0, 0);
             // Solta a tela antes de subir o processo: o spawn (wsl.exe, CLI com hooks) leva segundos,
             // e `list_sessions` passa por esta trava em toda sessão — a lista inteira ficava parada,
             // e o app desistia por tempo esgotado. A saída do processo velho já não conta (pid).
@@ -1892,6 +1910,12 @@ mod tests {
         let valor: serde_json::Value = serde_json::from_str(&ler()).unwrap();
         assert!(valor["autoCompactEnabled"] == true && valor["model"] == "opus");
         assert!(Compactacao::default().valida() && !Compactacao { janela: 500_000, ..Default::default() }.valida());
+
+        let estado = dir.path().join(".claude.json");
+        fs::write(&estado, "{\"oauthAccount\":{\"x\":1},\"resumeReturnDismissed\":false}").unwrap();
+        garantir_verdadeiro(&estado, "resumeReturnDismissed");
+        let valor: serde_json::Value = serde_json::from_str(&fs::read_to_string(&estado).unwrap()).unwrap();
+        assert!(valor["resumeReturnDismissed"] == true && valor["oauthAccount"]["x"] == 1);
     }
 
     #[test]

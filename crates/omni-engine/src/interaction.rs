@@ -234,8 +234,16 @@ pub fn ready(screen: &vt100::Screen, provider: &str) -> bool {
     // no 0.154.0 — a conversa travava em "não reconhecida"); quem garante que é o Codex é o `provider_running`.
     let brand = match provider { "claude" | "codex" => true, "antigravity" => text.contains("? for shortcuts"), _ => false };
     brand && screen.bracketed_paste() && composer_vazio(screen)
-        && !text.contains("Esc to cancel") && !area_do_turno(&text).contains("esc to interrupt") && !text.contains("esc to cancel")
+        && !cancelavel(&text) && !area_do_turno(&text).contains("esc to interrupt")
         && approval(&text,provider).is_none()
+}
+
+/// "Esc to cancel" de menu aberto ou do Antigravity trabalhando: só na área do turno e fora das
+/// falas do histórico. O aviso "● Usage limit reached · … · esc to cancel" ficava na tela depois do
+/// /compact e a conversa travava em "não reconhecida" com o campo vazio logo embaixo.
+fn cancelavel(texto: &str) -> bool {
+    area_do_turno(texto).lines().filter(|l| !l.trim_start().starts_with(['●', '⏺']))
+        .any(|l| l.to_lowercase().contains("esc to cancel"))
 }
 
 /// Turno parado com texto sobrando no campo: o Esc antes de a CLI ler o prompt devolve o texto ao
@@ -245,7 +253,7 @@ pub fn sobra_no_campo(screen: &vt100::Screen, provider: &str) -> bool {
     let turno = area_do_turno(&text);
     matches!(provider, "claude" | "codex") && screen.bracketed_paste() && !composer_vazio(screen)
         && turno.lines().any(|l| { let l = l.trim_start(); l.starts_with('❯') || l.starts_with('›') })
-        && !turno.to_lowercase().contains("esc to interrupt") && !text.to_lowercase().contains("esc to cancel")
+        && !turno.to_lowercase().contains("esc to interrupt") && !cancelavel(&text)
         && approval(&text,provider).is_none()
 }
 
@@ -499,7 +507,7 @@ fn motivo_antigravity(screen: &vt100::Screen, rodando: bool, reservada: bool) ->
     let mut faltas = Vec::new();
     if reservada { faltas.push("consulta de uso em andamento"); }
     if !rodando { faltas.push("processo agy não encontrado"); }
-    if texto.contains("esc to cancel") { faltas.push("agente trabalhando ou com pergunta aberta"); }
+    if cancelavel(&texto) { faltas.push("agente trabalhando ou com pergunta aberta"); }
     else if !texto.contains("? for shortcuts") { faltas.push("rodapé \"? for shortcuts\" fora da tela"); }
     if !screen.bracketed_paste() { faltas.push("modo de colar desligado"); }
     if !composer_vazio(screen) { faltas.push("campo de digitação vazio não encontrado no cursor"); }
@@ -1034,6 +1042,17 @@ mod tests {
         let _ = filho.kill(); let _ = filho.wait();
         assert!(!has_children(None));
     }
+    /// Tela real (2.1.310) depois do /compact: o aviso de limite com "esc to cancel" ficou no
+    /// histórico, logo acima, e travava a conversa em "não reconhecida".
+    #[test] fn esc_to_cancel_do_historico_nao_trava_o_campo() {
+        let borda = "─".repeat(60);
+        let mut tela = Interaction::new(14, 80);
+        tela.parser.process(format!("\x1b[?2004h● Usage limit reached · continuing automatically at 1am · esc to cancel\r\n\r\n✻ Cooked for 22m 48s · done segunda-feira, 23:13\r\n\r\n❯ /compact\r\n  ⎿  Compacted (ctrl+o to see full summary)\r\n{borda}\r\n❯\u{a0}\r\n{borda}\r\n  ⏵⏵ auto mode on (shift+tab to cycle)\x1b[8;3H").as_bytes());
+        assert!(ready(tela.parser.screen(), "claude"));
+        let mut menu = Interaction::new(10, 80);
+        menu.parser.process(format!("\x1b[?2004h{borda}\r\n Quick safety check\r\n ❯ 1. Yes\r\n   2. No\r\n Enter to confirm · Esc to cancel\r\n{borda}\r\n❯\u{a0}\x1b[7;3H").as_bytes());
+        assert!(!ready(menu.parser.screen(), "claude"), "menu aberto continua bloqueando");
+    }
     #[test] fn reconstructs_split_ansi_and_checks_cursor_not_old_prompts() {
         let mut context = Interaction::new(10,80);
         context.parser.process(b"\x1b[?2004hClaude Code\r\n> ");
@@ -1274,6 +1293,39 @@ Ready to submit your answers?
         let codex = "› Test of the approval UI: run the shell command 'cmd /c echo oi'\n• Running cmd /c echo oi\n  Would you like to run the following command?\n  Environment: local\n  Reason: validar a interface\n  $ cmd /c echo oi\n› 1. Yes, proceed (y)\n  2. Yes, and don't ask again for commands that start with `cmd /c echo oi` (p)\n  3. No, and tell Codex what to do differently (esc)\n  Press enter to confirm or esc to cancel\n";
         assert_eq!(approval(codex, "codex").map(|a| (a.0, a.1)), Some(("y".into(), "\x1b".into())));
     }
+
+    /// Acervo de telas (`tests-fixtures/telas/<cli>.<esperado>.<nome>.txt`): cada arquivo diz o que o
+    /// engine tem de reconhecer nele. CLI mudou o texto? Capture com a `sonda_aprovacao`
+    /// (`OMNI_SONDA_SALVAR`) e este teste aponta o que deixou de casar, sem escrever Rust.
+    #[test] fn telas_do_acervo() {
+        let pasta = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests-fixtures/telas");
+        let mut vistas = 0;
+        for entrada in std::fs::read_dir(&pasta).unwrap().flatten() {
+            let nome = entrada.file_name().to_string_lossy().into_owned();
+            let partes: Vec<&str> = nome.splitn(3, '.').collect();
+            let [cli, esperado, _] = partes[..] else { continue };
+            if !nome.ends_with(".txt") { continue; }
+            let tela = std::fs::read_to_string(entrada.path()).unwrap().replace("\r\n", "\n");
+            assert!(matches!(esperado, "aprovacao" | "escolha" | "nada"), "{nome}: esperado desconhecido");
+            let aprova = approval(&tela, cli).is_some();
+            assert_eq!(aprova, esperado == "aprovacao", "{nome}: aprovação");
+            // Como em `capabilities`: com aprovação na tela, menu nem é procurado.
+            assert_eq!(!aprova && escolha(&tela).is_some(), esperado == "escolha", "{nome}: escolha");
+            vistas += 1;
+        }
+        assert!(vistas >= 5, "acervo sumiu? só {vistas} telas");
+    }
+
+    /// Diagnóstico: reproduz a saída de uma sessão viva (`GET /conversas/{id}/terminal` salvo em
+    /// arquivo) e mostra o que o engine vê. `OMNI_TELA_JSON=<arquivo> cargo test -p omni-engine reproduzir_tela -- --ignored --nocapture`
+    #[test] #[ignore = "diagnóstico manual"] fn reproduzir_tela() {
+        let j: serde_json::Value = serde_json::from_slice(&std::fs::read(std::env::var("OMNI_TELA_JSON").unwrap()).unwrap()).unwrap();
+        let mut ctx = Interaction::new(j["rows"].as_u64().unwrap() as u16, j["cols"].as_u64().unwrap() as u16);
+        ctx.parser.process(&sem_substituto(j["data"].as_str().unwrap().as_bytes()));
+        let tela = linha_a_linha(ctx.parser.screen());
+        println!("=== TELA ===\n{tela}\n=== ready={} composer_vazio={} escolha={:?} approval={:?} cursor={:?}",
+            ready(ctx.parser.screen(), "claude"), composer_vazio(ctx.parser.screen()), escolha(&tela).map(|e| e.pergunta), approval(&tela, "claude").map(|a| a.0), ctx.parser.screen().cursor_position());
+    }
 }
 
 /// Sonda manual: abre a CLI de verdade numa PTY, pede um comando inofensivo e imprime a tela de
@@ -1369,6 +1421,12 @@ mod sonda {
         println!("bytes={}", total.load(std::sync::atomic::Ordering::SeqCst));
         println!("=== TELA ({cli}) ===\n{tela}\n=== approval: {:?}", super::approval(&tela, &cli).map(|a| (a.0, a.1)));
         { let p = parser.lock().unwrap(); println!("=== ready: {} · modo: {:?}", super::ready(p.screen(), &cli), super::modo_com_provider(p.screen(), &cli)); }
+        // `OMNI_SONDA_SALVAR=aprovacao.comando-2.1.310` grava a tela no acervo do `telas_do_acervo`.
+        if let Ok(nome) = std::env::var("OMNI_SONDA_SALVAR") {
+            let destino = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests-fixtures/telas/{cli}.{nome}.txt"));
+            std::fs::write(&destino, &tela).unwrap();
+            println!("=== salvo em {}", destino.display());
+        }
         let _ = escritor.write_all(b"\x1b"); std::thread::sleep(Duration::from_millis(500));
         let _ = filho.kill();
     }

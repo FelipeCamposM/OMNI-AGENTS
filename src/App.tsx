@@ -279,6 +279,8 @@ export function App() {
           void Promise.allSettled(closing).then(() => dispatch({ type: "CLOSE_PROJECT_IN_WORKSPACE", workspaceId, projectId }));
         }}
         onRenameWorkspace={(workspaceId, name) => dispatch({ type: "RENAME_WORKSPACE", workspaceId, name })}
+        onSetWorkspaceIcon={(workspaceId, icone) => dispatch({ type: "SET_WORKSPACE_ICON", workspaceId, icone })}
+        onSetProjectIcon={(projectId, icone) => dispatch({ type: "SET_PROJECT_ICON", projectId, icone })}
         attention={attention}
         onFocusSession={focusSession}
         onDismissAttention={(item) => dismissAttention(item.sessionId)}

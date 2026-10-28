@@ -7,29 +7,19 @@ import type { WorkspaceTab } from "../../types/workspace";
 import { joinPath, writeBinaryFile } from "../files/filesService";
 import {
   attachTerminal,
-  accountUsage,
   beginConversation,
   ensureAgentTrust,
   ensureEngine,
-  exhaustedUntilMs,
-  listAgentClis,
-  listProfiles,
-  MULTI_ACCOUNT_PROVIDERS,
-  planSwitch,
   resizeTerminal,
   restartTerminal,
-  selectFailoverProfile,
   spawnTerminal,
-  engineApi,
   stopTerminal,
   terminalSnapshot,
   type AgentCliStatus,
-  type AgentCliId,
   type AgentLaunch,
   type LaunchPlan,
   type Profile,
   type TerminalState,
-  usageLimitResetAtMs,
   writeTerminal,
 } from "./terminalService";
 import type { TerminalSession } from "./terminalService";
@@ -37,7 +27,6 @@ import { handleTerminalKey } from "./keyBindings";
 import { AgentLauncher } from "./AgentLauncher";
 import { AgentSwitcher } from "./AgentSwitcher";
 import { AgentRuntimeBadge } from "./AgentRuntimeBadge";
-import { PISO_DEPOIS_DA_TROCA, lerCompactacao, pisoAntesDoLimite, tokensCurtos } from "../compactacao/compactacao";
 
 /** Colar imagem numa CLI de agente: ESC v (meta+v) — o que o Alt+V já mandava e funcionava.
  *  Se alguma CLI passar a escutar ^V (0x16) em vez disso, é aqui que muda. */
@@ -62,32 +51,6 @@ const POLL_ATIVO_MS = 16;
 const POLL_OCIOSO_MS = 100;
 /** Quanto tempo depois da última atividade o ritmo rápido continua valendo. */
 const JANELA_ATIVA_MS = 700;
-/** Intervalo entre tentativas quando o failover não achou conta ou falhou. O aviso de limite
- *  continua na tela, então a próxima leitura reabre a busca — e uma conta conectada depois do
- *  limite passa a ser encontrada sem o usuário precisar reabrir a aba. */
-const FAILOVER_RETRY_MS = 30_000;
-/** Limite que chega até isso depois do agente ter sido visto trabalhando = caiu no meio de uma tarefa. */
-const MEIO_DA_TAREFA_MS = 120_000;
-/** Quanto esperar a conta nova ficar pronta para receber o "continue" antes de desistir. Retomar
- *  uma conversa de centenas de milhares de tokens (e compactá-la) passa fácil de 2 minutos. */
-const CONTINUAR_ATE_MS = 600_000;
-/** Depois de mandar uma mensagem da fila, espera isso antes de olhar a tela de novo: a CLI leva um
- *  instante para mostrar que começou (o `/compact`), e o campo ainda parece livre nesse meio-tempo. */
-const ENTRE_MENSAGENS_MS = 10_000;
-/** Com o agente parado, de quanto em quanto tempo olha se a conta está perto do limite. */
-const COMPACTAR_ANTES_RITMO_MS = 60_000;
-const COMANDO_DE_COMPACTAR = "/compact";
-/** Compactar antes do limite só numa conversa em uso: o agente terminou um turno há pouco, com a aba
- *  aberta. Abrir uma conversa parada nunca dispara nada — o resumo gastaria cota numa conversa que
- *  talvez nem continue. */
-const ACABOU_DE_TRABALHAR_MS = 180_000;
-/** Entre uma consulta e outra da tela da conta nova, enquanto espera para mandar o "continue". */
-const CONTINUAR_RITMO_MS = 1_500;
-/** Mensagem que o OMNI manda sozinho depois de trocar de conta no meio de uma tarefa. Diz que é
- *  automática para ninguém (você nem o agente) achar que foi digitada. */
-export const MENSAGEM_DE_CONTINUAR =
-  "Continue de onde parou. (Mensagem automática do OMNI: a conta anterior atingiu o limite de uso e esta conversa foi passada para outra conta.)";
-
 type FailoverStatus = {
   tone: "working" | "success" | "warning";
   text: string;
@@ -118,23 +81,6 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   const [inputLocked, setInputLocked] = useState(false);
   const [failoverStatus, setFailoverStatus] = useState<FailoverStatus | null>(null);
   const conversationRef = useRef<string | null>(null);
-  /** Conta → instante exato em que volta ao rodízio. O mapa sobrevive à remontagem do efeito
-   * causada pela troca de perfil; o cache de uso em disco recompõe a informação após restart. */
-  const exhaustedProfilesRef = useRef(new Map<string, number>());
-  const availabilityTimersRef = useRef(new Map<string, number>());
-  const failoverConversationRef = useRef<string | null>(null);
-  /** Conta que acabou de receber a conversa por failover. Ao retomar, o CLI reexibe o aviso de
-   *  limite da conta anterior, e o engine (que lê a tela) o reporta como se fosse desta — sem este
-   *  filtro a aba tentava trocar de novo na hora. Vale até o aviso sair da tela uma vez. */
-  const staleLimitProfileRef = useRef<string | null>(null);
-  /** Mensagens que o OMNI manda sozinho, uma por vez, quando o campo da CLI fica pronto: o
-   *  `/compact` (antes do limite ou logo depois da troca) e o "continue" da troca no meio de uma
-   *  tarefa. Ref porque a troca remonta o efeito (nova conta) e o pedido tem de sobreviver a isso. */
-  const continuarRef = useRef<{ conversationId: string; mensagens: string[]; ate: number; consultaEm: number } | null>(null);
-  /** Conversa + janela de uso já compactadas antes do limite: uma vez por janela, não a cada minuto. */
-  const compactadasRef = useRef(new Set<string>());
-  /** Última vez que o agente desta aba foi visto trabalhando. */
-  const trabalhouEmRef = useRef(0);
   /** Título da aba num ref, **fora das dependências do efeito**: ele só é lido na hora de abrir a
    *  sessão, e tê-lo como dependência fazia renomear a aba derrubar o xterm e reproduzir o
    *  scrollback inteiro. Com o nome automático vindo do primeiro prompt, isso passou a acontecer em
@@ -153,51 +99,6 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
   }>({});
   const agent = launch?.agent ?? null;
 
-  function clearAvailabilityTimers() {
-    for (const timer of availabilityTimersRef.current.values()) window.clearTimeout(timer);
-    availabilityTimersRef.current.clear();
-  }
-
-  function forgetExpiredProfiles(nowMs = Date.now()) {
-    for (const [profileId, resetAtMs] of exhaustedProfilesRef.current) {
-      if (resetAtMs > nowMs) continue;
-      exhaustedProfilesRef.current.delete(profileId);
-      const timer = availabilityTimersRef.current.get(profileId);
-      if (timer) window.clearTimeout(timer);
-      availabilityTimersRef.current.delete(profileId);
-    }
-  }
-
-  /** Agenda a liberação sem depender de novo output do terminal. O callback se reagenda caso o
-   * navegador limite timeouts muito longos ou o computador acorde antes do horário de reset. */
-  function markExhaustedUntil(profileId: string, profileName: string, resetAtMs: number) {
-    const previous = availabilityTimersRef.current.get(profileId);
-    if (previous) window.clearTimeout(previous);
-    exhaustedProfilesRef.current.set(profileId, resetAtMs);
-
-    const release = () => {
-      const remaining = resetAtMs - Date.now();
-      if (remaining > 0) {
-        const timer = window.setTimeout(release, Math.min(remaining, 2_147_483_647));
-        availabilityTimersRef.current.set(profileId, timer);
-        return;
-      }
-      if (exhaustedProfilesRef.current.get(profileId) === resetAtMs) {
-        exhaustedProfilesRef.current.delete(profileId);
-        setFailoverStatus({
-          tone: "success",
-          text: `${profileName} disponível`,
-          detail: `A cota de ${profileName} foi liberada no horário de reset e a conta voltou ao rodízio automático.`,
-        });
-      }
-      availabilityTimersRef.current.delete(profileId);
-    };
-    const timer = window.setTimeout(release, Math.min(Math.max(0, resetAtMs - Date.now()), 2_147_483_647));
-    availabilityTimersRef.current.set(profileId, timer);
-  }
-
-  useEffect(() => () => clearAvailabilityTimers(), []);
-
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -213,10 +114,6 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
      *  pode estar esperando a resposta. */
     const reatando = Boolean(sessionRef.current) && sequenceRef.current === 0;
     let reviving = false;
-    let failoverInProgress = false;
-    let compactarAntesEm = 0;
-    /** Antes disso não tenta de novo; 0 = nenhuma tentativa frustrada ainda. */
-    let failoverRetryAt = 0;
     /** Última tecla digitada ou saída recebida — decide o ritmo da leitura. */
     let atividadeEm = Date.now();
     const terminal = new Terminal({
@@ -335,201 +232,6 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
       }
     }
 
-    /** Limite de uso é um evento do provider, não uma falha da PTY. Escolhe outra conta do mesmo
-     * provider, prepara a continuação e só então encerra a sessão limitada. */
-    async function autoFailover(input: {
-      sessionId: string;
-      conversationId: string;
-      provider: AgentCliId;
-      profileId: string;
-      /** O limite chegou com o agente trabalhando: depois da troca, manda o "continue" sozinho. */
-      meioDaTarefa: boolean;
-    }) {
-      if (failoverInProgress || Date.now() < failoverRetryAt) return;
-      failoverInProgress = true;
-      // Nova tentativa depois de "sem outra conta" não pisca o aviso: só troca se achar alguém.
-      if (failoverRetryAt === 0) {
-        setFailoverStatus({
-          tone: "working",
-          text: "trocando conta…",
-          detail: "Limite de uso atingido; procurando outra conta conectada.",
-        });
-      }
-      /** Libera nova tentativa mais tarde. Sem isto a flag ficava presa e a aba nunca mais trocava
-       *  de conta, mesmo com o limite voltando à tela e outra conta já conectada. */
-      const retryLater = () => {
-        failoverRetryAt = Date.now() + FAILOVER_RETRY_MS;
-        failoverInProgress = false;
-      };
-
-      try {
-        const [profiles, agents] = await Promise.all([listProfiles(), listAgentClis(projectPath)]);
-        const providerProfiles = profiles.filter(
-          (profile) => profile.provider === input.provider && profile.authenticated
-        );
-        const usages = new Map(
-          await Promise.all(providerProfiles.map(async (profile) => {
-            const usage = await accountUsage(profile.id).catch(() => null);
-            return [profile.id, usage] as const;
-          }))
-        );
-        const nowMs = Date.now();
-        forgetExpiredProfiles(nowMs);
-        // Revalida todas as alternativas pelo cache local. Isso recompõe os bloqueios mesmo se o
-        // app reiniciou no meio da janela e evita tentar uma segunda conta que já está em 100%.
-        for (const profile of providerProfiles) {
-          if (profile.id === input.profileId) continue;
-          const resetAtMs = exhaustedUntilMs(usages.get(profile.id) ?? null, nowMs);
-          if (resetAtMs) markExhaustedUntil(profile.id, profile.name, resetAtMs);
-        }
-        const current = profiles.find((profile) => profile.id === input.profileId);
-        const currentResetAtMs = usageLimitResetAtMs(usages.get(input.profileId) ?? null, nowMs);
-        markExhaustedUntil(input.profileId, current?.name ?? input.profileId, currentResetAtMs);
-        const target = selectFailoverProfile(
-          profiles,
-          input.provider,
-          input.profileId,
-          exhaustedProfilesRef.current.keys()
-        );
-        if (!target) {
-          setFailoverStatus({
-            tone: "warning",
-            text: "sem outra conta",
-            detail: `O limite de ${current?.name ?? "esta conta"} foi atingido e não há outra conta conectada disponível. Ela volta ao rodízio em ${new Date(currentResetAtMs).toLocaleString("pt-BR")}. Uma conta conectada depois disso é usada automaticamente.`,
-          });
-          retryLater();
-          return;
-        }
-
-        const nextAgent = agents.find((candidate) => candidate.id === input.provider && candidate.available);
-        if (!nextAgent) throw new Error(`CLI do ${input.provider} não encontrada no PATH`);
-        // Lido antes da troca, do transcript da conta que sai: o cache não passa de uma conta para
-        // outra, então conversa grande compacta logo na chegada em vez de ser relida a cada passo.
-        const ajuste = await lerCompactacao();
-        const contexto = input.provider === "claude" ? await contextoDaConversa(input.conversationId) : null;
-        // Só quando a troca pegou uma tarefa no meio (o "continue" vai rodar de qualquer jeito).
-        // Conversa parada fica como está: compactar ali seria gasto sem ninguém pedir nada.
-        const compactar = input.meioDaTarefa && ajuste.depois_da_troca && (contexto ?? 0) >= PISO_DEPOIS_DA_TROCA;
-        const plan = await planSwitch({
-          conversationId: input.conversationId,
-          targetProvider: input.provider,
-          targetProfileId: target.id,
-          targetCommand: nextAgent.command,
-        });
-        if (cancelled) return;
-
-        await stopTerminal(input.sessionId).catch(() => undefined);
-        sessionRef.current = undefined;
-        sequenceRef.current = 0;
-        conversationRef.current = plan.conversation_id;
-        setFailoverStatus({
-          tone: "success",
-          text: `conta trocada: ${current?.name ?? "anterior"} → ${target.name}`,
-          detail: `${plan.notice ? `${plan.notice} ` : ""}Limite de ${current?.name ?? "outra conta"} atingido; a conversa foi reaberta em ${target.name} e espera a sua próxima mensagem. ${current?.name ?? "A conta anterior"} volta ao rodízio em ${new Date(currentResetAtMs).toLocaleString("pt-BR")}.`,
-        });
-        // Retoma em silêncio: nenhum prompt é digitado no terminal. Um texto automático ("retome a
-        // tarefa pendente") aparecia como se fosse do usuário e fazia o agente inventar trabalho —
-        // com um simples "oi" sem resposta, ele saiu rodando comandos. Quem continua é o usuário.
-        const resumedCommand = plan.initial_command;
-        staleLimitProfileRef.current = target.id;
-        const mensagens = [...(compactar ? [COMANDO_DE_COMPACTAR] : []), ...(input.meioDaTarefa ? [MENSAGEM_DE_CONTINUAR] : [])];
-        if (mensagens.length > 0) {
-          continuarRef.current = { conversationId: plan.conversation_id, mensagens, ate: Date.now() + CONTINUAR_ATE_MS, consultaEm: 0 };
-        }
-        setLaunch({
-          agent: { ...nextAgent, command: resumedCommand },
-          profile: target,
-          conversationId: plan.conversation_id,
-        });
-      } catch (reason) {
-        if (!cancelled) {
-          setFailoverStatus({
-            tone: "warning",
-            text: "troca automática falhou",
-            detail: reason instanceof Error ? reason.message : String(reason),
-          });
-          retryLater();
-        }
-      }
-    }
-
-    /** Depois de trocar de conta no meio de uma tarefa: espera a CLI da conta nova mostrar o campo
-     *  pronto e manda o "continue" pela fila do engine (a mesma porta do chat), uma vez só. */
-    async function talvezContinuar() {
-      const pedido = continuarRef.current;
-      if (!pedido || cancelled) return;
-      const agora = Date.now();
-      if (agora > pedido.ate) { continuarRef.current = null; return; }
-      if (agora < pedido.consultaEm) return;
-      pedido.consultaEm = agora + CONTINUAR_RITMO_MS;
-      try {
-        const caminho = `/conversas/${encodeURIComponent(pedido.conversationId)}`;
-        const leitura = await engineApi("GET", `${caminho}/timeline`, null);
-        const capacidades = JSON.parse(leitura.body || "{}")?.conversation?.capabilities;
-        if (!capacidades?.prompt || continuarRef.current !== pedido) return;
-        const texto = pedido.mensagens[0];
-        const envio = await engineApi("POST", `${caminho}/prompt`, JSON.stringify({ texto, fila: true }), {
-          headers: [["Content-Type", "application/json"], ["Idempotency-Key", `continuar-${pedido.conversationId}-${pedido.ate}-${pedido.mensagens.length}`]],
-        });
-        if (envio.status >= 400) throw new Error(JSON.parse(envio.body || "{}")?.error ?? `HTTP ${envio.status}`);
-        pedido.mensagens.shift();
-        pedido.consultaEm = Date.now() + ENTRE_MENSAGENS_MS;
-        if (pedido.mensagens.length === 0 && continuarRef.current === pedido) continuarRef.current = null;
-        const compactou = texto === COMANDO_DE_COMPACTAR;
-        setFailoverStatus((atual) => atual && {
-          ...atual,
-          text: `${atual.text} · ${compactou ? "compactando" : "continuando"}`,
-          detail: compactou
-            ? `${atual.detail} O OMNI mandou /compact: a conversa vira um resumo e cada passo seguinte gasta bem menos.`
-            : `${atual.detail} O OMNI mandou "continue" sozinho, porque a troca aconteceu no meio de uma tarefa.`,
-        });
-      } catch (reason) {
-        if (continuarRef.current === pedido) continuarRef.current = null;
-        if (!cancelled) setFailoverStatus((atual) => atual && { ...atual, tone: "warning", detail: `${atual.detail} Não consegui mandar a mensagem automática (${reason instanceof Error ? reason.message : String(reason)}); mande a próxima mensagem.` });
-      }
-    }
-
-    /** Tamanho da conversa agora (o que a última resposta leu), pelo `/opcoes`. */
-    async function contextoDaConversa(conversationId: string): Promise<number | null> {
-      try {
-        const leitura = await engineApi("GET", `/conversas/${encodeURIComponent(conversationId)}/opcoes`, null);
-        const tokens = JSON.parse(leitura.body || "{}")?.context_tokens;
-        return typeof tokens === "number" ? tokens : null;
-      } catch { return null; }
-    }
-
-    /** Opção "antes de acabar a cota": agente parado, conta passando do limiar → `/compact` ainda
-     *  nesta conta, que tem a conversa em cache (resumir sai barato). Na troca, a conta nova recebe
-     *  só o resumo. Uma vez por conversa e janela de uso. */
-    async function talvezCompactarAntes(info: { conversationId: string; provider: string; profileId: string; parado: boolean }) {
-      const agora = Date.now();
-      if (agora < compactarAntesEm || continuarRef.current || info.provider !== "claude" || !info.parado) return;
-      if (agora - trabalhouEmRef.current > ACABOU_DE_TRABALHAR_MS) return;
-      compactarAntesEm = agora + COMPACTAR_ANTES_RITMO_MS;
-      try {
-        const ajuste = await lerCompactacao();
-        if (!ajuste.antes_do_limite) return;
-        const uso = await accountUsage(info.profileId).catch(() => null);
-        const janela = [uso?.primary, uso?.secondary]
-          .filter((j): j is NonNullable<typeof j> => Boolean(j && j.used_percent < 100))
-          .sort((a, b) => b.used_percent - a.used_percent)[0];
-        if (!janela || janela.used_percent < ajuste.limiar) return;
-        const chave = `${info.conversationId}:${janela.resets_at ?? "?"}`;
-        if (compactadasRef.current.has(chave)) return;
-        const contexto = await contextoDaConversa(info.conversationId);
-        if (cancelled || contexto === null || contexto < pisoAntesDoLimite(ajuste)) return;
-        compactadasRef.current.add(chave);
-        continuarRef.current = { conversationId: info.conversationId, mensagens: [COMANDO_DE_COMPACTAR], ate: agora + CONTINUAR_ATE_MS, consultaEm: 0 };
-        setFailoverStatus({
-          tone: "working",
-          text: "compactando antes do limite",
-          detail: `A conta está em ${Math.round(janela.used_percent)}% do uso e a conversa tem ${tokensCurtos(contexto)} tokens. O OMNI compacta agora, nesta conta, para que uma troca de conta leve só o resumo.`,
-        });
-      } catch {
-        // Sem leitura de uso agora: tenta de novo no próximo ciclo.
-      }
-    }
-
     async function poll() {
       if (cancelled || !sessionRef.current) return;
       try {
@@ -553,12 +255,6 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         setState(snapshot.session.state);
         setInputLocked(Boolean(snapshot.session.input_locked));
         const conversationId = snapshot.session.conversation_id ?? conversationRef.current;
-        if (conversationId && failoverConversationRef.current !== conversationId) {
-          failoverConversationRef.current = conversationId;
-          clearAvailabilityTimers();
-          exhaustedProfilesRef.current.clear();
-          setFailoverStatus(null);
-        }
         if (conversationId) conversationRef.current = conversationId;
         // Mantém o que já sabia quando o campo vier vazio: o engine só preenche `external_session_id`
         // depois que o provider grava a sessão dele.
@@ -577,36 +273,13 @@ export function TerminalPane({ projectId, projectPath, paneId, tab, onSessionCre
         });
         terminal.options.disableStdin = Boolean(snapshot.session.input_locked);
         sequenceRef.current = snapshot.next_seq;
-        const provider = snapshot.session.provider as AgentCliId | null | undefined;
-        const profileId = snapshot.session.profile_id;
-        const limitOnScreen = snapshot.session.notice === "usage_limit";
-        if (snapshot.session.state === "working" && !limitOnScreen) trabalhouEmRef.current = Date.now();
-        void talvezContinuar();
-        if (conversationId && provider && profileId) {
-          void talvezCompactarAntes({
-            conversationId, provider, profileId,
-            parado: snapshot.session.state === "answered" && !limitOnScreen,
-          });
-        }
-        if (profileId && profileId === staleLimitProfileRef.current && !limitOnScreen) {
-          staleLimitProfileRef.current = null;
-        }
-        if (
-          limitOnScreen &&
-          profileId !== staleLimitProfileRef.current &&
-          conversationId &&
-          provider &&
-          MULTI_ACCOUNT_PROVIDERS.includes(provider) &&
-          profileId
-        ) {
-          void autoFailover({
-            sessionId: snapshot.session.id,
-            conversationId,
-            provider,
-            profileId,
-            meioDaTarefa: Date.now() - trabalhouEmRef.current < MEIO_DA_TAREFA_MS,
-          });
-        }
+        // Troca de conta no limite e compactação automática moram no engine (`automatico.rs`): valem
+        // com a janela fechada e na web. Aqui só o selo do que ele fez.
+        const automatico = snapshot.session.automatico ?? null;
+        setFailoverStatus((atual) =>
+          automatico?.tom === atual?.tone && automatico?.texto === atual?.text && automatico?.detalhe === atual?.detail
+            ? atual
+            : automatico && { tone: automatico.tom, text: automatico.texto, detail: automatico.detalhe });
         // Voltou a responder: derruba um aviso que tenha sobrado. Atualização funcional porque
         // isto roda 10x por segundo — devolver o mesmo valor faz o React nem re-renderizar.
         falhasRef.current = 0;

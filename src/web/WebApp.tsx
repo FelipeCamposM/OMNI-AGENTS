@@ -2,17 +2,23 @@ import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from "re
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
 import { Input } from "../components/ui/Input";
-import { ArrowLeftIcon, BlocksIcon, ChatIcon, ClockIcon, FolderIcon, GlobeIcon, ReloadIcon, TerminalIcon } from "../components/ui/PixelIcon";
+import { BlocksIcon, ChatIcon, ClockIcon, CloseIcon, EyeIcon, FolderIcon, GlobeIcon, ReloadIcon, TerminalIcon } from "../components/ui/PixelIcon";
 import { deslizarAba, moverIndicador } from "../lib/motion";
 import { ExtensoesSettings } from "../features/extensoes/ExtensoesSettings";
 import type { ExtensoesDaConta, FonteDeExtensoes } from "../features/extensoes/extensoesService";
+import { chaveDoIcone } from "../features/extensoes/chaveDoIcone";
+import { Panorama } from "../features/panorama/Panorama";
+import type { TerminalSession } from "../features/terminal/terminalService";
+import { TarefasNoTopo } from "../features/todo/TarefasNoTopo";
+import type { WorkspaceState } from "../types/workspace";
 import { PairingScreen } from "../mobile/Chat";
 import { ConversationDetail, ConversationList, filterConversations, haQuanto, NovaSessao, Ocultas } from "../mobile/MobileApp";
 import { useDados } from "../mobile/useDados";
 import { usePoll } from "../mobile/usePoll";
-import { NOME_DO_AGENTE, request, temConversa, type Conversation } from "../mobile/api";
+import { buscarIconeDeExtensao, NOME_DO_AGENTE, request, temConversa, type Conversation, type Projects } from "../mobile/api";
 import { UsoNoTopo } from "./UsoDasContas";
 import { PreviasLocais } from "./PreviasLocais";
+import { AprovacoesDeFluxo } from "../mobile/AprovacoesDeFluxo";
 
 /** O xterm só baixa quando alguém abre a aba Terminal: quem só conversa não paga por ele. */
 const TerminalEspelho = lazy(() => import("./TerminalEspelho"));
@@ -27,16 +33,23 @@ type Aba = "conversa" | "terminal";
 /** Terminal sem agente aberto no PC (`GET /terminais`): o lugar de rodar um `npm run dev`. */
 interface Shell { id: string; name: string; project_id: string; cwd: string; state: string; updated_at_ms: number }
 
-/** Endereço da tela aberta: `#/c/<id>` é uma conversa, `#/t/<id>` um terminal sem agente. */
-function lerEndereco(): { conversa: string | null; terminal: string | null; extensoes: boolean } {
+/** Quantas conversas cabem lado a lado. */
+const LADO_A_LADO = 3;
+
+/** Endereço da tela aberta: `#/c/<id>[,<id>…]` são conversas lado a lado, `#/t/<id>` um terminal sem
+ *  agente, `#/panorama` o panorama e `#/extensoes` as extensões. */
+function lerEndereco(): { conversas: string[]; terminal: string | null; extensoes: boolean; panorama: boolean } {
   const conversa = /^#\/c\/([^/?#]+)$/.exec(location.hash);
   const terminal = /^#\/t\/([^/?#]+)$/.exec(location.hash);
   return {
-    conversa: conversa ? decodeURIComponent(conversa[1]) : null,
+    conversas: conversa ? conversa[1].split(",").map(decodeURIComponent).filter(Boolean).slice(-LADO_A_LADO) : [],
     terminal: terminal ? decodeURIComponent(terminal[1]) : null,
     extensoes: location.hash === "#/extensoes",
+    panorama: location.hash === "#/panorama",
   };
 }
+const irPara = (hash: string, trocar = false) =>
+  history[trocar ? "replaceState" : "pushState"](null, "", `${location.pathname}${location.search}${hash}`);
 
 /** A aba Extensões do app, pelas rotas do engine. O projeto vai por id; o caminho só serve para a
  *  tela marcar "não vale neste projeto". */
@@ -62,6 +75,8 @@ function criarFonteDaWeb(projetoId: string | null): FonteDeExtensoes {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ligado }),
       });
     },
+    // Só o que o app do PC já buscou e salvou; a web não vai à rede atrás de ícone.
+    icone: (destino, nome) => buscarIconeDeExtensao(chaveDoIcone(destino, nome)),
     definirPrincipal: async (provider, conta) => {
       await request("/extensoes/principal", {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, conta }),
@@ -111,27 +126,64 @@ function tomDoEstado(conversa: Conversation): string {
   return "m-dot-parado";
 }
 
+/** As conversas abertas do projeto em três grupos, na ordem em que pedem olho. */
+function porEstado(lista: Conversation[]): [string, string, Conversation[]][] {
+  const pedindo = (c: Conversation) => Boolean(c.capabilities?.approve) || c.state === "approval_required" || c.state === "answered";
+  return ([
+    ["Pedindo você", "m-dot-alerta", lista.filter(pedindo)],
+    ["Trabalhando", "m-dot-ativo", lista.filter((c) => !pedindo(c) && c.state === "working")],
+    ["Paradas", "m-dot-parado", lista.filter((c) => !pedindo(c) && c.state !== "working")],
+  ] as [string, string, Conversation[]][]).filter(([, , itens]) => itens.length > 0);
+}
+
+/** O panorama do app, montado com o que a web sabe: um workspace "PC" com os projetos que têm algo
+ *  rodando, e cada conversa/terminal vivo como sessão. */
+function dadosDoPanorama(projetos: Projects["projects"], conversas: Conversation[], shells: Shell[]): { workspace: WorkspaceState; sessions: TerminalSession[] } {
+  const sessao = (id: string, project_id: string, name: string, state: string, provider: string | null, profile_id: string | null): TerminalSession => ({
+    id, project_id, name, cwd: projetos.find((p) => p.id === project_id)?.path ?? "", shell: "", state: state as TerminalSession["state"],
+    pid: null, output_seq: 0, rows: 0, cols: 0, provider, profile_id, conversation_id: provider ? id : null,
+  });
+  const sessions = [
+    ...conversas.filter((c) => c.live).map((c) => sessao(c.id, c.project_id, c.title,
+      c.capabilities?.approve ? "approval_required" : c.state ?? "stopped", c.provider ?? "claude", c.profile_id)),
+    ...shells.map((s) => sessao(s.id, s.project_id, s.name, s.state, null, null)),
+  ];
+  const usados = new Set(sessions.map((s) => s.project_id));
+  return {
+    sessions,
+    workspace: {
+      version: 1, id: "pc", name: "PC", activeProjectId: null, updatedAt: "",
+      projects: projetos.filter((p) => usados.has(p.id)).map((p) => ({
+        id: p.id, name: p.name, path: p.path, gitRoot: null, branch: null, composeFile: null, lastOpenedAt: "",
+        layout: { type: "pane", id: `pane-${p.id}`, tabs: [], activeTabId: null }, activePaneId: `pane-${p.id}`, maximizedPaneId: null,
+      })),
+    },
+  };
+}
+
 /**
- * A mesma coisa que o celular faz, num layout de computador — e mais perto do app do PC: projetos e
- * conversas à esquerda, a conversa (ou o terminal dela, ao vivo) no centro, e o que precisa de você
- * à direita.
+ * A mesma coisa que o celular faz, num layout de computador — e mais perto do app do PC: o que
+ * precisa de você, projetos e conversas à esquerda, e no centro até três conversas do mesmo projeto
+ * lado a lado (ou o terminal delas, ao vivo).
  *
  * Tudo vem das mesmas rotas do engine que o celular usa. Fora do escopo de propósito: editar
  * arquivo e painel de Git — isso continua sendo do app do PC.
  */
 export function WebApp() {
-  const [conversaId, setConversaId] = useState<string | null>(null);
+  const [abertas, setAbertas] = useState<string[]>([]);
+  const [focada, setFocada] = useState<string | null>(null);
   const [terminalId, setTerminalId] = useState<string | null>(null);
   const [verExtensoes, setVerExtensoes] = useState(false);
+  const [verPanorama, setVerPanorama] = useState(false);
+  const [fluxosParados, setFluxosParados] = useState(0);
   const [shells, setShells] = useState<Shell[]>([]);
   const [abrindoTerminal, setAbrindoTerminal] = useState(false);
   const [erroTerminal, setErroTerminal] = useState<string | null>(null);
-  const { conversations, attention, catalog, carregado, error, semAcesso, refresh, atualizar, parear } = useDados(conversaId);
+  const { conversations, attention, catalog, carregado, error, semAcesso, refresh, atualizar, parear } = useDados(focada);
   const [projetoId, setProjetoId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [buscaHistorico, setBuscaHistorico] = useState("");
   const [projetoHistorico, setProjetoHistorico] = useState("");
-  const [aba, setAba] = useState<Aba>(lerAba);
   const [atualizando, setAtualizando] = useState(false);
   const busca = useRef<HTMLInputElement>(null);
   // Lateral em abas: a que sai fica na tela até terminar de deslizar.
@@ -157,14 +209,16 @@ export function WebApp() {
       () => setSaindo((atual) => (atual === quem ? null : atual)));
   }, [abaLateral]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Endereço guarda a conversa aberta: atualizar a página (ou deixar aberta o dia todo) volta para
+  // Endereço guarda as conversas abertas: atualizar a página (ou deixar aberta o dia todo) volta para
   // onde estava, como no celular.
   useEffect(() => {
     const ler = () => {
       const endereco = lerEndereco();
-      setConversaId(endereco.conversa);
+      setAbertas(endereco.conversas);
+      setFocada((atual) => (atual && endereco.conversas.includes(atual) ? atual : endereco.conversas[endereco.conversas.length - 1] ?? null));
       setTerminalId(endereco.terminal);
       setVerExtensoes(endereco.extensoes);
+      setVerPanorama(endereco.panorama);
     };
     ler();
     window.addEventListener("hashchange", ler);
@@ -174,10 +228,6 @@ export function WebApp() {
       window.removeEventListener("popstate", ler);
     };
   }, []);
-
-  useEffect(() => {
-    try { sessionStorage.setItem(CHAVE_ABA, aba); } catch { /* sem armazenamento: vale só agora */ }
-  }, [aba]);
 
   // Contador no título da aba do navegador: com a página atrás de outras, dá para ver que algo
   // está esperando por você sem voltar a ela.
@@ -208,9 +258,17 @@ export function WebApp() {
   };
   usePoll(lerShells, () => undefined, []);
 
+  function limparCentro() {
+    setAbertas([]);
+    setFocada(null);
+    setTerminalId(null);
+    setVerExtensoes(false);
+    setVerPanorama(false);
+  }
+
   function abrirTerminal(id: string) {
-    history.pushState(null, "", `${location.pathname}${location.search}#/t/${encodeURIComponent(id)}`);
-    setConversaId(null);
+    irPara(`#/t/${encodeURIComponent(id)}`);
+    limparCentro();
     setTerminalId(id);
   }
 
@@ -239,22 +297,31 @@ export function WebApp() {
       setErroTerminal(motivo instanceof Error ? motivo.message : String(motivo));
     }
     await lerShells().catch(() => undefined);
-    fecharConversa();
+    irPara("", true);
+    limparCentro();
   }
 
-  function abrirConversa(id: string) {
+  function mostrar(lista: string[], foco: string | null, trocar = false) {
+    irPara(lista.length ? `#/c/${lista.map(encodeURIComponent).join(",")}` : "", trocar);
+    limparCentro();
+    setAbertas(lista);
+    setFocada(foco);
+  }
+
+  /** Clicar troca o que está no centro; `aoLado` soma à divisão — se for do mesmo projeto. Já aberta,
+   *  só ganha o foco. */
+  function abrirConversa(id: string, aoLado = false) {
     const escolhida = conversations.find((item) => item.id === id);
     if (escolhida) setProjetoId(escolhida.project_id);
-    history.pushState(null, "", `${location.pathname}${location.search}#/c/${encodeURIComponent(id)}`);
-    setTerminalId(null);
-    setVerExtensoes(false);
-    setConversaId(id);
+    if (abertas.includes(id) && !verExtensoes && !verPanorama && !terminalId) { setFocada(id); return; }
+    const projetoDaDivisao = conversations.find((item) => item.id === abertas[0])?.project_id;
+    const junta = aoLado && abertas.length > 0 && projetoDaDivisao === escolhida?.project_id;
+    mostrar(junta ? [...abertas.filter((item) => item !== id), id].slice(-LADO_A_LADO) : [id], id);
   }
 
-  function fecharConversa() {
-    history.replaceState(null, "", `${location.pathname}${location.search}`);
-    setConversaId(null);
-    setTerminalId(null);
+  function fecharConversa(id: string) {
+    const restantes = abertas.filter((item) => item !== id);
+    mostrar(restantes, focada === id ? restantes[restantes.length - 1] ?? null : focada, true);
   }
 
   function selecionarProjeto(id: string) {
@@ -270,7 +337,8 @@ export function WebApp() {
     );
   }
 
-  const conversa: Conversation | null = conversations.find((item) => item.id === conversaId) ?? null;
+  const conversaFocada: Conversation | null = conversations.find((item) => item.id === focada) ?? null;
+  const naDivisao = abertas.map((id) => conversations.find((item) => item.id === id)).filter((item): item is Conversation => Boolean(item));
   const perfis = catalog?.profiles ?? [];
   const projetos = catalog?.projects ?? [];
   // Uma escolha explícita na lateral vence a conversa aberta: assim é possível consultar outro
@@ -278,7 +346,7 @@ export function WebApp() {
   // conversa mais recente — a lista vem ordenada por atividade.
   const projetoAtivo =
     projetos.find((item) => item.id === projetoId)
-    ?? projetos.find((item) => item.id === conversa?.project_id)
+    ?? projetos.find((item) => item.id === conversaFocada?.project_id)
     ?? projetos.find((item) => item.id === conversations[0]?.project_id)
     ?? projetos[0]
     ?? null;
@@ -293,44 +361,40 @@ export function WebApp() {
     .sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0));
   const trabalhando = conversations.filter((item) => item.state === "working");
   const naoVistas = new Set(attention.map((item) => item.id));
-  // Agente sem visão de conversa (Cursor) abre direto no terminal ao vivo.
-  const soTerminal = Boolean(conversa && !temConversa(conversa.provider));
-  const abaVisivel: Aba = (aba === "terminal" || soTerminal) && conversa?.live ? "terminal" : "conversa";
-  const conta = conversa?.profile_id ? perfis.find((perfil) => perfil.id === conversa.profile_id)?.name : null;
-  const projetoDaConversa = conversa ? projetos.find((item) => item.id === conversa.project_id)?.name : null;
   const shell = shells.find((item) => item.id === terminalId) ?? null;
   const shellsDoProjeto = shells.filter((item) => item.project_id === projetoAtivo?.id);
+  const pendencias = attention.length + fluxosParados;
+  const temCentro = Boolean(verExtensoes || verPanorama || terminalId || naDivisao.length);
 
   return (
-    <div className="w-tela">
+    <div className={`w-tela${temCentro ? " tem-centro" : ""}`}>
       <header className="w-topo glass glass-strong">
         <OmniLogo className="neon-glow w-logo" />
         <span className="w-marca">
           <span className="pixel-text">OMNI AGENTS</span>
           <span className="w-versao">v{__APP_VERSION__}</span>
         </span>
-        {conversa ? (
-          <div className="w-topo-conversa">
-            <button type="button" className="btn btn-ghost w-voltar" aria-label="Fechar conversa" title="Fechar conversa" onClick={fecharConversa}>
-              <ArrowLeftIcon aria-hidden className="h-4 w-4" />
-            </button>
-            {conversa.provider && <AgentIcon provider={conversa.provider} size={16} className="shrink-0" />}
-            <div className="w-topo-texto">
-              <span className="w-topo-titulo">{conversa.title}</span>
-              <span className="w-topo-sub">
-                <span className={`m-dot ${tomDoEstado(conversa)}`} aria-hidden />
-                {[ESTADO[conversa.state ?? ""] ?? (conversa.historical ? "Histórico" : "Sem sessão aberta"),
-                  NOME_DO_AGENTE[conversa.provider ?? ""] ?? conversa.provider, conta, projetoDaConversa]
-                  .filter(Boolean).join(" · ")}
-              </span>
-            </div>
-          </div>
-        ) : <span className="w-topo-espaco" />}
+        {temCentro && (
+          <button type="button" className="btn btn-ghost w-voltar w-so-celular" aria-label="Voltar para a lista" title="Voltar para a lista"
+            onClick={() => mostrar([], null, true)}>←</button>
+        )}
+        <span className="w-topo-espaco" />
         {error && <span className="w-erro" role="alert">Sem conexão com o PC: {error}</span>}
-        <UsoNoTopo profileId={conversa?.profile_id ?? null} provider={conversa?.provider ?? null} />
+        <UsoNoTopo profileId={conversaFocada?.profile_id ?? null} provider={conversaFocada?.provider ?? null} />
+        <TarefasNoTopo />
+        <button type="button" className={`btn btn-ghost w-atualizar w-topo-acao${verPanorama ? " is-ativo" : ""}`} aria-pressed={verPanorama}
+          title="Panorama: tudo o que está rodando no PC" onClick={() => {
+            if (verPanorama) { mostrar([], null, true); return; }
+            irPara("#/panorama");
+            limparCentro();
+            setVerPanorama(true);
+          }}>
+          <EyeIcon aria-hidden className="h-4 w-4" /><span className="w-topo-acao-nome">Panorama</span>
+        </button>
         <button type="button" className={`btn btn-ghost w-atualizar${verExtensoes ? " is-ativo" : ""}`} aria-label="Extensões"
           title="MCPs, plugins e conectores de cada IA" onClick={() => {
-            history.pushState(null, "", `${location.pathname}${location.search}#/extensoes`);
+            irPara("#/extensoes");
+            limparCentro();
             setVerExtensoes(true);
           }}>
           <BlocksIcon aria-hidden className="h-4 w-4" />
@@ -377,17 +441,36 @@ export function WebApp() {
                         <h2 className="w-rotulo"><span className="w-rotulo-texto">{periodo}</span><span className="w-rotulo-conta">{itens.length}</span></h2>
                         <div className="w-conversas">
                           <ConversationList conversations={itens} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
-                            ativa={conversaId} naoVistas={naoVistas} vazio="" />
+                            ativa={focada} naoVistas={naoVistas} vazio="" />
                         </div>
                       </section>
                     ))}
                     <Ocultas conversas={conversations.filter((item) => item.hidden && (!projetoHistorico || item.project_id === projetoHistorico))}
-                      perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa} ativa={conversaId} />
+                      perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa} ativa={focada} />
                   </>
                 ) : (
                   <>
                     <Input ref={busca} type="search" size="sm" value={query} onChange={event => setQuery(event.target.value)}
                       placeholder="Pesquisar conversas  ( / )" aria-label="Pesquisar conversas" className="w-busca" />
+
+                    {/* Primeiro o que está parado esperando você, de qualquer projeto. */}
+                    <section className={`w-secao w-pendencias${pendencias > 0 ? " is-alerta" : ""}`} aria-label="Precisa de você" hidden={Boolean(query)}>
+                      <h2 className="w-rotulo"><span className={`m-dot ${pendencias > 0 ? "m-dot-alerta" : "m-dot-parado"}`} aria-hidden />
+                        <span className="w-rotulo-texto">Precisa de você</span>
+                        {pendencias > 0 && <span className="w-rotulo-conta is-alerta">{pendencias}</span>}</h2>
+                      <AprovacoesDeFluxo aoMudar={setFluxosParados} />
+                      {attention.length === 0 ? (fluxosParados > 0 ? null : <p className="w-pendencias-vazio">Nada pendente agora.</p>) : (
+                        <ul className="w-atencao">
+                          {attention.map((item) => (
+                            <li key={item.id}>
+                              <ItemLateral conversa={item} ativa={abertas.includes(item.id)} abrir={abrirConversa}
+                                projeto={projetos.find((p) => p.id === item.project_id)?.name} />
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+
                     {!query && (
                       <section className="w-secao">
                         <h2 className="w-rotulo"><FolderIcon aria-hidden className="h-3 w-3" />Projetos<span className="w-rotulo-conta">{projetos.length}</span></h2>
@@ -427,7 +510,7 @@ export function WebApp() {
                         <h2 className="w-rotulo"><ChatIcon aria-hidden className="h-3 w-3" />Resultados<span className="w-rotulo-conta">{daLista.length}</span></h2>
                         <div className="w-conversas">
                           <ConversationList conversations={daLista} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
-                            ativa={conversaId} naoVistas={naoVistas} vazio="Nenhuma conversa encontrada." />
+                            ativa={focada} naoVistas={naoVistas} vazio="Nenhuma conversa encontrada." />
                         </div>
                       </section>
                     ) : (
@@ -437,41 +520,50 @@ export function WebApp() {
                             <span className="w-rotulo-texto">Abertas no PC</span>
                             {projetoAtivo && <span className="w-rotulo-projeto" title={projetoAtivo.path}><FolderIcon aria-hidden className="h-3 w-3" />{projetoAtivo.name}</span>}
                             <span className="w-rotulo-conta">{abertasDoProjeto.length}</span></h2>
-                          <div className="w-conversas">
-                            <ConversationList conversations={abertasDoProjeto} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
-                              ativa={conversaId} naoVistas={naoVistas} vazio={carregado ? "Nenhuma conversa aberta neste projeto." : "Carregando…"} />
-                          </div>
+                          {abertasDoProjeto.length === 0 && (
+                            <p className="w-vazio">{carregado ? "Nenhuma conversa aberta neste projeto." : "Carregando…"}</p>
+                          )}
+                          {porEstado(abertasDoProjeto).map(([grupo, tom, itens]) => (
+                            <div key={grupo} className="w-grupo">
+                              <h3 className="w-grupo-titulo"><span className={`m-dot ${tom}`} aria-hidden />{grupo}<span className="w-grupo-conta">{itens.length}</span></h3>
+                              <div className="w-conversas">
+                                <ConversationList conversations={itens} perfis={perfis} projetos={projetos} abrir={abrirConversa}
+                                  ativa={focada} naoVistas={naoVistas} vazio="" abertas={abertas}
+                                  aoLado={naDivisao.length > 0 ? (id) => abrirConversa(id, true) : undefined} />
+                              </div>
+                            </div>
+                          ))}
                         </section>
+                        {projetoAtivo?.path && shellsDoProjeto.length > 0 && (
+                          <section className="w-secao">
+                            <h2 className="w-rotulo"><TerminalIcon aria-hidden className="h-3 w-3" />Terminais<span className="w-rotulo-conta">{shellsDoProjeto.length}</span></h2>
+                            <ul className="w-atencao">
+                              {shellsDoProjeto.map((item) => (
+                                <li key={item.id}>
+                                  <button type="button" title={item.cwd} onClick={() => abrirTerminal(item.id)}
+                                    className={`w-atencao-item w-terminal-item${item.id === terminalId ? " w-atencao-item-ativa" : ""}`}>
+                                    <span className={`m-dot ${item.state === "working" ? "m-dot-ativo" : "m-dot-parado"}`} aria-hidden />
+                                    <TerminalIcon aria-hidden className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="w-atencao-texto">{item.name}</span>
+                                    {haQuanto(item.updated_at_ms) && <time className="w-atencao-tempo">{haQuanto(item.updated_at_ms)}</time>}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
+                        )}
                         <section className="w-secao">
                           <h2 className="w-rotulo"><ClockIcon aria-hidden className="h-3 w-3" /><span className="w-rotulo-texto">Últimas conversas</span>
                             <span className="w-rotulo-dica">todos os projetos</span></h2>
                           <div className="w-conversas">
                             <ConversationList conversations={ultimas} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
-                              ativa={conversaId} naoVistas={naoVistas} vazio={carregado ? "Nenhuma conversa ainda." : "Carregando…"} />
+                              ativa={focada} naoVistas={naoVistas} vazio={carregado ? "Nenhuma conversa ainda." : "Carregando…"} />
                           </div>
                           <button type="button" className="w-ver-historico" onClick={() => trocarAbaLateral("historico")}>
                             <ClockIcon aria-hidden className="h-3.5 w-3.5" />Ver todo o histórico<span aria-hidden>→</span>
                           </button>
                         </section>
                       </>
-                    )}
-                    {projetoAtivo?.path && !query && shellsDoProjeto.length > 0 && (
-                      <section className="w-secao">
-                        <h2 className="w-rotulo"><TerminalIcon aria-hidden className="h-3 w-3" />Terminais<span className="w-rotulo-conta">{shellsDoProjeto.length}</span></h2>
-                        <ul className="w-atencao">
-                          {shellsDoProjeto.map((item) => (
-                            <li key={item.id}>
-                              <button type="button" title={item.cwd} onClick={() => abrirTerminal(item.id)}
-                                className={`w-atencao-item w-terminal-item${item.id === terminalId ? " w-atencao-item-ativa" : ""}`}>
-                                <span className={`m-dot ${item.state === "working" ? "m-dot-ativo" : "m-dot-parado"}`} aria-hidden />
-                                <TerminalIcon aria-hidden className="h-3.5 w-3.5 shrink-0" />
-                                <span className="w-atencao-texto">{item.name}</span>
-                                {haQuanto(item.updated_at_ms) && <time className="w-atencao-tempo">{haQuanto(item.updated_at_ms)}</time>}
-                              </button>
-                            </li>
-                          ))}
-                        </ul>
-                      </section>
                     )}
                   </>
                 )}
@@ -494,15 +586,22 @@ export function WebApp() {
         </aside>
 
         <main className="w-coluna w-centro" aria-label="Conversa">
-          {verExtensoes ? (
+          {verPanorama ? (() => {
+            const { workspace, sessions } = dadosDoPanorama(projetos, conversations, shells);
+            return (
+              <div className="w-panorama">
+                <Panorama workspaces={[workspace]} activeWorkspaceId={workspace.id} sessions={sessions}
+                  onSessao={(sessao) => (sessao.provider ? abrirConversa(sessao.id) : abrirTerminal(sessao.id))}
+                  onProjeto={(_, projectId) => { selecionarProjeto(projectId); mostrar([], null, true); }}
+                  onAba={() => undefined} onWorkspace={() => undefined} onClose={() => mostrar([], null, true)} />
+              </div>
+            );
+          })() : verExtensoes ? (
             <div className="w-painel-central w-extensoes">
               <div className="w-abas">
                 <span className="w-aba w-aba-ativa"><BlocksIcon aria-hidden className="h-3.5 w-3.5" />Extensões</span>
                 <span className="w-topo-espaco" />
-                <button type="button" className="btn btn-ghost w-fechar-terminal" onClick={() => {
-                  history.replaceState(null, "", `${location.pathname}${location.search}`);
-                  setVerExtensoes(false);
-                }}>Fechar</button>
+                <button type="button" className="btn btn-ghost w-fechar-terminal" onClick={() => mostrar([], null, true)}>Fechar</button>
               </div>
               <ExtensoesSettings key={projetoAtivo?.id ?? "-"} projectPath={projetoAtivo?.path ?? null} fonte={fonteDaWeb(projetoAtivo?.id ?? null)} />
             </div>
@@ -523,81 +622,100 @@ export function WebApp() {
                 </Suspense>
               </div>
             </>
-          ) : conversa ? (
-            <>
-              <div className="w-abas" role="tablist" aria-label="Visualização">
-                <button type="button" role="tab" aria-selected={abaVisivel === "conversa"} disabled={soTerminal}
-                  title={soTerminal ? "O OMNI ainda não lê as conversas deste agente — use o terminal" : undefined}
-                  className={`w-aba${abaVisivel === "conversa" ? " w-aba-ativa" : ""}`} onClick={() => setAba("conversa")}>
-                  <ChatIcon aria-hidden className="h-3.5 w-3.5" />Conversa
-                </button>
-                <button type="button" role="tab" aria-selected={abaVisivel === "terminal"} disabled={!conversa.live}
-                  title={conversa.live ? "O terminal desta conversa, ao vivo" : "Sem terminal aberto no PC para esta conversa"}
-                  className={`w-aba${abaVisivel === "terminal" ? " w-aba-ativa" : ""}`} onClick={() => setAba("terminal")}>
-                  <TerminalIcon aria-hidden className="h-3.5 w-3.5" />Terminal
-                </button>
-              </div>
-              <div className="w-painel-central">
-                {abaVisivel === "terminal" ? (
-                  <Suspense fallback={<p className="w-vazio">Abrindo o terminal…</p>}>
-                    <TerminalEspelho key={conversa.id} saida={`/conversas/${encodeURIComponent(conversa.id)}/terminal`}
-                      teclas={`/conversas/${encodeURIComponent(conversa.id)}/teclas`} />
-                  </Suspense>
-                ) : (
-                  <ConversationDetail key={conversa.id} conversation={conversa} refresh={refresh} abrirConversa={abrirConversa} />
-                )}
-              </div>
-            </>
+          ) : naDivisao.length > 0 ? (
+            <div className={`w-divisao is-${naDivisao.length}`}>
+              {naDivisao.map((item) => (
+                <PainelDaConversa key={item.id} conversa={item} perfis={perfis} projetos={projetos}
+                  focada={item.id === focada} varias={naDivisao.length > 1} focar={() => setFocada(item.id)}
+                  fechar={() => fecharConversa(item.id)} refresh={refresh} abrirConversa={abrirConversa} />
+              ))}
+            </div>
           ) : (
             <div className="w-boas-vindas">
               <OmniLogo className="neon-glow w-boas-vindas-logo" />
               <p className="w-vazio">
-                {conversaId && carregado ? "Essa conversa não existe mais no PC." : "Escolha uma conversa à esquerda para acompanhar e responder."}
+                {abertas.length && carregado ? "Essa conversa não existe mais no PC." : "Escolha uma conversa à esquerda para acompanhar e responder."}
               </p>
-              <p className="w-dica">Dica: <kbd>/</kbd> busca conversas · <kbd>Enter</kbd> envia · <kbd>Shift</kbd>+<kbd>Enter</kbd> quebra linha</p>
+              <p className="w-dica">Dica: <kbd>/</kbd> busca conversas · <kbd>+</kbd> na lista abre outra conversa do projeto ao lado · <kbd>Enter</kbd> envia</p>
             </div>
           )}
         </main>
-
-        <aside className="w-coluna w-direita" aria-label="Precisa de você">
-          <h2 className="w-rotulo">Precisa de você{attention.length > 0 && <span className="w-rotulo-conta is-alerta">{attention.length}</span>}</h2>
-          {attention.length === 0 ? (
-            <p className="w-vazio">Nada pendente agora.</p>
-          ) : (
-            <ul className="w-atencao">
-              {attention.map((item) => (
-                <li key={item.id}>
-                  <ItemLateral conversa={item} ativa={item.id === conversaId} abrir={abrirConversa} />
-                </li>
-              ))}
-            </ul>
-          )}
-          {trabalhando.length > 0 && (
-            <>
-              <h2 className="w-rotulo">Trabalhando agora<span className="w-rotulo-conta is-vivo">{trabalhando.length}</span></h2>
-              <ul className="w-atencao">
-                {trabalhando.map((item) => (
-                  <li key={item.id}>
-                    <ItemLateral conversa={item} ativa={item.id === conversaId} abrir={abrirConversa} />
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </aside>
       </div>
     </div>
   );
 }
 
-function ItemLateral({ conversa, ativa, abrir }: { conversa: Conversation; ativa: boolean; abrir: (id: string) => void }) {
+/** Uma conversa no centro, com o próprio cabeçalho: dá para ter até três lado a lado. */
+function PainelDaConversa({ conversa, perfis, projetos, focada, varias, focar, fechar, refresh, abrirConversa }: {
+  conversa: Conversation; perfis: Projects["profiles"]; projetos: Projects["projects"];
+  focada: boolean; varias: boolean; focar: () => void; fechar: () => void;
+  refresh: () => Promise<void>; abrirConversa: (id: string) => void;
+}) {
+  const [aba, setAba] = useState<Aba>(lerAba);
+  useEffect(() => {
+    try { sessionStorage.setItem(CHAVE_ABA, aba); } catch { /* sem armazenamento: vale só agora */ }
+  }, [aba]);
+  // Agente sem visão de conversa (Cursor) abre direto no terminal ao vivo.
+  const soTerminal = !temConversa(conversa.provider);
+  const abaVisivel: Aba = (aba === "terminal" || soTerminal) && conversa.live ? "terminal" : "conversa";
+  const conta = conversa.profile_id ? perfis.find((perfil) => perfil.id === conversa.profile_id)?.name : null;
+  const projeto = projetos.find((item) => item.id === conversa.project_id)?.name;
+  return (
+    <section className={`w-painel${focada && varias ? " is-focada" : ""}`} aria-label={conversa.title} onPointerDownCapture={focar}>
+      <div className="w-painel-topo">
+        {conversa.provider && <span className="w-painel-avatar"><AgentIcon provider={conversa.provider} size={16} /></span>}
+        <div className="w-topo-texto">
+          <span className="w-topo-titulo" title={conversa.title}>{conversa.title}</span>
+          <span className="w-topo-sub">
+            <span className={`m-dot ${tomDoEstado(conversa)}`} aria-hidden />
+            {[ESTADO[conversa.state ?? ""] ?? (conversa.historical ? "Histórico" : "Sem sessão aberta"),
+              NOME_DO_AGENTE[conversa.provider ?? ""] ?? conversa.provider, conta, projeto]
+              .filter(Boolean).join(" · ")}
+          </span>
+        </div>
+        <div className="w-painel-abas" role="tablist" aria-label="Visualização">
+          <button type="button" role="tab" aria-selected={abaVisivel === "conversa"} disabled={soTerminal}
+            title={soTerminal ? "O OMNI ainda não lê as conversas deste agente — use o terminal" : "Conversa"}
+            className={`w-aba${abaVisivel === "conversa" ? " w-aba-ativa" : ""}`} onClick={() => setAba("conversa")}>
+            <ChatIcon aria-hidden className="h-3.5 w-3.5" /><span className="w-aba-nome">Conversa</span>
+          </button>
+          <button type="button" role="tab" aria-selected={abaVisivel === "terminal"} disabled={!conversa.live}
+            title={conversa.live ? "O terminal desta conversa, ao vivo" : "Sem terminal aberto no PC para esta conversa"}
+            className={`w-aba${abaVisivel === "terminal" ? " w-aba-ativa" : ""}`} onClick={() => setAba("terminal")}>
+            <TerminalIcon aria-hidden className="h-3.5 w-3.5" /><span className="w-aba-nome">Terminal</span>
+          </button>
+        </div>
+        <button type="button" className="btn btn-ghost w-voltar" aria-label="Fechar conversa" title="Fechar conversa" onClick={fechar}>
+          <CloseIcon aria-hidden className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="w-painel-central">
+        {abaVisivel === "terminal" ? (
+          <Suspense fallback={<p className="w-vazio">Abrindo o terminal…</p>}>
+            <TerminalEspelho key={conversa.id} saida={`/conversas/${encodeURIComponent(conversa.id)}/terminal`}
+              teclas={`/conversas/${encodeURIComponent(conversa.id)}/teclas`} />
+          </Suspense>
+        ) : (
+          <ConversationDetail key={conversa.id} conversation={conversa} refresh={refresh} abrirConversa={abrirConversa} />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ItemLateral({ conversa, ativa, abrir, projeto }: { conversa: Conversation; ativa: boolean; abrir: (id: string) => void; projeto?: string }) {
   const aprovar = Boolean(conversa.capabilities?.approve);
   return (
     <button type="button" className={`w-atencao-item${ativa ? " w-atencao-item-ativa" : ""}${aprovar ? " w-atencao-item-alerta" : ""}`}
       onClick={() => abrir(conversa.id)} title={conversa.title}>
-      <span className={`m-dot ${tomDoEstado(conversa)}`} aria-hidden />
-      {conversa.provider && <AgentIcon provider={conversa.provider} size={12} className="shrink-0" />}
-      <span className="w-atencao-texto">{conversa.title}</span>
+      <span className="w-atencao-avatar">
+        {conversa.provider && <AgentIcon provider={conversa.provider} size={14} />}
+        <span className={`m-dot ${tomDoEstado(conversa)}`} aria-hidden />
+      </span>
+      <span className="w-atencao-corpo">
+        <span className="w-atencao-texto">{conversa.title}</span>
+        {projeto && <span className="w-atencao-projeto">{projeto}</span>}
+      </span>
       {aprovar ? <span className="m-badge m-badge-alerta">Aprovar</span>
         : haQuanto(conversa.updated_at_ms) && <time className="w-atencao-tempo">{haQuanto(conversa.updated_at_ms)}</time>}
     </button>

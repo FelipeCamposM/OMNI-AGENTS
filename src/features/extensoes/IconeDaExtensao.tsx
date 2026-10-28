@@ -1,4 +1,4 @@
-import type { ComponentType, SVGProps } from "react";
+import { useEffect, useState, type ComponentType, type SVGProps } from "react";
 import { AgentIcon } from "../../components/ui/AgentIcon";
 import { DockerIcon, GithubIcon, NpmIcon, VercelIcon } from "../../components/ui/PixelIcon";
 
@@ -26,11 +26,41 @@ function corDe(chave: string) {
   return PALETA[h % PALETA.length];
 }
 
+export type BuscarIcone = (destino: string, nome: string) => Promise<string | null>;
+
+/** Uma busca por destino na sessão (o Rust ainda guarda em disco); falha vira "sem ícone". */
+const buscados = new Map<string, Promise<string | null>>();
+
+function useIconeRemoto(remoto: string | undefined, nome: string, buscar: BuscarIcone | undefined) {
+  const [icone, setIcone] = useState<string | null>(null);
+  useEffect(() => {
+    setIcone(null);
+    if (remoto === undefined || !buscar) return;
+    let vivo = true;
+    const chave = `${remoto}|${nome}`;
+    let busca = buscados.get(chave);
+    if (!busca) {
+      busca = buscar(remoto, nome).catch(() => null);
+      buscados.set(chave, busca);
+    }
+    void busca.then((achado) => { if (vivo) setIcone(achado); });
+    return () => { vivo = false; };
+  }, [remoto, nome, buscar]);
+  return icone;
+}
+
 /**
  * A "foto" de um MCP, plugin ou conector: o logo do pacote quando o plugin traz (lido do manifesto
- * pelo Rust, já em `data:`), senão a marca que o app já tem desenhada, senão a inicial numa cor.
+ * pelo Rust, já em `data:`), senão o ícone que o servidor/site anuncia (`remoto`, buscado pelo Rust),
+ * senão a marca que o app já tem desenhada, senão a inicial numa cor.
  */
-export function IconeDaExtensao({ nome, logo, destino }: { nome: string; logo?: string | null; destino?: string }) {
+export function IconeDaExtensao({ nome, logo, destino, remoto, buscar }: {
+  nome: string; logo?: string | null; destino?: string;
+  /** Destino do MCP, `conector:<nome>` ou `pacote:<site>`: com `buscar`, procura o ícone de verdade. */
+  remoto?: string; buscar?: BuscarIcone;
+}) {
+  const achado = useIconeRemoto(logo ? undefined : remoto, nome, buscar);
+  logo = logo || achado;
   if (logo) return <span className="ext-foto is-logo" aria-hidden><img src={logo} alt="" draggable={false} /></span>;
   const chave = `${nome} ${destino ?? ""}`.toLowerCase();
   const marca = MARCAS.find(([re]) => re.test(chave))?.[1];

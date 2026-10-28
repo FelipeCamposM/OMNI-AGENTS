@@ -11,6 +11,7 @@ import {
   GitBranchIcon,
   KanbanIcon,
   ReloadIcon,
+  ServerIcon,
   SlidersIcon as Sliders,
   TerminalIcon,
 } from "./ui/PixelIcon";
@@ -34,20 +35,23 @@ import { AttentionPanel } from "./AttentionPanel";
 import { FileTree } from "./FileTree";
 import { GitPanel } from "./GitPanel";
 import { DockerPanel } from "./DockerPanel";
+import { ServidoresPanel } from "./ServidoresPanel";
 import { KanbanPanel } from "./KanbanPanel";
 import { SkillsList } from "./SkillsList";
+import { AvatarDoProjeto } from "./EscolherIcone";
 /* O mesmo arquivo que o Tauri usa como ícone do app (tauri.conf.json →
    bundle.icon). Importado em vez de copiado para src/assets: uma cópia
    dessincronizaria do ícone real na próxima troca de marca. */
 
 /** Abas da lateral, uma por ícone na fileira do topo. "geral" junta atenção, workspaces, projetos,
  *  conversas e terminais; as outras são uma ferramenta do projeto cada. */
-type Aba = "geral" | "files" | "git" | "docker" | "skills" | "kanban";
+type Aba = "geral" | "files" | "git" | "docker" | "servidores" | "skills" | "kanban";
 const ABAS: Record<Aba, { rotulo: string; icone: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>; precisaProjeto: boolean }> = {
   geral: { rotulo: "Conversas", icone: ChatIcon, precisaProjeto: false },
   files: { rotulo: "Arquivos", icone: FolderIcon, precisaProjeto: true },
   git: { rotulo: "Git", icone: GitBranchIcon, precisaProjeto: true },
   docker: { rotulo: "Docker", icone: DockerIcon, precisaProjeto: false },
+  servidores: { rotulo: "Servidores locais", icone: ServerIcon, precisaProjeto: false },
   skills: { rotulo: "Skills", icone: BookIcon, precisaProjeto: true },
   kanban: { rotulo: "Kanban", icone: KanbanIcon, precisaProjeto: true },
 };
@@ -88,6 +92,9 @@ interface SidebarProps {
   onMoveWorkspace: (workspaceId: string, beforeId: string | null) => void;
   onRemoveProjectFromWorkspace: (workspaceId: string, projectId: string) => void;
   onRenameWorkspace: (workspaceId: string, name: string) => void;
+  /** Símbolo do workspace/projeto (favicon). Opcionais: sem eles o avatar fica fixo. */
+  onSetWorkspaceIcon?: (workspaceId: string, icone: string | null | undefined) => void;
+  onSetProjectIcon?: (projectId: string, icone: string | null | undefined) => void;
   attention: AttentionItem[];
   onFocusSession: (item: AttentionItem) => void;
   onDismissAttention: (item: AttentionItem) => void;
@@ -138,6 +145,8 @@ export function Sidebar({
   onMoveWorkspace,
   onRemoveProjectFromWorkspace,
   onRenameWorkspace,
+  onSetWorkspaceIcon,
+  onSetProjectIcon,
   attention,
   onFocusSession,
   onDismissAttention,
@@ -319,6 +328,7 @@ export function Sidebar({
                   onMove={onMoveWorkspace}
                   onRemoveProject={onRemoveProjectFromWorkspace}
                   onRename={onRenameWorkspace}
+                  onSetIcon={onSetWorkspaceIcon}
                 />
 
                 <div className="space-y-1">
@@ -347,6 +357,9 @@ export function Sidebar({
                             ? "lateral-item-ativo border-accent ring-accent/50"
                             : "border-transparent ring-border-subtle/40 hover:ring-border-subtle"
                         }`}>
+                        {onSetProjectIcon && (
+                          <span className="grid shrink-0 place-items-center pl-2"><AvatarDoProjeto project={project} onEscolher={onSetProjectIcon} /></span>
+                        )}
                         <button
                           type="button"
                           data-nav-item
@@ -356,9 +369,11 @@ export function Sidebar({
                           title={`${project.path}
 Arraste para mudar a ordem`}
                         >
-                          <span className="lateral-avatar grid h-8 w-8 shrink-0 place-items-center border border-border-subtle">
-                            <FolderIcon className="h-3.5 w-3.5 text-accent" aria-hidden />
-                          </span>
+                          {!onSetProjectIcon && (
+                            <span className="lateral-avatar grid h-8 w-8 shrink-0 place-items-center border border-border-subtle">
+                              <FolderIcon className="h-3.5 w-3.5 text-accent" aria-hidden />
+                            </span>
+                          )}
                           <span className="min-w-0 flex-1">
                             <span className={`block truncate text-xs leading-4 ${
                               project.id === activeProjectId ? "font-semibold text-text-primary" : "text-text-secondary"
@@ -460,6 +475,8 @@ Arraste para mudar a ordem`}
                   <FileTree projectPath={activeProjectPath} onOpenFile={onOpenFile} onFileRenamed={onFileRenamed} onPathDeleted={onPathDeleted} />
                 ) : id === "docker" ? (
                   <DockerPanel onRunInTerminal={onRunInTerminal} />
+                ) : id === "servidores" ? (
+                  <ServidoresPanel />
                 ) : id === "skills" ? (
                   <SkillsList projectPath={activeProjectPath} onOpenFile={onOpenFile} />
                 ) : id === "git" ? (

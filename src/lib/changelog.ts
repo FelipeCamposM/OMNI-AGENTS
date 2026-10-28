@@ -14,6 +14,25 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.8",
+    date: "2026-10-28",
+    changes: [
+      "Novo: Servidores locais na lateral. Veja de qual projeto é cada localhost rodando no PC, dê um apelido, abra no navegador ou derrube com um clique.",
+      "Troca de conta e compactação automáticas agora funcionam mesmo com a janela fechada e para quem usa só a web ou o celular.",
+      "Novo: crie um fluxo a partir de uma conversa — escolha \"Basear numa conversa\" em \"Criar fluxo com IA\".",
+      "Fluxos: etapas em paralelo e o novo passo Juntar, que espera os ramos terminarem. Dá para aprovar ou recusar etapas de fluxo pela web e pelo celular.",
+      "Na web: \"Precisa de você\" no topo da lateral, conversas abertas agrupadas por estado, até 3 conversas do mesmo projeto lado a lado, e Tarefas e Panorama no topo.",
+      "As tarefas agora são as mesmas no app, na web e no celular.",
+      "Projetos e workspaces podem usar o favicon do projeto como símbolo.",
+      "Extensões e ações da conversa mostram o ícone real de cada MCP, plugin e conector.",
+      "Tela de Agentes nas Configurações reorganizada, e o celular ganhou um visual novo.",
+      "Instalador com visual novo e em português.",
+      "Corrigido: uma conta extra podia sumir da lista de Agentes depois de entrar de novo.",
+      "Corrigido: parar o agente logo depois de enviar podia deixar a conversa como \"não reconhecida\".",
+      "Corrigido: o cursor neon às vezes aparecia fora do lugar com texto longo, e o aviso de retomar conversa grande não trava mais a sessão.",
+    ],
+  },
+  {
     version: "0.7.7",
     date: "2026-10-23",
     changes: [

@@ -28,6 +28,9 @@ pub enum TipoDeNo {
     /// Roda `config.comando` na pasta da execução: saiu com 0 → `sim`; falhou → `nao`; falhou de novo
     /// depois de `max_voltas` → `esgotado`. É o que liga um fluxo a testes, builds e scripts.
     Comando,
+    /// Espera **todos** os ramos que chegam nele terminarem e junta as saídas: o fim de um trecho
+    /// paralelo (dois agentes ao mesmo tempo → um revisor que lê os dois).
+    Juntar,
     Fim,
 }
 
@@ -131,6 +134,7 @@ pub fn validar(f: &Fluxo) -> Result<(), String> {
         if n.tipo == TipoDeNo::Agente && n.agente.trim().is_empty() { return Err(format!("O nó “{}” precisa de um modelo de agente", rotulo(n))); }
         if n.tipo == TipoDeNo::Sala && participantes(n).len() < 2 { return Err(format!("A sala “{}” precisa de pelo menos dois participantes", rotulo(n))); }
         if n.tipo == TipoDeNo::Comando && n.config["comando"].as_str().is_none_or(|c| c.trim().is_empty()) { return Err(format!("O comando “{}” está vazio", rotulo(n))); }
+        if n.tipo == TipoDeNo::Juntar && antecessores(f, &n.id).len() < 2 { return Err(format!("O Juntar “{}” precisa de pelo menos dois ramos chegando", rotulo(n))); }
         if n.tipo == TipoDeNo::Pr && f.na_pasta_do_projeto { return Err("Pull request precisa de worktree: desligue “rodar na pasta do projeto” ou troque o PR por um comando".into()); }
     }
     for c in &f.conexoes {
@@ -152,6 +156,21 @@ pub fn participantes(n: &No) -> Vec<String> {
 pub fn proximos<'a>(f: &'a Fluxo, no: &str, saida: &str) -> Vec<&'a No> {
     f.conexoes.iter().filter(|c| c.de == no && c.saida == saida)
         .filter_map(|c| f.nos.iter().find(|n| n.id == c.para)).collect()
+}
+
+/// Nós com conexão chegando em `no` (sem repetir), na ordem das conexões.
+pub fn antecessores<'a>(f: &'a Fluxo, no: &str) -> Vec<&'a str> {
+    let mut lista: Vec<&str> = Vec::new();
+    for c in f.conexoes.iter().filter(|c| c.para == no) { if !lista.contains(&c.de.as_str()) { lista.push(&c.de); } }
+    lista
+}
+
+/// O que o Juntar entrega: a saída de cada ramo, com o nome da etapa por cima.
+pub fn saida_do_juntar(f: &Fluxo, no: &str, saidas: &HashMap<String, String>) -> String {
+    antecessores(f, no).into_iter().map(|id| {
+        let titulo = f.nos.iter().find(|n| n.id == id).map(rotulo).unwrap_or_else(|| id.to_owned());
+        format!("## {titulo}\n\n{}", saidas.get(id).map(String::as_str).unwrap_or("").trim())
+    }).collect::<Vec<_>>().join("\n\n")
 }
 
 pub fn entrada(f: &Fluxo) -> Option<&No> {
@@ -327,6 +346,19 @@ mod tests {
         }
         let n: No = serde_json::from_str(r#"{"id":"a","tipo":"fim","config":null}"#).unwrap();
         assert!(n.config.is_object());
+    }
+
+    #[test]
+    fn juntar_precisa_de_dois_ramos_e_entrega_cada_saida_com_o_titulo() {
+        let mut f: Fluxo = serde_json::from_value(serde_json::json!({"id": "j", "nome": "J", "nos": [
+            {"id": "e", "tipo": "entrada"}, {"id": "a", "tipo": "pr", "titulo": "Front"}, {"id": "b", "tipo": "pr"}, {"id": "j", "tipo": "juntar"}],
+            "conexoes": [{"de": "e", "para": "a"}, {"de": "e", "para": "b"}, {"de": "a", "para": "j"}, {"de": "b", "para": "j"}, {"de": "b", "para": "j"}]})).unwrap();
+        validar(&f).unwrap();
+        assert_eq!(antecessores(&f, "j"), vec!["a", "b"], "conexão repetida não conta duas vezes");
+        let saidas = HashMap::from([("a".to_owned(), "tela pronta".to_owned()), ("b".to_owned(), "api pronta".to_owned())]);
+        assert_eq!(saida_do_juntar(&f, "j", &saidas), "## Front\n\ntela pronta\n\n## b\n\napi pronta");
+        f.conexoes.retain(|c| c.de != "b");
+        assert!(validar(&f).unwrap_err().contains("dois ramos"));
     }
 
     #[test]

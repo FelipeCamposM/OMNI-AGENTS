@@ -64,6 +64,15 @@ export function workspacesReducer(state: WorkspaceCollection, action: Workspaces
           workspace.id === action.workspaceId ? workspaceReducer(workspace, { type: "CLOSE_PROJECT", projectId: action.projectId }) : workspace
         ),
       };
+    case "SET_WORKSPACE_ICON":
+      return {
+        ...state,
+        workspaces: state.workspaces.map((workspace) => {
+          if (workspace.id !== action.workspaceId) return workspace;
+          const { icone: _, ...resto } = workspace;
+          return action.icone === undefined ? resto : { ...resto, icone: action.icone };
+        }),
+      };
     case "RENAME_WORKSPACE": {
       const name = action.name.trim();
       return {

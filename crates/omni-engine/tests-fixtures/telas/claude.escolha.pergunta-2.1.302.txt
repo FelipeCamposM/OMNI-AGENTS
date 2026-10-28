@@ -1,0 +1,15 @@
+● Antes de começar, preciso de uma decisão.
+────────────────────────────────────────
+ ←  ☐ Banco  ✔ Submit  →
+
+Qual banco de dados usar?
+
+❯ 1. Postgres
+     Relacional, já usado no projeto
+  2. SQLite
+     Arquivo local, sem servidor
+  3. Type something.
+────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

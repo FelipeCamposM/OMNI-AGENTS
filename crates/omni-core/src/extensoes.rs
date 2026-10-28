@@ -46,6 +46,10 @@ pub struct Plugin {
     /// para valer igual no app e na web, sem liberar a pasta do plugin no asset protocol.
     #[serde(skip_serializing_if = "Option::is_none")]
     logo: Option<String>,
+    /// Site do plugin no manifesto (homepage, repositório ou autor, sem query): a tela busca o ícone
+    /// dele quando o pacote não traz logo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    site: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -150,7 +154,10 @@ fn claude(conta: &mut ExtensoesDaConta, estado: &Path, dir: &Path, projeto: Opti
             let primeira = instalacoes.as_array().and_then(|l| l.first()).cloned().unwrap_or(Value::Null);
             let mut plugin = plugin_claude(&id, ligados.get(&id).and_then(Value::as_bool).unwrap_or(false),
                 primeira.get("version").and_then(Value::as_str), primeira.get("scope").and_then(Value::as_str), &instalados);
-            plugin.logo = primeira.get("installPath").and_then(Value::as_str).and_then(|pasta| logo_do_pacote(Path::new(pasta)));
+            if let Some(pasta) = primeira.get("installPath").and_then(Value::as_str).map(Path::new) {
+                plugin.logo = logo_do_pacote(pasta);
+                plugin.site = site_do_pacote(pasta);
+            }
             conta.plugins.push(plugin);
             vistos.insert(id);
         }
@@ -168,7 +175,7 @@ fn claude(conta: &mut ExtensoesDaConta, estado: &Path, dir: &Path, projeto: Opti
 
 fn plugin_claude(id: &str, ativo: bool, versao: Option<&str>, escopo: Option<&str>, arquivo: &Path) -> Plugin {
     let (nome, origem) = id.split_once('@').map_or((id, None), |(n, o)| (n, Some(o.to_owned())));
-    Plugin { nome: nome.to_owned(), origem, ativo, versao: versao.map(str::to_owned), escopo: escopo.map(str::to_owned), arquivo: texto(arquivo), logo: None }
+    Plugin { nome: nome.to_owned(), origem, ativo, versao: versao.map(str::to_owned), escopo: escopo.map(str::to_owned), arquivo: texto(arquivo), logo: None, site: None }
 }
 
 /* ── Codex ────────────────────────────────────────────────────────────────────────────────── */
@@ -204,12 +211,13 @@ fn codex(conta: &mut ExtensoesDaConta, arquivo: &Path) {
         for (id, cfg) in plugins {
             let (nome, origem) = id.split_once('@').map_or((id.as_str(), None), |(n, o)| (n, Some(o.to_owned())));
             // `plugins/cache/<marketplace>/<nome>/<versão>/`: a versão mais nova que estiver lá.
-            let logo = origem.as_deref().and_then(|o| {
+            let mut versoes: Vec<PathBuf> = origem.as_deref().and_then(|o| {
                 let base = arquivo.parent()?.join("plugins").join("cache").join(o).join(nome);
-                let mut versoes: Vec<PathBuf> = std::fs::read_dir(&base).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect();
-                versoes.sort();
-                versoes.iter().rev().find_map(|v| logo_do_pacote(v))
-            });
+                Some(std::fs::read_dir(&base).ok()?.flatten().map(|e| e.path()).filter(|p| p.is_dir()).collect())
+            }).unwrap_or_default();
+            versoes.sort();
+            let logo = versoes.iter().rev().find_map(|v| logo_do_pacote(v));
+            let site = versoes.iter().rev().find_map(|v| site_do_pacote(v));
             conta.plugins.push(Plugin {
                 nome: nome.to_owned(),
                 origem,
@@ -218,6 +226,7 @@ fn codex(conta: &mut ExtensoesDaConta, arquivo: &Path) {
                 escopo: None,
                 arquivo: texto(arquivo),
                 logo,
+                site,
             });
         }
         conta.plugins.sort_by(|a, b| b.ativo.cmp(&a.ativo).then(a.nome.cmp(&b.nome)));
@@ -250,6 +259,7 @@ fn cursor(conta: &mut ExtensoesDaConta, dir: &Path, projeto: Option<&Path>) {
                 escopo: None,
                 arquivo: texto(&entrada.path()),
                 logo: logo_do_pacote(&entrada.path()),
+                site: site_do_pacote(&entrada.path()),
             });
         }
     }
@@ -332,6 +342,96 @@ fn mcps_do_json(saida: &mut Vec<Mcp>, servidores: Option<&Value>, escopo: &'stat
     }
 }
 
+/* ── Ícones salvos ─────────────────────────────────────────────────────────────────────────── */
+
+// O app do PC busca o ícone de cada extensão na rede (`src-tauri/src/icones_remotos.rs`) e salva a
+// imagem em `<engine>/icones/`; `nomes.json` liga a chave por nome (`mcp:stitch`, `plugin:vercel`,
+// `conector:gmail`) ao arquivo. É por essa chave que a conversa acha o ícone de uma ferramenta
+// (`mcp__stitch__…`), no PC, na web e no celular.
+
+const ICONES_TIPOS: &[(&str, &str)] = &[
+    ("png", "image/png"), ("svg", "image/svg+xml"), ("ico", "image/x-icon"), ("jpg", "image/jpeg"),
+    ("gif", "image/gif"), ("webp", "image/webp"),
+];
+
+/// Chave por nome de uma extensão da aba Extensões: `destino` `conector:<nome>` é conector, `pacote:…`
+/// é plugin, o resto é MCP. Minúsculas e sem o "claude.ai " que alguns conectores trazem.
+pub fn chave_do_icone(destino: &str, nome: &str) -> String {
+    let limpo = |n: &str| n.trim().trim_start_matches("claude.ai").trim().to_lowercase();
+    if let Some(conector) = destino.strip_prefix("conector:") { return format!("conector:{}", limpo(conector)); }
+    if destino.starts_with("pacote:") { return format!("plugin:{}", limpo(nome)); }
+    format!("mcp:{}", limpo(nome))
+}
+
+fn indice_de_icones(dir: &Path) -> PathBuf {
+    dir.join("icones").join("nomes.json")
+}
+
+/// Registra que a extensão `chave` tem o ícone `arquivo` (nome dentro de `icones/`).
+pub fn guardar_nome_do_icone(dir: &Path, chave: &str, arquivo: &str) {
+    let caminho = indice_de_icones(dir);
+    let mut indice = ler_json(&caminho).and_then(|v| v.as_object().cloned()).unwrap_or_default();
+    if indice.get(chave).and_then(Value::as_str) == Some(arquivo) { return; }
+    indice.insert(chave.to_owned(), Value::String(arquivo.to_owned()));
+    if let Ok(json) = serde_json::to_vec_pretty(&indice) {
+        let _ = std::fs::write(caminho, json);
+    }
+}
+
+/// Ícone já conhecido de uma extensão pela chave: o salvo em `icones/` ou, de plugin, o logo do
+/// pacote. Não vai à rede (quem busca é o app do PC).
+pub fn icone_conhecido(dir: &Path, chave: &str) -> Option<String> {
+    let salvo = ler_json(&indice_de_icones(dir)).and_then(|v| v.get(chave)?.as_str().map(str::to_owned)).and_then(|arquivo| {
+        // O índice é nosso, mas o nome vira caminho: nada de subir de pasta.
+        if arquivo.contains(['/', '\\']) || arquivo.contains("..") { return None; }
+        let ext = arquivo.rsplit_once('.')?.1.to_owned();
+        let tipo = ICONES_TIPOS.iter().find(|(e, _)| *e == ext)?.1;
+        let bytes = std::fs::read(dir.join("icones").join(&arquivo)).ok()?;
+        use base64::Engine as _;
+        Some(format!("data:{tipo};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
+    });
+    salvo.or_else(|| {
+        let nome = chave.strip_prefix("plugin:")?;
+        listar(dir, None).into_iter().flat_map(|c| c.plugins).find(|p| p.nome.to_lowercase() == nome).and_then(|p| p.logo)
+    })
+}
+
+/// Onde buscar o ícone de uma extensão pela chave: o `destino` que a aba Extensões usaria
+/// (URL/comando do MCP, `pacote:<site>`, `conector:<nome>`). Extensão que não está instalada
+/// (ou é de projeto) volta só o prefixo: a busca ainda tenta a marca pelo nome.
+pub fn destino_do_icone(dir: &Path, chave: &str) -> Option<String> {
+    let (tipo, nome) = chave.split_once(':')?;
+    let contas = listar(dir, None);
+    match tipo {
+        "conector" => Some(chave.to_owned()),
+        "plugin" => Some(format!("pacote:{}", contas.iter().flat_map(|c| &c.plugins)
+            .find(|p| p.nome.to_lowercase() == nome).and_then(|p| p.site.clone()).unwrap_or_default())),
+        "mcp" => Some(contas.iter().flat_map(|c| &c.mcps).find(|m| m.nome.to_lowercase() == nome).map(|m| m.destino.clone()).unwrap_or_default()),
+        _ => None,
+    }
+}
+
+/// Site do plugin pelos manifestos: `homepage` que não seja GitHub primeiro (é o site da marca), depois
+/// repositório, homepage e autor (`github.com/<dono>` dá o avatar da organização). Só http(s).
+pub(crate) fn site_do_pacote(pasta: &Path) -> Option<String> {
+    let manifestos: Vec<Value> = [".claude-plugin", ".cursor-plugin", ".codex-plugin"].iter()
+        .filter_map(|m| ler_json(&pasta.join(m).join("plugin.json"))).collect();
+    let url = |v: Option<&Value>| -> Option<String> {
+        let v = v?;
+        v.as_str().or_else(|| v.get("url").and_then(Value::as_str)).map(str::to_owned)
+    };
+    let mut candidatos = Vec::new();
+    for m in &manifestos {
+        candidatos.extend(url(m.get("homepage")).filter(|u| !u.contains("github.com")));
+    }
+    for m in &manifestos {
+        candidatos.extend(url(m.get("repository")));
+        candidatos.extend(url(m.get("homepage")));
+        candidatos.extend(url(m.get("author")));
+    }
+    candidatos.into_iter().find(|u| u.starts_with("https://") || u.starts_with("http://")).map(|u| url_segura(&u))
+}
+
 /// URL sem query, fragmento nem `usuario:senha@` — é onde chaves costumam ir parar.
 fn url_segura(url: &str) -> String {
     let sem_query = url.split(['?', '#']).next().unwrap_or(url);
@@ -399,6 +499,36 @@ mod tests {
         std::fs::write(pacote.join(".codex-plugin").join("plugin.json"), r#"{"logo":"../fora.svg"}"#).unwrap();
         assert_eq!(logo_do_pacote(&pacote), None);
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn icone_salvo_pela_chave_do_nome() {
+        assert_eq!(chave_do_icone("https://stitch.googleapis.com/mcp", "Stitch"), "mcp:stitch");
+        assert_eq!(chave_do_icone("pacote:https://github.com/vercel", "vercel"), "plugin:vercel");
+        assert_eq!(chave_do_icone("conector:claude.ai Google Drive", "claude.ai Google Drive"), "conector:google drive");
+        let dir = std::env::temp_dir().join(format!("omni-icones-core-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("icones")).unwrap();
+        std::fs::write(dir.join("icones").join("stitch-1.png"), b"\x89PNG").unwrap();
+        guardar_nome_do_icone(&dir, "mcp:stitch", "stitch-1.png");
+        guardar_nome_do_icone(&dir, "mcp:mau", "../fora.png");
+        assert_eq!(icone_conhecido(&dir, "mcp:stitch").as_deref(), Some("data:image/png;base64,iVBORw=="));
+        assert_eq!(icone_conhecido(&dir, "mcp:mau"), None);
+        assert_eq!(icone_conhecido(&dir, "mcp:nenhum"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn site_prefere_homepage_da_marca_e_cai_no_github() {
+        let pacote = std::env::temp_dir().join(format!("omni-site-{}", std::process::id()));
+        std::fs::create_dir_all(pacote.join(".claude-plugin")).unwrap();
+        let manifesto = pacote.join(".claude-plugin").join("plugin.json");
+        std::fs::write(&manifesto, r#"{"homepage":"https://docs.stripe.com?ref=x","repository":"https://github.com/stripe/ai"}"#).unwrap();
+        assert_eq!(site_do_pacote(&pacote).as_deref(), Some("https://docs.stripe.com"));
+        std::fs::write(&manifesto, r#"{"repository":{"url":"https://github.com/vercel/vercel-plugin"},"author":{"url":"https://github.com/vercel"}}"#).unwrap();
+        assert_eq!(site_do_pacote(&pacote).as_deref(), Some("https://github.com/vercel/vercel-plugin"));
+        std::fs::write(&manifesto, r#"{"name":"x","author":"Fulano"}"#).unwrap();
+        assert_eq!(site_do_pacote(&pacote), None);
+        let _ = std::fs::remove_dir_all(&pacote);
     }
 
     #[test]

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CheckIcon, ClockIcon, CloseIcon, CopyIcon } from "../../components/ui/PixelIcon";
 import { motionOn } from "../../lib/motion";
 import { SeletorDePrazo } from "./SeletorDePrazo";
+import { request } from "../../mobile/api";
 
 /** Uma tarefa sua — não do agente (essas moram no Kanban). */
 export interface Todo {
@@ -35,13 +36,56 @@ export function useAgora(intervalo = 30_000) {
 
 const atrasada = (todo: Todo, agora: number) => !todo.feita && todo.prazo != null && todo.prazo < agora;
 
-/** Lista de tarefas pessoal, a mesma em todos os workspaces e projetos. */
+/** A lista do app ia só no localStorage dele; na primeira leitura do engine ela sobe uma vez. */
+const CHAVE_LEVADA = "omni-todo-no-engine";
+const RELER_MS = 5_000;
+
+/**
+ * Lista de tarefas pessoal, a mesma em todos os workspaces e projetos — e no app, na web e no celular:
+ * mora no engine (`/tarefas`); o localStorage é só o cache para abrir sem esperar.
+ */
 export function useTodos() {
-  const [todos, setTodos] = useState<Todo[]>(lerTodos);
+  const [todos, setTodosLocal] = useState<Todo[]>(lerTodos);
+  const atuais = useRef(todos);
+  // Mudança daqui ainda gravando: a releitura não pode trazer a lista velha de volta por cima.
+  const gravando = useRef(0);
   const agora = useAgora();
   useEffect(() => {
     try { localStorage.setItem(CHAVE, JSON.stringify(todos)); } catch { /* sem armazenamento: vale só nesta sessão */ }
   }, [todos]);
+
+  const gravar = (lista: Todo[]) => {
+    gravando.current += 1;
+    void request("/tarefas", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(lista) })
+      .catch(() => undefined)
+      .finally(() => { gravando.current -= 1; });
+  };
+
+  useEffect(() => {
+    let vivo = true;
+    const ler = async () => {
+      if (gravando.current) return;
+      try {
+        const doEngine = await request<Todo[]>("/tarefas");
+        if (!vivo || gravando.current || !Array.isArray(doEngine)
+          || !doEngine.every((t) => typeof t?.id === "string" && typeof t?.texto === "string")) return;
+        let levada = true;
+        try { levada = localStorage.getItem(CHAVE_LEVADA) === "1"; localStorage.setItem(CHAVE_LEVADA, "1"); } catch { /* segue */ }
+        if (!levada && doEngine.length === 0 && atuais.current.length > 0) { gravar(atuais.current); return; }
+        if (JSON.stringify(doEngine) !== JSON.stringify(atuais.current)) { atuais.current = doEngine; setTodosLocal(doEngine); }
+      } catch { /* engine fora: segue com o cache */ }
+    };
+    void ler();
+    const relogio = window.setInterval(() => void ler(), RELER_MS);
+    return () => { vivo = false; window.clearInterval(relogio); };
+  }, []);
+
+  const setTodos = (mudar: (atual: Todo[]) => Todo[]) => {
+    const nova = mudar(atuais.current);
+    atuais.current = nova;
+    setTodosLocal(nova);
+    gravar(nova);
+  };
   return {
     todos,
     agora,

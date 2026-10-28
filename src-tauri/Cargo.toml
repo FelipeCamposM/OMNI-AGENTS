@@ -1,6 +1,6 @@
 [package]
 name = "omni-agents"
-version = "0.7.7"
+version = "0.7.8"
 description = "OMNI AGENTS desktop workspace"
 authors = []
 edition = "2021"
@@ -29,6 +29,10 @@ toml = "0.9"
 tokio = { version = "1", features = ["full"] }
 omni-protocol = { path = "../crates/omni-protocol" }
 omni-core = { path = "../crates/omni-core" }
+# Já vêm na árvore (reqwest/rustls como o updater usa, base64 via omni-core); buscam o ícone de MCP remoto (`icones_remotos.rs`).
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+base64 = "0.22"
 
 [dev-dependencies]
 tempfile = "3"

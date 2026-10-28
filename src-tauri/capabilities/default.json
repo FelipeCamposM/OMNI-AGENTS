@@ -39,7 +39,8 @@
       { "url": "https://learn.chatgpt.com/*" },
       { "url": "https://cursor.com/*" },
       { "url": "https://*.ts.net/*" },
-      { "url": "http://100.*/*" }
+      { "url": "http://100.*/*" },
+      { "url": "http://localhost:*/*" }
     ] }
   ]
 }

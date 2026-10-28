@@ -155,6 +155,18 @@ export function abridorDeArquivo() {
   return abridor;
 }
 
+/** Ícone da extensão dona de uma ferramenta (`mcp:stitch`…). Web/celular leem o que o PC já salvou;
+ *  o app do PC troca por um que também busca na rede (`main.tsx`). */
+type BuscadorDeIcone = (chave: string) => Promise<string | null>;
+let buscador: BuscadorDeIcone = async (chave) =>
+  (await request<{ icone?: string | null }>(`/extensoes/icone?chave=${encodeURIComponent(chave)}`)).icone ?? null;
+export function usarBuscadorDeIcone(novo: BuscadorDeIcone) {
+  buscador = novo;
+}
+export function buscarIconeDeExtensao(chave: string) {
+  return buscador(chave);
+}
+
 /** Sem barra, só extensão conhecida: `console.log` e `i.e` não são arquivo. */
 const EXTENSOES = /\.(tsx?|jsx?|mjs|cjs|json|mdx?|css|scss|html?|rs|toml|ya?ml|py|go|java|kt|swift|cs|cpp|hpp|c|h|rb|php|sh|ps1|sql|txt|lock|xml|svg|vue|svelte|ini)$/i;
 

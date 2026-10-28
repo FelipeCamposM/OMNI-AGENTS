@@ -55,6 +55,12 @@ function daqui(ms: number) {
   return d ? `${d}d ${h}h` : h ? `${h}h ${String(m).padStart(2, "0")}min` : `${m}min`;
 }
 
+/** "Trabalho" → "TR", "EmailUber" → "EU": o avatar da conta. */
+const iniciais = (nome: string) => {
+  const partes = nome.trim().split(/[\s._-]+|(?<=[a-z])(?=[A-Z])/).filter(Boolean);
+  return (partes.length > 1 ? partes[0][0] + partes[1][0] : nome.trim().slice(0, 2)).toUpperCase() || "?";
+};
+
 const tomDe = (pct: number) => (pct >= 90 ? "danger" : pct >= 70 ? "warning" : "success");
 
 function AgKpi({ tom, icone: Icone, rotulo, valor, sub, barra, children }: {
@@ -186,8 +192,8 @@ export function AgentConnections() {
         )}
       </Card>
 
-      {/* Colunas (não grade): cartão alto do Claude ao lado dos outros empilhados, sem buraco. */}
-      <div className="settings-largo ag-colunas">
+      {/* Uma faixa por IA, uma embaixo da outra; as contas dela lado a lado dentro da faixa. */}
+      <div className="settings-largo ag-lista">
       {agents.map((agent) => {
         const connection = connectionOf(agent);
         const accounts = profiles.filter((profile) => profile.provider === agent.id);
@@ -206,6 +212,9 @@ export function AgentConnections() {
                   {connection === "missing" ? "CLI não encontrada no PATH" : `${DESCRIPTIONS[agent.id]} · ${agent.path ?? agent.command}`}
                 </span>
               </span>
+              {multiAccount && accounts.length > 0 && connection !== "missing" && (
+                <span className="ag-contagem">{accounts.length} {accounts.length === 1 ? "conta" : "contas"}</span>
+              )}
               {multiAccount ? (
                 <button type="button" className="ag-acao" disabled={connection === "missing" || busy !== null}
                   onClick={() => { setAdding(adding === agent.id ? null : agent.id); setNewName(""); }}>
@@ -239,10 +248,16 @@ export function AgentConnections() {
                   return (
                     <li key={profile.id} className="ag-conta" data-mestra={mestra || undefined}>
                       <div className="ag-conta-linha">
-                        <span className="ag-ponto" data-ok={profile.authenticated || undefined} aria-hidden />
-                        <span className="ag-conta-nome" title={profile.config_dir}>
-                          {profile.name}
-                          {mestra && <span className="ag-mestra-rotulo">mestra</span>}
+                        <span className="ag-avatar" data-ok={profile.authenticated || undefined} aria-hidden>{iniciais(profile.name)}</span>
+                        <span className="ag-conta-id">
+                          <span className="ag-conta-nome" title={profile.config_dir}>
+                            {profile.name}
+                            {mestra && <span className="ag-mestra-rotulo">mestra</span>}
+                          </span>
+                          <span className="ag-conta-sub">
+                            {profile.email && <span className="ag-conta-email" title={profile.email}>{profile.email}</span>}
+                            <span className="ag-conta-estado" data-ok={profile.authenticated || undefined}>{profile.authenticated ? "conectado" : "sem login"}</span>
+                          </span>
                         </span>
                         {multiAccount && accounts.length > 1 && (
                           <button type="button" className="ag-estrela" aria-pressed={mestra}
@@ -254,10 +269,13 @@ export function AgentConnections() {
                           </button>
                         )}
                         {multiAccount && (
-                          <button type="button" className="ag-acao" data-forte={!profile.authenticated || undefined} disabled={busy !== null}
+                          // Com login, só o ícone (o cartão é estreito); sem login, "Entrar" por extenso e em destaque.
+                          <button type="button" className={profile.authenticated ? "ag-remover" : "ag-acao"} data-forte={!profile.authenticated || undefined}
+                            disabled={busy !== null} aria-label={profile.authenticated ? "Reautenticar" : undefined}
+                            title={profile.authenticated ? `Reautenticar ${profile.name}` : undefined}
                             onClick={() => void run(profile.id, () => connectAgentCli(agent.id, profile.id))}>
-                            <KeyIcon className="h-3 w-3" aria-hidden />
-                            {busy === profile.id ? "Abrindo…" : profile.authenticated ? "Reautenticar" : "Entrar"}
+                            <KeyIcon className={profile.authenticated ? "h-3.5 w-3.5" : "h-3 w-3"} aria-hidden />
+                            {!profile.authenticated && (busy === profile.id ? "Abrindo…" : "Entrar")}
                           </button>
                         )}
                         {!profile.builtin && removendo !== profile.id && (
@@ -267,10 +285,6 @@ export function AgentConnections() {
                           </button>
                         )}
                       </div>
-                      <span className="ag-conta-sub">
-                        {profile.email && <span className="ag-conta-email" title={profile.email}>{profile.email}</span>}
-                        <span className="shrink-0">{profile.authenticated ? "conectado" : "sem login"}</span>
-                      </span>
                       {removendo === profile.id && (
                         <div className="ag-confirmar" role="group" aria-label={`Remover ${profile.name}`}>
                           <WarningIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -282,7 +296,8 @@ export function AgentConnections() {
                           <Button size="sm" variant="ghost" onClick={() => setRemovendo(null)}>Cancelar</Button>
                         </div>
                       )}
-                      <AccountUsage profileId={profile.id} provider={profile.provider} onUsage={(uso) => guardarUso(profile.id, uso)} />
+                      {/* O Cursor não expõe uso de conta: o medidor ficaria eternamente "indisponível". */}
+                      {agent.id !== "cursor" && <AccountUsage profileId={profile.id} provider={profile.provider} onUsage={(uso) => guardarUso(profile.id, uso)} />}
                     </li>
                   );
                 })}

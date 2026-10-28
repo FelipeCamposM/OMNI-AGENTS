@@ -96,8 +96,8 @@ it("troca de projeto com conversa aberta, pesquisa globalmente e oferece voltar"
   await act(async () => { await userEvent.click(within(lateral).getByRole("button", { name: "Outro" })); });
   expect(within(lateral).getByRole("button", { name: /Abrir conversa Auditar pagamentos/ })).toBeInTheDocument();
   expect(within(lateral).queryByRole("button", { name: /Abrir conversa Corrigir o login/ })).not.toBeInTheDocument();
-  // Cada cartão diz de qual projeto é.
-  expect(within(within(lateral).getByRole("button", { name: /Abrir conversa Auditar pagamentos/ })).getByText("Outro")).toBeInTheDocument();
+  // O título da seção diz de qual projeto são as abertas.
+  expect(within(lateral).getByRole("heading", { name: /Abertas no PC.*Outro/ })).toBeInTheDocument();
 
   await act(async () => { await userEvent.type(within(lateral).getByLabelText("Pesquisar conversas"), "login"); });
   expect(within(lateral).getByRole("button", { name: /Abrir conversa Corrigir o login/ })).toBeInTheDocument();
@@ -106,6 +106,26 @@ it("troca de projeto com conversa aberta, pesquisa globalmente e oferece voltar"
   await act(async () => { await userEvent.click(screen.getByRole("button", { name: "Fechar conversa" })); });
   expect(location.hash).toBe("");
   expect(await screen.findByText(/Escolha uma conversa/)).toBeInTheDocument();
+});
+
+/** "Várias conversas numa mesma janela se for de um mesmo projeto." */
+it("abre outra conversa do mesmo projeto ao lado, e fecha uma de cada vez", async () => {
+  vi.stubGlobal("fetch", servidor([
+    conversa({ live: true }),
+    conversa({ id: "c2", title: "Auditar pagamentos", live: true, state: "working" }),
+  ]));
+  render(<WebApp />);
+  const primeira = await screen.findByRole("button", { name: /Abrir conversa Corrigir o login/ });
+  await act(async () => { await userEvent.click(primeira); });
+  const aoLado = await screen.findByRole("button", { name: "Abrir Auditar pagamentos ao lado" });
+  await act(async () => { await userEvent.click(aoLado); });
+  expect(location.hash).toBe("#/c/c,c2");
+  const centro = screen.getByRole("main", { name: "Conversa" });
+  expect(within(centro).getByRole("region", { name: "Corrigir o login" })).toBeInTheDocument();
+  expect(within(centro).getByRole("region", { name: "Auditar pagamentos" })).toBeInTheDocument();
+  await act(async () => { await userEvent.click(within(within(centro).getByRole("region", { name: "Corrigir o login" })).getByRole("button", { name: "Fechar conversa" })); });
+  expect(location.hash).toBe("#/c/c2");
+  expect(within(centro).queryByRole("region", { name: "Corrigir o login" })).not.toBeInTheDocument();
 });
 
 it("alterna o modo do agente pelo botão, como o shift+tab faz no terminal", async () => {
@@ -233,7 +253,7 @@ it("abrir a conversa tira de Precisa de você até o agente terminar outro turno
   const lista = [conversa({ attention: "s:1" })];
   vi.stubGlobal("fetch", servidor(lista));
   render(<WebApp />);
-  const pendencias = await screen.findByRole("complementary", { name: "Precisa de você" });
+  const pendencias = await screen.findByRole("region", { name: "Precisa de você" });
   await waitFor(() => expect(within(pendencias).getByTitle("Corrigir o login")).toBeInTheDocument());
   expect(document.title).toBe("(1) OMNI AGENTS");
 
@@ -342,3 +362,4 @@ it("aba Histórico separada: agrupa por período, filtra por projeto e mostra o 
   expect(within(painel).queryByRole("button", { name: /Corrigir o login/ })).not.toBeInTheDocument();
   expect(within(within(painel).getByRole("button", { name: /Auditar pagamentos/ })).getByText("Outro")).toBeInTheDocument();
 });
+

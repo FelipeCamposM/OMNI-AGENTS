@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { BoxIcon, ChevronDownIcon, FolderIcon, TrashIcon } from "./ui/PixelIcon";
+import { ChevronDownIcon, TrashIcon } from "./ui/PixelIcon";
 import { Button } from "./ui/Button";
 import { Modal } from "./ui/Modal";
+import { SimboloDoProjeto, SimboloDoWorkspace } from "./EscolherIcone";
 import type { TerminalSession } from "../features/terminal/terminalService";
 import type { WorkspaceState } from "../types/workspace";
 
@@ -38,7 +39,7 @@ export function AbrirWorkspace({ workspaces, onNovo, onReabrir, onFechar }: {
             {escondidos.map((workspace) => (
               <li key={workspace.id}>
                 <button type="button" className="modal-item" onClick={() => onReabrir(workspace.id)}>
-                  <BoxIcon className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden />
+                  <SimboloDoWorkspace workspace={workspace} />
                   <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
                   <span className="modal-detalhe">{plural(workspace.projects.length, "projeto", "projetos")}</span>
                 </button>
@@ -75,7 +76,7 @@ export function GerenciarWorkspaces({ workspaces, activeWorkspaceId, agentSessio
                 <button type="button" className="modal-item flex-1" aria-expanded={expandido}
                   onClick={() => setAberto(expandido ? null : workspace.id)}>
                   <ChevronDownIcon className={`h-3 w-3 shrink-0 transition-transform ${expandido ? "" : "-rotate-90"}`} aria-hidden />
-                  <BoxIcon className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden />
+                  <SimboloDoWorkspace workspace={workspace} />
                   <span className="min-w-0 flex-1 truncate">{workspace.name}</span>
                   <span className="modal-detalhe">
                     {workspace.id === activeWorkspaceId ? "atual" : workspace.hidden ? "fechado" : "aberto"}
@@ -99,7 +100,7 @@ export function GerenciarWorkspaces({ workspaces, activeWorkspaceId, agentSessio
                       const conversas = agentSessions.filter((sessao) => sessao.project_id === projeto.id).length;
                       return (
                         <li key={projeto.id} className="modal-linha">
-                          <FolderIcon className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden />
+                          <SimboloDoProjeto project={projeto} />
                           <span className="min-w-0 flex-1 truncate text-xs" title={projeto.path}>{projeto.name}</span>
                           {conversas > 0 && <span className="modal-detalhe">{plural(conversas, "conversa", "conversas")}</span>}
                           <Button size="sm" variant="ghost" onClick={() => onRemoverProjeto(workspace.id, projeto.id)}

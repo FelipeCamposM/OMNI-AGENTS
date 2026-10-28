@@ -1,0 +1,12 @@
+❯ Run exactly this shell command and nothing else: cmd /c ver
+  ⎿  $ cmd /c ver
+────────
+ PowerShell command
+ Show Windows version
+ cmd /c ver
+ This command requires approval
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: cmd /c ver
+   3. No
+ Esc to cancel · Tab to amend

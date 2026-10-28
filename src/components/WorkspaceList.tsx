@@ -1,6 +1,8 @@
 import { SelosDeAtencao } from "./AttentionPanel";
 import type { AttentionItem } from "../features/terminal/useAttention";
 import { useState } from "react";
+import { AvatarDoWorkspace } from "./EscolherIcone";
+import { ImageIcon } from "./ui/PixelIcon";
 import { BoxIcon, CloseIcon, EditIcon, FolderPlusIcon, SlidersIcon } from "./ui/PixelIcon";
 import { ResumoDeAgentes } from "./ConversaStatus";
 import { AbrirWorkspace, GerenciarWorkspaces } from "./WorkspaceModais";
@@ -25,6 +27,8 @@ interface WorkspaceListProps {
   onMove: (workspaceId: string, beforeId: string | null) => void;
   onRemoveProject: (workspaceId: string, projectId: string) => void;
   onRename: (workspaceId: string, name: string) => void;
+  /** Trocar o símbolo (favicon de um dos projetos). */
+  onSetIcon?: (workspaceId: string, icone: string | null | undefined) => void;
 }
 
 /**
@@ -50,8 +54,11 @@ export function WorkspaceList({
   onMove,
   onRemoveProject,
   onRename,
+  onSetIcon,
 }: WorkspaceListProps) {
   const [editandoId, setEditandoId] = useState<string | null>(null);
+  // Pedido de abrir o seletor de ícone pelo botão da linha (o avatar é que ancora o painel).
+  const [pedidosDeIcone, setPedidosDeIcone] = useState<Record<string, number>>({});
   const [modal, setModal] = useState<"abrir" | "gerenciar" | null>(null);
   const visiveis = workspaces.filter((workspace) => !workspace.hidden);
 
@@ -134,6 +141,9 @@ export function WorkspaceList({
             className={`lateral-item group mx-1 flex items-stretch border-l-2 ring-1 ring-inset transition-colors ${
               ativo ? "lateral-item-ativo border-accent ring-accent/50" : "border-transparent ring-border-subtle/40 hover:ring-border-subtle"
             }`}>
+            {onSetIcon && (
+              <span className="grid shrink-0 place-items-center pl-2"><AvatarDoWorkspace workspace={workspace} onEscolher={onSetIcon} pedido={pedidosDeIcone[workspace.id]} /></span>
+            )}
             <button
               type="button"
               data-nav-item
@@ -146,9 +156,11 @@ export function WorkspaceList({
               title="Clique duplo para renomear · arraste para mudar a ordem"
               className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
             >
-              <span className="lateral-avatar grid h-8 w-8 shrink-0 place-items-center border border-border-subtle">
-                <BoxIcon className="h-3.5 w-3.5 text-accent" aria-hidden />
-              </span>
+              {!onSetIcon && (
+                <span className="lateral-avatar grid h-8 w-8 shrink-0 place-items-center border border-border-subtle">
+                  <BoxIcon className="h-3.5 w-3.5 text-accent" aria-hidden />
+                </span>
+              )}
               <span className="min-w-0 flex-1">
                 <span className={`block truncate text-xs leading-4 ${ativo ? "font-semibold text-text-primary" : "text-text-secondary"}`}>
                   {workspace.name}
@@ -162,6 +174,21 @@ export function WorkspaceList({
               </span>
               <SelosDeAtencao items={pendentes} onde={`em ${workspace.name}`} />
             </button>
+            {onSetIcon && (
+              <button
+                type="button"
+                aria-label={`Escolher ícone do workspace ${workspace.name}`}
+                title="Trocar ícone (favicon de um dos projetos)"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPedidosDeIcone((atual) => ({ ...atual, [workspace.id]: (atual[workspace.id] ?? 0) + 1 }));
+                }}
+                className="grid w-7 shrink-0 place-items-center text-text-muted opacity-60 hover:text-accent hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              >
+                <ImageIcon className="w-3 h-3" aria-hidden />
+              </button>
+            )}
             <button
               type="button"
               aria-label={`Renomear workspace ${workspace.name}`}
