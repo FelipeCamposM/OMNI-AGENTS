@@ -151,7 +151,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   cor do estado (`TopBar` ganhou `marca`). Conferido em print com o engine instalado.
 - Pendente: favicon do projeto também no celular (precisa de rota no engine servindo o arquivo).
 
-### Imagem anexada volta a aparecer como imagem (2026-10-29, sem release)
+### Imagem anexada volta a aparecer como imagem (2026-10-29, v0.7.9)
 
 - Causa: a CLI nova do Claude embrulha o colado em `<pasted_content>` e não troca mais o caminho da imagem
   anexada por `[Image #N]` (até 21/10 trocava). Sem bloco de imagem no transcript, a bolha só mostrava o cartão "image.png".
@@ -219,19 +219,19 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   partir de `icons/icon.png`), ícone do app e idioma `PortugueseBR` (`bundle.windows.nsis`). Compilado localmente; telas
   do instalador não conferidas rodando.
 
-### Ícone do projeto igual ao do workspace (2026-10-28, sem release)
+### Ícone do projeto igual ao do workspace (2026-10-28, v0.7.9)
 
 - Linha do projeto na lateral ganhou o botão de imagem "Trocar ícone" (`Sidebar.tsx`, `pedidosDeIcone`), como a do workspace;
   o seletor do projeto (`AvatarDoProjeto`, prop `vizinhos`) oferece também os favicons dos outros projetos do workspace.
   Teste em `iconesDoProjeto.test.tsx`.
 
-### Menu das Configurações em grupos (2026-10-28, sem release)
+### Menu das Configurações em grupos (2026-10-28, v0.7.9)
 
 - `SettingsView.tsx`: seções com `grupo` (Preferências, Inteligência artificial, Dados e acesso, App), rótulo com fio entre
   grupos; Atalhos foi para Preferências. CSS no fim do `index.css`: ícone sempre aceso em avatar com degradê (cheio no item
   aberto), título e descrição maiores, item aberto com degradê/anel/brilho da lateral. Conferido em prévia, não no app.
 
-### Tela de Acesso remoto refeita (2026-10-28, sem release)
+### Tela de Acesso remoto refeita (2026-10-28, v0.7.9)
 
 - `MobileSettings.tsx` + bloco `remoto-*` no fim do `index.css`: cabeçalho com brilho e "N de 4 prontos"; passos em linha
   do tempo (número no trilho, fio verde nos feitos, passo atual com anel e chip "agora"); modos Direto/HTTPS como cartões
@@ -245,14 +245,14 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   `.settings-conteudo`** (CSS sem camada no fim do `index.css`): neutros com contorno preto, brilho e leve subida no hover;
   `btn-primary` e segmentado selecionado (`aria-pressed`) em degradê da cor do tema com brilho. Fora das Configurações nada muda.
 
-### Sobre: confirmação do reset e uma nota de versão por vez (2026-10-28, sem release)
+### Sobre: confirmação do reset e uma nota de versão por vez (2026-10-28, v0.7.9)
 
 - "Restaurar configurações padrão" agora abre `Modal` de confirmação (antes restaurava direto). Explica que só preferências
   voltam; projetos, workspaces, conversas e contas ficam.
 - Novidades mostra só a versão instalada (`getVersion`; sem ela, a mais recente). `Select searchable` troca a versão (busca
   por número/data); selos "instalada"/"mais recente", lista com marcadores na cor do tema. Teste: `src/test/sobre.test.tsx`.
 
-### Lateral: Recentes (mini histórico) e projeto na conversa (2026-10-28, sem release)
+### Lateral: Recentes (mini histórico) e projeto na conversa (2026-10-28, v0.7.9)
 
 - `RecentesConversas.tsx`: abaixo de CHATS, as 6 conversas mais novas do Histórico (Claude + Codex, todos os projetos), sem
   as já abertas (`external_session_id`). Ícone do projeto no canto do avatar do agente, projeto e conta na 2ª linha; clique
@@ -261,7 +261,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   Topo da aba de conversa mostra ícone + nome do projeto (some o nome em aba estreita).
 - CSS: linhas da lateral com leve deslize no hover, avatar acende, item ativo com anel e brilho. Teste: `RecentesConversas.test.tsx`.
 
-### Lateral e Histórico: ícone do projeto em todo lugar, sem "projetos" aleatórios (2026-10-29, sem release)
+### Lateral e Histórico: ícone do projeto em todo lugar, sem "projetos" aleatórios (2026-10-29, v0.7.9)
 
 - CHATS também tem o ícone do projeto no canto do avatar (`IconeDoProjetoDaSessao`, por `session.cwd`). Cabeçalhos das seções
   (`.lateral-secao`) com fio na cor do tema; selo do projeto acende no hover/ativo.
@@ -271,20 +271,20 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   de 7 opções; linha com selo do projeto e "subpasta"; detalhe com ícone. Travado (Novo agente) segue pasta exata (o `--resume`).
   Teste: `historyService.test.ts`.
 
-### Lateral premium: linhas de projetos, chats, terminais e recentes (2026-10-29, sem release)
+### Lateral premium: linhas de projetos, chats, terminais e recentes (2026-10-29, v0.7.9)
 
 - Bloco "Lateral premium" no fim do `index.css`: superfície com fio de luz no topo, reflexo atravessando a linha no hover, avatar em vidro, anel girando em volta do agente trabalhando (`@property --lateral-giro`), luz correndo na barra de quem trabalha, brilho pulsando em quem pede aprovação, entrada suave e ações do hover em vidro (`.lateral-acoes`).
 - `Sidebar.tsx`: linha do chat ganhou `data-status` (status da conversa; terminal rodando = trabalhando). Respeita reduzir movimento e animações desligadas.
 - Compacta: linhas da lateral ~50px → ~38px (avatar 26px, respiro e entrelinha menores), só dentro do `aside` (Histórico mantém o tamanho).
 
-### Troca de conta no limite: tela nova do Claude 2.1.312 (2026-10-29, sem release)
+### Troca de conta no limite: tela nova do Claude 2.1.312 (2026-10-29, v0.7.9)
 
 - Causa: o Claude passou a mostrar o limite no rodapé (`⚠ Usage limit reached · limit resets…` + `Continuing automatically at… · Esc to cancel`). O "Esc to cancel" fazia `cancelavel()` achar menu aberto → campo "não reconhecido" e troca manual bloqueada; o aviso não virava `usage_limit` (⚠ fora dos marcadores + contagem do turno), então a troca automática nunca disparava.
 - Correção: `limite_no_rodape` (main.rs) lê o estado atual embaixo do campo e marca `usage_limit` independente da contagem; `cancelavel` ignora a linha "continuing automatically"; ⚠ entrou em `MARCADORES`. Na interface, `podeReabrir` libera trocar conta/modelo com o agente parado ou no limite (só bloqueia trabalhando).
 - Rede: tela real `tests-fixtures/telas/claude.nada.limite-continua-sozinho-2.1.312.txt` (o `telas_do_acervo` cobra campo livre + limite em toda tela `.limite-`) e teste `rodape_do_limite_vale_mesmo_com_o_aviso_ja_na_tela`.
-- Pendente: chega ao app instalado só na próxima release.
+- Publicada na v0.7.9.
 
-### Web/celular: projetos certos, ícones do PC, layouts, arrastar e Ajustes com avisos (2026-10-29, sem release)
+### Web/celular: projetos certos, ícones do PC, layouts, arrastar e Ajustes com avisos (2026-10-29, v0.7.9)
 
 - **Engine**: `raiz_do_projeto`/`dono_da_pasta` (mobile.rs) — mesma regra de `pastaDoProjeto`: subpasta descartável
   (`.worker-data/videos/<uuid>`) conta como do projeto pai, na lista de projetos e no `project_id` das conversas do
@@ -308,7 +308,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   + grupo "Tela" com o layout das conversas. Celular: engrenagem também no topo do início. Lateral do PC: **busca nos
   Recentes** (input ali mesmo, procura no histórico inteiro, até 10 resultados).
 
-### Seletor de ícone abria sozinho (2026-10-28, sem release)
+### Seletor de ícone abria sozinho (2026-10-28, v0.7.9)
 
 - Trocar de aba na lateral e voltar remontava `AvatarDoProjeto`/`AvatarDoWorkspace` com o `pedido` antigo (contador guardado
   no Sidebar) e o efeito reabria o seletor. `useAbrirAoPedir` ignora o valor da montagem; teste em `iconesDoProjeto.test.tsx`.
