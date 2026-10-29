@@ -29,6 +29,8 @@ export interface SelectProps<T extends string | number> {
   searchable?: boolean;
   /** Texto do campo de busca. */
   searchPlaceholder?: string;
+  /** Nome acessível quando não há `<label htmlFor>`. */
+  "aria-label"?: string;
 }
 
 const SIZE: Record<FieldSize, string> = {
@@ -58,6 +60,7 @@ export function Select<T extends string | number>({
   placeholder = "Selecione…",
   searchable = false,
   searchPlaceholder = "Pesquisar…",
+  "aria-label": ariaLabel,
 }: SelectProps<T>) {
   const [aberto, setAberto] = useState(false);
   const [ativo, setAtivo] = useState(0);
@@ -196,6 +199,7 @@ export function Select<T extends string | number>({
         id={id}
         type="button"
         role="combobox"
+        aria-label={ariaLabel}
         aria-expanded={aberto}
         aria-haspopup="listbox"
         aria-controls={aberto ? listaId : undefined}

@@ -1,19 +1,19 @@
 import { EtiquetaDoStatus, statusDaConversa } from "../components/ConversaStatus";
 import type { TerminalSession } from "../features/terminal/terminalService";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { Select } from "../components/ui/Select";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
-import { AlertIcon, ArchiveIcon, ArrowLeftIcon, AttachmentIcon, ChatIcon, EditIcon, FolderIcon, GitBranchIcon, NotesIcon, PlayIcon, ReloadIcon, SearchIcon, WarningIcon } from "../components/ui/PixelIcon";
+import { AlertIcon, ArchiveIcon, GearIcon, ArrowLeftIcon, AttachmentIcon, ChatIcon, EditIcon, FolderIcon, GitBranchIcon, NotesIcon, PlayIcon, ReloadIcon, SearchIcon, WarningIcon } from "../components/ui/PixelIcon";
 import { NOME_DO_AGENTE, request, requestSeMudou, esquecerVersao, actionKey, ApiError, type Comando, type Conversation, type Mensagem, type Projects, type Timeline } from "./api";
 import { AgentWorking, BlocoDeAcoes, LinhaDeAviso, LinhaDeComando, MessageBubble, PairingScreen } from "./Chat";
 import { Composer } from "./Composer";
 import { ExportarConversa } from "./ExportarConversa";
 import { CartaoDePergunta } from "./CartaoDePergunta";
-import { AjustesDaConversa, type Ajustes } from "./AjustesDaConversa";
+import { AjustesDaConversa, podeReabrir, type Ajustes } from "./AjustesDaConversa";
 import {
   ANEXO_MAX_BYTES,
   criarAnexo,
@@ -27,6 +27,10 @@ import { usePoll } from "./usePoll";
 import { corrigir, transcrever, useVozInstalada } from "./voz";
 import { UsoDasContas } from "../web/UsoDasContas";
 import { AprovacoesDeFluxo } from "./AprovacoesDeFluxo";
+import { IconeDoProjeto } from "./IconeDoProjeto";
+import { AjustesDoAparelho } from "./AjustesDoAparelho";
+import { useNotificacoes } from "./notificacoes";
+import { urlDaRota } from "./rota";
 import { PreviasLocais } from "../web/PreviasLocais";
 
 const STATES: Record<string,string> = { working: "Trabalhando", answered: "Resposta disponível", approval_required: "Aprovação pendente", stopped: "Encerrado", orphan: "Sessão anterior", crashed: "Interrompido" };
@@ -94,8 +98,10 @@ function idadeDaLista(publishedAtMs: number): string | null {
 
 /* ─────────────────────────────────────────────────────────────── estrutura */
 
-function TopBar({ titulo, subtitulo, onVoltar, onAtualizar, marca }: {
+function TopBar({ titulo, subtitulo, onVoltar, onAtualizar, marca, onAjustes }: {
   titulo: ReactNode; subtitulo?: ReactNode; onVoltar?: () => void; onAtualizar: () => Promise<void>;
+  /** Engrenagem no topo (fora da tela de ajustes): leva aos ajustes do aparelho. */
+  onAjustes?: () => void;
   /** Avatar ao lado do título (a IA da conversa, com o anel do estado). */
   marca?: ReactNode;
 }) {
@@ -116,6 +122,9 @@ function TopBar({ titulo, subtitulo, onVoltar, onAtualizar, marca }: {
         onClick={() => { setGirando(true); void onAtualizar().finally(() => setGirando(false)); }}>
         <ReloadIcon aria-hidden className={`h-5 w-5${girando ? " anexo-girando" : ""}`} />
       </button>
+      {onAjustes && <button type="button" className="btn btn-ghost m-topo-icone" aria-label="Ajustes" onClick={onAjustes}>
+        <GearIcon aria-hidden className="h-5 w-5" />
+      </button>}
     </header>
   );
 }
@@ -211,8 +220,9 @@ export function ProjectList({ projects, conversations, abrir, limite = Infinity,
     return <li key={project.id}>
       <button type="button" className="m-card glass glass-hover" onClick={() => abrir(project.id)} title={project.path}
         aria-label={`Abrir projeto ${project.name}, ${doProjeto.length} conversa(s)`}>
-        <span className="m-card-icone m-monograma" data-cor={corDoNome(project.name)} aria-hidden>
-          {project.name.replace(/[^\p{L}\p{N}]/gu, "").slice(0, 2).toUpperCase() || <FolderIcon className="h-5 w-5" />}
+        <span className={`m-card-icone m-monograma${project.icone ? " tem-icone" : ""}`} data-cor={corDoNome(project.name)} aria-hidden>
+          <IconeDoProjeto projeto={project} className="h-6 w-6"
+            reserva={project.name.replace(/[^\p{L}\p{N}]/gu, "").slice(0, 2).toUpperCase() || <FolderIcon className="h-5 w-5" />} />
           {trabalhando > 0 && <span className="m-monograma-vivo" />}
         </span>
         <span className="m-card-corpo">
@@ -239,7 +249,7 @@ export function ProjectList({ projects, conversations, abrir, limite = Infinity,
   </>;
 }
 
-export function ConversationList({ conversations, perfis, projetos = [], mostrarProjeto = false, abrir, vazio, ativa = null, naoVistas, aoLado, abertas }: {
+export function ConversationList({ conversations, perfis, projetos = [], mostrarProjeto = false, abrir, vazio, ativa = null, naoVistas, aoLado, abertas, aoArrastar }: {
   conversations: Conversation[]; perfis: Projects["profiles"]; projetos?: Projects["projects"];
   mostrarProjeto?: boolean; abrir: (id: string) => void; vazio: string;
   /** Conversa aberta ao lado (web): fica marcada na lista. */
@@ -249,6 +259,8 @@ export function ConversationList({ conversations, perfis, projetos = [], mostrar
   /** Web: abre a conversa ao lado das que já estão abertas. */
   aoLado?: (id: string) => void;
   abertas?: readonly string[];
+  /** Web: o cartão pode ser arrastado até um painel do centro. */
+  aoArrastar?: (evento: DragEvent, id: string) => void;
 }) {
   if (conversations.length === 0) return <Vazio>{vazio}</Vazio>;
   return <ul className="m-lista">{conversations.map(c => {
@@ -259,17 +271,20 @@ export function ConversationList({ conversations, perfis, projetos = [], mostrar
       Boolean(naoVistas?.has(c.id)),
     );
     const conta = perfis.find(p => p.id === c.profile_id)?.name;
-    const projeto = mostrarProjeto ? projetos.find(p => p.id === c.project_id)?.name : null;
+    const doProjeto = projetos.find(p => p.id === c.project_id);
+    const projeto = mostrarProjeto ? doProjeto?.name : null;
     const detalhe = [STATES[c.state ?? ""] ?? "Histórico", NOME_DO_AGENTE[c.provider ?? ""] ?? c.provider, conta]
       .filter(Boolean).join(" · ");
     return <li key={c.id}>
       <button type="button" className={`m-card glass glass-hover${c.id === ativa ? " m-card-ativo" : ""}`} data-status={status} onClick={() => abrir(c.id)}
+        draggable={Boolean(aoArrastar)} onDragStart={aoArrastar ? (evento) => aoArrastar(evento, c.id) : undefined}
         aria-label={`Abrir conversa ${c.title}`} aria-current={c.id === ativa ? "true" : undefined}>
         <span className="m-card-icone">
           {c.provider ? <AgentIcon provider={c.provider} size={20} /> : <PlayIcon aria-hidden className="h-5 w-5" />}
+          {doProjeto?.icone && <span className="m-card-icone-projeto" aria-hidden><IconeDoProjeto projeto={doProjeto} className="h-3 w-3" /></span>}
         </span>
         <span className="m-card-corpo">
-          {projeto && <span className="m-card-projeto"><FolderIcon aria-hidden className="h-3 w-3 shrink-0" /><span className="truncate">{projeto}</span></span>}
+          {projeto && <span className="m-card-projeto"><IconeDoProjeto projeto={doProjeto} className="h-3 w-3" /><span className="truncate">{projeto}</span></span>}
           <span className="m-card-titulo">{c.title}</span>
           <span className="m-card-sub">
             <span className={`m-dot ${tomDoEstado(c.state, aprovar)}`} aria-hidden />
@@ -1099,7 +1114,7 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
         onSalvar={(nome) => { setEditandoNome(false); void renomear(nome); }} /> : null}
       chips={<>
         {(conversation.live || conversation.capabilities) ? (
-          <AjustesDaConversa conversaId={conversation.id} pronto={Boolean(conversation.capabilities?.prompt) && !busy}
+          <AjustesDaConversa conversaId={conversation.id} pronto={podeReabrir(conversation) && !busy}
             onAplicar={ajustar} />
         ) : (
           <AjustesDaConversa key="retomar" conversaId={conversation.id} pronto={!busy} onAplicar={ajustar} onRetomar={retomar} />
@@ -1186,6 +1201,29 @@ function RenomearConversa({ nome, onSalvar, onFechar }: { nome: string; onSalvar
 /* ─────────────────────────────────────────────────────────────── app */
 
 const CHAVE_FILTRO = "omni-filtro";
+const urlDaConversa = (id: string) => urlDaRota({ tela: "conversa", conversa: id });
+
+/** Navegação de baixo, ao alcance do polegar: início, o que espera você e os ajustes. */
+function BarraDeBaixo({ aba, aguardando, ir }: { aba: "inicio" | "atencao" | "ajustes"; aguardando: number; ir: (aba: "inicio" | "atencao" | "ajustes") => void }) {
+  const itens = [
+    { id: "inicio" as const, rotulo: "Início", icone: FolderIcon },
+    { id: "atencao" as const, rotulo: "Precisa de você", icone: AlertIcon },
+    { id: "ajustes" as const, rotulo: "Ajustes", icone: GearIcon },
+  ];
+  return (
+    <nav className="m-barra glass glass-strong" aria-label="Navegação">
+      {itens.map(({ id, rotulo, icone: Icone }) => (
+        <button key={id} type="button" className={`m-barra-item${aba === id ? " is-ativo" : ""}`} aria-current={aba === id ? "page" : undefined}
+          onClick={() => ir(id)}>
+          <span className="m-barra-icone"><Icone aria-hidden className="h-5 w-5" />
+            {id === "atencao" && aguardando > 0 && <span className="m-barra-badge" aria-label={`${aguardando} esperando`}>{aguardando}</span>}
+          </span>
+          <span className="m-barra-rotulo">{rotulo}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
 
 /**
  * Publica a área que sobra acima do teclado em `--vv-topo`/`--vv-altura`. A conversa (`.m-shell-chat`)
@@ -1217,6 +1255,7 @@ export function MobileApp() {
 
   useEffect(() => { gravarSessao(CHAVE_FILTRO, onlyAttention ? "atencao" : null); }, [onlyAttention]);
   useAreaVisivel();
+  useNotificacoes(attention, carregado, urlDaConversa);
 
 
   if (semAcesso) return <main className="m-shell"><PairingScreen parear={parear} /></main>;
@@ -1237,7 +1276,11 @@ export function MobileApp() {
   let marca: ReactNode = null;
   let conteudo: ReactNode;
 
-  if (rota.tela === "conversa") {
+  if (rota.tela === "ajustes") {
+    titulo = "Ajustes";
+    subtitulo = <span className="truncate">Avisos e conexão deste aparelho</span>;
+    conteudo = <AjustesDoAparelho />;
+  } else if (rota.tela === "conversa") {
     if (conversa) {
       const aprovar = Boolean(conversa.capabilities?.approve);
       titulo = conversa.title;
@@ -1322,8 +1365,6 @@ export function MobileApp() {
       </div>
       </Saudacao>
       <AprovacoesDeFluxo />
-      <section className="m-uso glass" aria-label="Uso das IAs"><UsoDasContas contaAtiva={null} /></section>
-      <section className="m-uso glass" aria-label="Prévia no navegador"><PreviasLocais /></section>
       <label className="m-busca-caixa">
         <SearchIcon aria-hidden className="m-busca-lupa" />
         <Input type="search" value={query} onChange={event => setQuery(event.target.value)}
@@ -1356,15 +1397,31 @@ export function MobileApp() {
               <ProjectList projects={projetos} conversations={visiveis} limite={6} abrir={id => ir({ tela: "projeto", projeto: id })} />
             </Secao>
           </>}
+      {/* Ferramentas depois das conversas: o que se abre todo dia fica no alto da tela. */}
+      {!query && <>
+        <section className="m-uso glass" aria-label="Uso das IAs"><UsoDasContas contaAtiva={null} /></section>
+        <section className="m-uso glass" aria-label="Prévia no navegador"><PreviasLocais /></section>
+      </>}
     </>;
   }
 
-  return <div className={rota.tela === "conversa" ? "m-shell m-shell-chat" : "m-shell"}>
+  const aba = rota.tela === "ajustes" ? "ajustes" : rota.tela === "inicio" && onlyAttention ? "atencao" : "inicio";
+  const irPelaBarra = (destino: typeof aba) => {
+    setQuery("");
+    if (destino === "ajustes") { if (rota.tela !== "ajustes") ir({ tela: "ajustes" }); return; }
+    setOnlyAttention(destino === "atencao");
+    if (rota.tela !== "inicio") ir({ tela: "inicio" });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  return <div className={rota.tela === "conversa" ? "m-shell m-shell-chat" : "m-shell m-shell-com-barra"}>
     <TopBar titulo={titulo} subtitulo={subtitulo} marca={marca} onAtualizar={atualizar}
+      onAjustes={rota.tela === "inicio" ? () => ir({ tela: "ajustes" }) : undefined}
       onVoltar={rota.tela === "inicio" ? undefined : () => voltar(pai)} />
-    <main className="m-conteudo">
+    <main className="m-conteudo" key={rota.tela === "conversa" ? "conversa" : `${rota.tela}-${aba}`}>
       {error && <p role="alert" className="m-alerta">Não foi possível conectar: {error}</p>}
       {conteudo}
     </main>
+    {rota.tela !== "conversa" && <BarraDeBaixo aba={aba} aguardando={attention.length} ir={irPelaBarra} />}
   </div>;
 }

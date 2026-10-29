@@ -67,6 +67,24 @@ describe("AvatarDoProjeto", () => {
     await userEvent.click(await within(painel).findByRole("button", { name: "Usar src/app/icon.png" }));
     await vi.waitFor(() => expect(onEscolher).toHaveBeenCalledWith("p1", "C:/p/src/app/icon.png"));
   });
+
+  /** "Tenho que poder mudar os ícones dos projetos também, igual ao do workspace." */
+  it("abre pelo botão da linha e oferece o favicon dos outros projetos do workspace", async () => {
+    const onEscolher = vi.fn();
+    const semIcone = createProject("C:/q", "q1");
+    const { rerender } = render(<AvatarDoProjeto project={semIcone} onEscolher={onEscolher} vizinhos={[semIcone, createProject("C:/p", "p1")]} />);
+    rerender(<AvatarDoProjeto project={semIcone} onEscolher={onEscolher} vizinhos={[semIcone, createProject("C:/p", "p1")]} pedido={1} />);
+    const painel = await screen.findByRole("dialog", { name: "Ícone de q" });
+    await userEvent.click(await within(painel).findByRole("button", { name: "Usar public/favicon.svg" }));
+    await vi.waitFor(() => expect(onEscolher).toHaveBeenCalledWith("q1", "C:/p/public/favicon.svg"));
+  });
+
+  /** "Ao entrar em uma aba e voltar para a de conversas, está abrindo o dropdown de mudar o ícone sozinho." */
+  it("remontar com um pedido antigo não reabre o seletor", async () => {
+    render(<AvatarDoProjeto project={createProject("C:/q", "q1")} onEscolher={vi.fn()} pedido={3} />);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
 });
 
 describe("AvatarDoWorkspace", () => {

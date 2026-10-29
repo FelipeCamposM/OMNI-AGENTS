@@ -358,8 +358,20 @@ it("aba Histórico separada: agrupa por período, filtra por projeto e mostra o 
   const painel = within(lateral).getByRole("tabpanel", { name: "Histórico" });
   expect(within(painel).getByText("Hoje")).toBeInTheDocument();
   expect(within(painel).getByText("Mais antigas")).toBeInTheDocument();
-  await act(async () => { await userEvent.selectOptions(within(painel).getByLabelText("Projeto do histórico"), "p2"); });
+  await act(async () => { await userEvent.click(within(painel).getByRole("combobox", { name: "Projeto do histórico" })); });
+  await act(async () => { await userEvent.click(screen.getByRole("option", { name: (nome) => nome.startsWith("Outro") })); });
   expect(within(painel).queryByRole("button", { name: /Corrigir o login/ })).not.toBeInTheDocument();
   expect(within(within(painel).getByRole("button", { name: /Auditar pagamentos/ })).getByText("Outro")).toBeInTheDocument();
 });
 
+
+it("configurações da web: avisos, layout e conexão numa página, pelo engrenagem do topo", async () => {
+  vi.stubGlobal("fetch", servidor([conversa()]));
+  render(<WebApp />);
+  await screen.findByRole("button", { name: /Abrir conversa/ });
+  await act(async () => { await userEvent.click(screen.getByRole("button", { name: "Configurações" })); });
+  expect(location.hash).toBe("#/ajustes");
+  expect(screen.getByRole("heading", { name: "Notificações" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Tela" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /versão de celular/ })).toHaveAttribute("href", "/");
+});

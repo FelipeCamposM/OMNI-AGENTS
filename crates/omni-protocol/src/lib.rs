@@ -279,7 +279,13 @@ pub enum EngineResponse {
 /// git: o celular só precisa saber "qual projeto", e o engine só precisa do `path` para abrir uma
 /// sessão lá dentro. Menos campo publicado é menos coisa exposta no HTTP.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct PublishedProject { pub id: String, pub name: String, pub path: String }
+pub struct PublishedProject {
+    pub id: String, pub name: String, pub path: String,
+    /// Ícone escolhido/achado no desktop (arquivo dentro de `path`). Nunca sai no HTTP: a web pede
+    /// `/projetos/{id}/icone` e o engine lê. Desktop antigo não manda.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icone: Option<String>,
+}
 
 /// CLI de agente que o desktop confirmou existir no PATH. O celular escolhe **desta lista** —
 /// nunca digita um binário.

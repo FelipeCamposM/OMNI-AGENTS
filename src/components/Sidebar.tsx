@@ -8,6 +8,7 @@ import {
   DockerIcon,
   FolderIcon,
   FolderPlusIcon as FolderPlus,
+  ImageIcon,
   GitBranchIcon,
   KanbanIcon,
   ReloadIcon,
@@ -17,7 +18,7 @@ import {
 } from "./ui/PixelIcon";
 import { destaqueDaLinha, EtiquetaDoStatus, haQuantoTempo, IconeDoStatus, ResumoDeAgentes, rotuloDoStatus, statusDaConversa } from "./ConversaStatus";
 import { conversationKey } from "../features/terminal/useAttention";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { ProjectPicker } from "../features/projects/ProjectPicker";
 import { EditableLabel } from "./ui/EditableLabel";
@@ -38,7 +39,10 @@ import { DockerPanel } from "./DockerPanel";
 import { ServidoresPanel } from "./ServidoresPanel";
 import { KanbanPanel } from "./KanbanPanel";
 import { SkillsList } from "./SkillsList";
-import { AvatarDoProjeto } from "./EscolherIcone";
+import { AvatarDoProjeto, SimboloDoProjeto } from "./EscolherIcone";
+import { useProjetoDaPasta } from "../features/projects/projetosContext";
+import { RecentesConversas } from "../features/history/RecentesConversas";
+import type { HistoryEntry } from "../features/history/historyService";
 /* O mesmo arquivo que o Tauri usa como ícone do app (tauri.conf.json →
    bundle.icon). Importado em vez de copiado para src/assets: uma cópia
    dessincronizaria do ícone real na próxima troca de marca. */
@@ -117,6 +121,8 @@ interface SidebarProps {
   showFluxos?: boolean;
   onOpenFluxos?: () => void;
   onOpenHistory: () => void;
+  /** Retoma uma conversa do Histórico (a seção Recentes da lateral). */
+  onResumeHistory?: (entry: HistoryEntry) => Promise<void>;
   /** Antigo clique no logo: o logo mudou para a barra superior (`TitleBar`). */
   onHome?: () => void;
   onAddProject: (path: string) => void;
@@ -165,6 +171,7 @@ export function Sidebar({
   showFluxos = false,
   onOpenFluxos,
   onOpenHistory,
+  onResumeHistory,
   onAddProject,
   onSelectProject,
   onCloseProject,
@@ -183,6 +190,8 @@ export function Sidebar({
   const naoVistas = new Set(attention.map((item) => item.conversationKey));
 
   const [pickerAberto, setPickerAberto] = useState(false);
+  // Botão "Trocar ícone" da linha do projeto: cada clique abre o seletor do avatar dele.
+  const [pedidosDeIcone, setPedidosDeIcone] = useState<Record<string, number>>({});
   // Nome de cada conta, para a segunda linha da conversa dizer em qual ela roda.
   const [contas, setContas] = useState<Record<string, string>>({});
   useEffect(() => {
@@ -358,7 +367,8 @@ export function Sidebar({
                             : "border-transparent ring-border-subtle/40 hover:ring-border-subtle"
                         }`}>
                         {onSetProjectIcon && (
-                          <span className="grid shrink-0 place-items-center pl-2"><AvatarDoProjeto project={project} onEscolher={onSetProjectIcon} /></span>
+                          <span className="grid shrink-0 place-items-center pl-2"><AvatarDoProjeto project={project} onEscolher={onSetProjectIcon}
+                            vizinhos={projects} pedido={pedidosDeIcone[project.id]} /></span>
                         )}
                         <button
                           type="button"
@@ -386,6 +396,18 @@ Arraste para mudar a ordem`}
                             </span>
                           </span>
                         </button>
+                        {onSetProjectIcon && (
+                          <button
+                            type="button"
+                            aria-label={`Escolher ícone do projeto ${project.name}`}
+                            title="Trocar ícone (favicon de um dos projetos)"
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onClick={() => setPedidosDeIcone((atual) => ({ ...atual, [project.id]: (atual[project.id] ?? 0) + 1 }))}
+                            className="grid w-7 shrink-0 place-items-center text-text-muted opacity-60 hover:text-accent hover:opacity-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                          >
+                            <ImageIcon className="h-3 w-3" aria-hidden />
+                          </button>
+                        )}
                         <button
                           type="button"
                           aria-label={`Fechar projeto ${project.name}`}
@@ -406,10 +428,12 @@ Arraste para mudar a ordem`}
                     // Conversas: a mexida por último primeiro. Terminais ficam na ordem em que foram abertos.
                     .sort((a, b) => section === "CHATS" ? (b.last_activity_at_ms ?? 0) - (a.last_activity_at_ms ?? 0) : 0);
                   return (
-                    <SidebarSection key={section} label={section} icon={section === "CHATS" ? ChatIcon : TerminalIcon}
+                    <Fragment key={section}>
+                    <SidebarSection label={section} icon={section === "CHATS" ? ChatIcon : TerminalIcon}
                       disabled={!activeProjectId} contagem={lista.length}>
                       {lista.length > 0 ? lista.map((session) => (
                         <div key={session.id}
+                          data-status={session.provider ? statusDaConversa(session, naoVistas.has(conversationKey(session))) : session.state === "working" ? "trabalhando" : undefined}
                           className={`lateral-item group relative mx-1 flex items-stretch border-l-2 ring-1 ring-inset transition-colors ${
                             session.id === activeSessionId
                               ? "lateral-item-ativo ring-accent/50"
@@ -426,7 +450,7 @@ Arraste para mudar a ordem`}
                             onAttach={onAttachTerminal}
                           />
                           {/* Ações só no hover/foco, por cima do fim da linha: fora dele o espaço é do nome. */}
-                          <div className="absolute inset-y-0 right-0 hidden items-stretch border-l border-border-subtle bg-bg-elevated pl-0.5 shadow-[-12px_0_12px_-4px_rgb(var(--c-bg-elevated))] group-focus-within:flex group-hover:flex">
+                          <div className="lateral-acoes absolute inset-y-0 right-0 hidden items-stretch border-l border-border-subtle bg-bg-elevated pl-0.5 shadow-[-12px_0_12px_-4px_rgb(var(--c-bg-elevated))] group-focus-within:flex group-hover:flex">
                           <button
                             type="button"
                             aria-label={session.provider ? `Bifurcar conversa ${session.name}` : `Duplicar terminal ${session.name}`}
@@ -460,6 +484,11 @@ Arraste para mudar a ordem`}
                         </div>
                       )) : undefined}
                     </SidebarSection>
+                    {section === "CHATS" && onResumeHistory && (
+                      <RecentesConversas agora={agora} onRetomar={onResumeHistory} onVerTodas={onOpenHistory}
+                        abertas={agentSessions.flatMap((sessao) => sessao.external_session_id ? [sessao.external_session_id] : [])} />
+                    )}
+                    </Fragment>
                   );
                 })}
               </>
@@ -589,6 +618,7 @@ function SessionLabel({
             <IconeDoStatus status={status} className="!h-2.5 !w-2.5" />
           </span>
         )}
+        {agente && <IconeDoProjetoDaSessao cwd={session.cwd} />}
       </span>
       <span className="min-w-0 flex-1">
         {/* Linha 1: nome e há quanto tempo, como numa lista de mensagens. Linha 2: situação e conta. */}
@@ -605,6 +635,16 @@ function SessionLabel({
       </span>
       <EtiquetaDoStatus status={status} className="hidden" />
     </button>
+  );
+}
+
+/** Ícone do projeto no canto do avatar, como nos Recentes e no Histórico. */
+function IconeDoProjetoDaSessao({ cwd }: { cwd: string }) {
+  const projeto = useProjetoDaPasta(cwd);
+  return (
+    <span className="lateral-recente-projeto" aria-hidden>
+      <SimboloDoProjeto project={projeto ?? { path: cwd }} className="h-2.5 w-2.5" />
+    </span>
   );
 }
 
@@ -640,7 +680,7 @@ function SidebarSection({
         aria-expanded={open}
         disabled={disabled}
         onClick={() => setOpen((value) => !value)}
-        className="w-full flex items-center gap-2 text-text-muted text-[10px] font-medium uppercase tracking-wider px-3 pt-1 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+        className="lateral-secao w-full flex items-center gap-2 text-text-muted text-[10px] font-medium uppercase tracking-wider px-3 pt-1 disabled:opacity-40 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
       >
         <ChevronDownIcon
           className={`h-3 w-3 shrink-0 transition-transform ${open ? "" : "-rotate-90"}`}

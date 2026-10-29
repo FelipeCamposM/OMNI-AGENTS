@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterHistory, resumeCommand, samePath, type HistoryEntry } from "../features/history/historyService";
+import { filterHistory, pastaDoProjeto, resumeCommand, samePath, type HistoryEntry } from "../features/history/historyService";
 
 function entry(overrides: Partial<HistoryEntry>): HistoryEntry {
   return {
@@ -38,4 +38,13 @@ describe("historyService", () => {
     expect(resumeCommand("claude", entry({}))).toBe("claude --resume abc");
     expect(resumeCommand("codex", entry({ provider: "codex", session_id: "019" }))).toBe("codex resume 019");
   });
+});
+
+/** "Tem vários projetos com uma sequência aleatória de letras e números que eu nem sei o que é." */
+it("conversa em subpasta descartável conta como do projeto pai", () => {
+  const worker = String.raw`D:\SITES\DOMUS\.worker-data\videos\a91bcdcc-87cc`;
+  expect(pastaDoProjeto(worker, [])).toBe(String.raw`D:\SITES\DOMUS`);
+  expect(pastaDoProjeto("d:/sites/domus/src/app", [String.raw`D:\SITES\DOMUS`])).toBe(String.raw`D:\SITES\DOMUS`);
+  expect(pastaDoProjeto("D:/SITES/DOMUS-2", ["D:/SITES/DOMUS"])).toBe("D:/SITES/DOMUS-2");
+  expect(pastaDoProjeto("C:/proj/omni", [])).toBe("C:/proj/omni");
 });

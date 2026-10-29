@@ -37,3 +37,12 @@ it("edição mostra +/− e abre as linhas alteradas ao clicar", async () => {
   expect(await screen.findByLabelText("Alterações")).toBeInTheDocument();
   expect(screen.getByText("-b")).toHaveClass("diff-linha-menos");
 });
+
+it("imagem anexada pelo caminho aparece como imagem, não como cartão; o resto continua cartão", () => {
+  const texto = "olha\n\n[Anexos enviados pelo OMNI]\n- D:/p/.omni-agents/anexos/1793248624681-1dd8-image.png\n- D:/p/.omni-agents/anexos/1793248624681-1dd9-notas.pdf";
+  render(<MessageBubble lado="user" texto={texto} imagens={{ conversa: "c", n: 3, total: 1 }} />);
+  expect(screen.getByRole("list", { name: "Imagens da mensagem" })).toBeInTheDocument();
+  const anexos = screen.getByRole("list", { name: "Anexos da mensagem" });
+  expect(anexos).toHaveTextContent("notas.pdf");
+  expect(anexos).not.toHaveTextContent("image.png");
+});

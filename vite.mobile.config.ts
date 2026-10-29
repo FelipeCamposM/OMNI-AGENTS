@@ -45,6 +45,8 @@ function iconesDoApp(): Plugin {
         this.emitFile({ type: "asset", fileName, source: readFileSync(resolve(origem)) });
       }
       this.emitFile({ type: "asset", fileName: "manifest.webmanifest", source: JSON.stringify(MANIFEST, null, 2) });
+      // Nome fixo e na raiz: o escopo do service worker é a pasta de onde ele vem.
+      this.emitFile({ type: "asset", fileName: "sw.js", source: readFileSync(resolve("src/mobile/sw.js")) });
     },
   };
 }

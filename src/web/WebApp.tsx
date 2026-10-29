@@ -1,8 +1,8 @@
-import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type DragEvent } from "react";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
 import { Input } from "../components/ui/Input";
-import { BlocksIcon, ChatIcon, ClockIcon, CloseIcon, EyeIcon, FolderIcon, GlobeIcon, ReloadIcon, TerminalIcon } from "../components/ui/PixelIcon";
+import { BlocksIcon, GearIcon, MonitorIcon, NotificationIcon, ChatIcon, ClockIcon, CloseIcon, EyeIcon, FolderIcon, GlobeIcon, ReloadIcon, TerminalIcon } from "../components/ui/PixelIcon";
 import { deslizarAba, moverIndicador } from "../lib/motion";
 import { ExtensoesSettings } from "../features/extensoes/ExtensoesSettings";
 import type { ExtensoesDaConta, FonteDeExtensoes } from "../features/extensoes/extensoesService";
@@ -19,6 +19,13 @@ import { buscarIconeDeExtensao, NOME_DO_AGENTE, request, temConversa, type Conve
 import { UsoNoTopo } from "./UsoDasContas";
 import { PreviasLocais } from "./PreviasLocais";
 import { AprovacoesDeFluxo } from "../mobile/AprovacoesDeFluxo";
+import { IconeDoProjeto } from "../mobile/IconeDoProjeto";
+import { AjustesDoAparelho } from "../mobile/AjustesDoAparelho";
+import { pedirPermissao, permissao, suporte, useNotificacoes, usePrefsDeAviso } from "../mobile/notificacoes";
+import { Select } from "../components/ui/Select";
+import { LayoutPresetPicker } from "../features/workspace/LayoutPresetPicker";
+import { celulas, LAYOUT_PRESETS, quantosPaineis, type Molde } from "../features/workspace/layoutPresets";
+import type { LayoutPreset } from "../types/workspace";
 
 /** O xterm só baixa quando alguém abre a aba Terminal: quem só conversa não paga por ele. */
 const TerminalEspelho = lazy(() => import("./TerminalEspelho"));
@@ -33,18 +40,61 @@ type Aba = "conversa" | "terminal";
 /** Terminal sem agente aberto no PC (`GET /terminais`): o lugar de rodar um `npm run dev`. */
 interface Shell { id: string; name: string; project_id: string; cwd: string; state: string; updated_at_ms: number }
 
-/** Quantas conversas cabem lado a lado. */
+/** Quantas conversas cabem lado a lado sem layout escolhido. */
 const LADO_A_LADO = 3;
+/** O maior layout pronto (grade 3×2). */
+const MAXIMO_DE_PAINEIS = 6;
+const CHAVE_LAYOUT = "omni-web-layout";
+/** Tipo do arrasto de conversa (lateral → centro, painel → painel). */
+const ARRASTO = "application/x-omni-conversa";
+
+function lerLayout(): LayoutPreset | null {
+  try {
+    const salvo = localStorage.getItem(CHAVE_LAYOUT);
+    return LAYOUT_PRESETS.some((item) => item.id === salvo) ? (salvo as LayoutPreset) : null;
+  } catch { return null; }
+}
+
+/** Sem layout escolhido: colunas iguais pela quantidade aberta (o comportamento de antes). */
+function moldeDe(layout: LayoutPreset | null, abertas: number): Molde {
+  const escolhido = LAYOUT_PRESETS.find((item) => item.id === layout)?.molde;
+  if (escolhido) return escolhido;
+  return abertas >= 3 ? LAYOUT_PRESETS.find((item) => item.id === "columns-3")!.molde
+    : abertas === 2 ? LAYOUT_PRESETS.find((item) => item.id === "columns-2")!.molde : "p";
+}
+
+/** Põe a conversa na célula `indice`. Vinda de outra célula, troca de lugar com a que estava lá. */
+export function colocarNaCelula(abertas: readonly string[], id: string, indice: number): string[] {
+  const nova = [...abertas];
+  const origem = nova.indexOf(id);
+  if (origem === indice) return nova;
+  if (origem >= 0) {
+    if (indice < nova.length) [nova[origem], nova[indice]] = [nova[indice], nova[origem]];
+    else { nova.splice(origem, 1); nova.push(id); }
+    return nova;
+  }
+  if (indice < nova.length) nova[indice] = id; else nova.push(id);
+  return nova;
+}
+
+const urlDaConversaWeb = (id: string) => `${location.pathname}${location.search}#/c/${encodeURIComponent(id)}`;
+
+export function arrastarConversa(evento: DragEvent, id: string) {
+  evento.dataTransfer.setData(ARRASTO, id);
+  evento.dataTransfer.setData("text/plain", id);
+  evento.dataTransfer.effectAllowed = "move";
+}
 
 /** Endereço da tela aberta: `#/c/<id>[,<id>…]` são conversas lado a lado, `#/t/<id>` um terminal sem
  *  agente, `#/panorama` o panorama e `#/extensoes` as extensões. */
-function lerEndereco(): { conversas: string[]; terminal: string | null; extensoes: boolean; panorama: boolean } {
+function lerEndereco(): { conversas: string[]; terminal: string | null; extensoes: boolean; panorama: boolean; ajustes: boolean } {
   const conversa = /^#\/c\/([^/?#]+)$/.exec(location.hash);
   const terminal = /^#\/t\/([^/?#]+)$/.exec(location.hash);
   return {
-    conversas: conversa ? conversa[1].split(",").map(decodeURIComponent).filter(Boolean).slice(-LADO_A_LADO) : [],
+    conversas: conversa ? conversa[1].split(",").map(decodeURIComponent).filter(Boolean).slice(-MAXIMO_DE_PAINEIS) : [],
     terminal: terminal ? decodeURIComponent(terminal[1]) : null,
     extensoes: location.hash === "#/extensoes",
+    ajustes: location.hash === "#/ajustes",
     panorama: location.hash === "#/panorama",
   };
 }
@@ -174,6 +224,7 @@ export function WebApp() {
   const [focada, setFocada] = useState<string | null>(null);
   const [terminalId, setTerminalId] = useState<string | null>(null);
   const [verExtensoes, setVerExtensoes] = useState(false);
+  const [verAjustes, setVerAjustes] = useState(false);
   const [verPanorama, setVerPanorama] = useState(false);
   const [fluxosParados, setFluxosParados] = useState(0);
   const [shells, setShells] = useState<Shell[]>([]);
@@ -185,7 +236,12 @@ export function WebApp() {
   const [buscaHistorico, setBuscaHistorico] = useState("");
   const [projetoHistorico, setProjetoHistorico] = useState("");
   const [atualizando, setAtualizando] = useState(false);
+  const [layout, setLayout] = useState<LayoutPreset | null>(lerLayout);
+  const [alvoDoArrasto, setAlvoDoArrasto] = useState<number | null>(null);
   const busca = useRef<HTMLInputElement>(null);
+  const capacidade = layout ? quantosPaineis(moldeDe(layout, 0)) : LADO_A_LADO;
+  useNotificacoes(attention, carregado, urlDaConversaWeb);
+  const [avisos, mudarAvisos] = usePrefsDeAviso();
   // Lateral em abas: a que sai fica na tela até terminar de deslizar.
   const [abaLateral, setAbaLateral] = useState<AbaLateral>(lerAbaLateral);
   const [saindo, setSaindo] = useState<AbaLateral | null>(null);
@@ -218,6 +274,7 @@ export function WebApp() {
       setFocada((atual) => (atual && endereco.conversas.includes(atual) ? atual : endereco.conversas[endereco.conversas.length - 1] ?? null));
       setTerminalId(endereco.terminal);
       setVerExtensoes(endereco.extensoes);
+      setVerAjustes(endereco.ajustes);
       setVerPanorama(endereco.panorama);
     };
     ler();
@@ -263,6 +320,7 @@ export function WebApp() {
     setFocada(null);
     setTerminalId(null);
     setVerExtensoes(false);
+    setVerAjustes(false);
     setVerPanorama(false);
   }
 
@@ -313,11 +371,36 @@ export function WebApp() {
   function abrirConversa(id: string, aoLado = false) {
     const escolhida = conversations.find((item) => item.id === id);
     if (escolhida) setProjetoId(escolhida.project_id);
-    if (abertas.includes(id) && !verExtensoes && !verPanorama && !terminalId) { setFocada(id); return; }
+    if (abertas.includes(id) && !verExtensoes && !verAjustes && !verPanorama && !terminalId) { setFocada(id); return; }
     const projetoDaDivisao = conversations.find((item) => item.id === abertas[0])?.project_id;
     const junta = aoLado && abertas.length > 0 && projetoDaDivisao === escolhida?.project_id;
-    mostrar(junta ? [...abertas.filter((item) => item !== id), id].slice(-LADO_A_LADO) : [id], id);
+    mostrar(junta ? [...abertas.filter((item) => item !== id), id].slice(-capacidade) : [id], id);
   }
+
+  function escolherLayout(novo: LayoutPreset | null) {
+    setLayout(novo);
+    try { if (novo) localStorage.setItem(CHAVE_LAYOUT, novo); else localStorage.removeItem(CHAVE_LAYOUT); } catch { /* vale só agora */ }
+    const cabe = novo ? quantosPaineis(moldeDe(novo, 0)) : LADO_A_LADO;
+    if (abertas.length > cabe) mostrar(abertas.slice(0, cabe), focada && abertas.slice(0, cabe).includes(focada) ? focada : abertas[0], true);
+  }
+
+  /** Soltar uma conversa (da lateral ou de outro painel) numa célula do centro. */
+  function soltar(evento: DragEvent, indice: number) {
+    const id = evento.dataTransfer.getData(ARRASTO);
+    setAlvoDoArrasto(null);
+    if (!id) return;
+    evento.preventDefault();
+    const escolhida = conversations.find((item) => item.id === id);
+    if (escolhida) setProjetoId(escolhida.project_id);
+    mostrar(colocarNaCelula(verExtensoes || verAjustes || verPanorama || terminalId ? [] : abertas, id, indice).slice(0, Math.max(capacidade, 1)), id);
+  }
+
+  const aceitarArrasto = (indice: number) => (evento: DragEvent) => {
+    if (!evento.dataTransfer.types.includes(ARRASTO)) return;
+    evento.preventDefault();
+    evento.dataTransfer.dropEffect = "move";
+    if (alvoDoArrasto !== indice) setAlvoDoArrasto(indice);
+  };
 
   function fecharConversa(id: string) {
     const restantes = abertas.filter((item) => item !== id);
@@ -359,12 +442,15 @@ export function WebApp() {
   const ultimas = visiveis.filter((item) => !item.live).sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0)).slice(0, ULTIMAS);
   const historico = filterConversations(visiveis.filter((item) => !projetoHistorico || item.project_id === projetoHistorico), buscaHistorico, perfis, projetos)
     .sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0));
+  // Filtro do histórico: só projetos que têm conversa, os mais usados primeiro.
+  const projetosDoHistorico = projetos.map((projeto) => ({ projeto, total: visiveis.filter((item) => item.project_id === projeto.id).length }))
+    .filter(({ total }) => total > 0).sort((a, b) => b.total - a.total || a.projeto.name.localeCompare(b.projeto.name));
   const trabalhando = conversations.filter((item) => item.state === "working");
   const naoVistas = new Set(attention.map((item) => item.id));
   const shell = shells.find((item) => item.id === terminalId) ?? null;
   const shellsDoProjeto = shells.filter((item) => item.project_id === projetoAtivo?.id);
   const pendencias = attention.length + fluxosParados;
-  const temCentro = Boolean(verExtensoes || verPanorama || terminalId || naDivisao.length);
+  const temCentro = Boolean(verExtensoes || verAjustes || verPanorama || terminalId || naDivisao.length);
 
   return (
     <div className={`w-tela${temCentro ? " tem-centro" : ""}`}>
@@ -381,6 +467,18 @@ export function WebApp() {
         <span className="w-topo-espaco" />
         {error && <span className="w-erro" role="alert">Sem conexão com o PC: {error}</span>}
         <UsoNoTopo profileId={conversaFocada?.profile_id ?? null} provider={conversaFocada?.provider ?? null} />
+        <button type="button" className={`btn btn-ghost w-atualizar${avisos.ligadas ? " is-ativo" : ""}`} aria-pressed={avisos.ligadas}
+          aria-label="Avisos do navegador" disabled={suporte() !== "ok" || permissao() === "denied"}
+          title={suporte() === "inseguro" ? "Avisos precisam de HTTPS (Acesso remoto → Seguro com HTTPS)"
+            : permissao() === "denied" ? "Avisos bloqueados nas permissões do site"
+            : avisos.ligadas ? "Avisos ligados: notifica quando uma conversa precisar de você" : "Ligar avisos do navegador"}
+          onClick={() => {
+            if (avisos.ligadas) { mudarAvisos({ ligadas: false }); return; }
+            void pedirPermissao().then((resposta) => mudarAvisos({ ligadas: resposta === "granted" }));
+          }}>
+          <NotificationIcon aria-hidden className="h-4 w-4" />
+        </button>
+        <span className="w-so-computador"><LayoutPresetPicker atual={layout} onEscolher={escolherLayout} onAutomatico={() => escolherLayout(null)} /></span>
         <TarefasNoTopo />
         <button type="button" className={`btn btn-ghost w-atualizar w-topo-acao${verPanorama ? " is-ativo" : ""}`} aria-pressed={verPanorama}
           title="Panorama: tudo o que está rodando no PC" onClick={() => {
@@ -398,6 +496,15 @@ export function WebApp() {
             setVerExtensoes(true);
           }}>
           <BlocksIcon aria-hidden className="h-4 w-4" />
+        </button>
+        <button type="button" className={`btn btn-ghost w-atualizar${verAjustes ? " is-ativo" : ""}`} aria-label="Configurações"
+          aria-pressed={verAjustes} title="Configurações: avisos, layout e conexão" onClick={() => {
+            if (verAjustes) { mostrar([], null, true); return; }
+            irPara("#/ajustes");
+            limparCentro();
+            setVerAjustes(true);
+          }}>
+          <GearIcon aria-hidden className="h-4 w-4" />
         </button>
         <button type="button" className="btn btn-ghost w-atualizar" aria-label="Atualizar" title="Atualizar" disabled={atualizando}
           onClick={() => { setAtualizando(true); void Promise.resolve(atualizar()).finally(() => setAtualizando(false)); }}>
@@ -429,11 +536,11 @@ export function WebApp() {
                     <div className="w-historico-filtros">
                       <Input type="search" size="sm" value={buscaHistorico} onChange={(event) => setBuscaHistorico(event.target.value)}
                         placeholder="Buscar no histórico" aria-label="Buscar no histórico" />
-                      <select className="w-historico-projeto" value={projetoHistorico} aria-label="Projeto do histórico"
-                        onChange={(event) => setProjetoHistorico(event.target.value)}>
-                        <option value="">Todos os projetos</option>
-                        {projetos.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                      </select>
+                      <Select size="sm" aria-label="Projeto do histórico" value={projetoHistorico} onChange={setProjetoHistorico}
+                        className="w-historico-projeto" searchable={projetos.length > 6} searchPlaceholder="Buscar projeto…"
+                        options={[{ value: "", label: "Todos os projetos", icon: <FolderIcon aria-hidden className="h-3.5 w-3.5 shrink-0" /> },
+                          ...projetosDoHistorico.map(({ projeto, total }) => ({ value: projeto.id, label: projeto.name,
+                            hint: `${total} ${total === 1 ? "conversa" : "conversas"}`, icon: <IconeDoProjeto projeto={projeto} className="h-3.5 w-3.5" /> }))]} />
                     </div>
                     {historico.length === 0 && <p className="w-vazio">{carregado ? "Nada no histórico com esse filtro." : "Carregando…"}</p>}
                     {porPeriodo(historico).map(([periodo, itens]) => (
@@ -441,7 +548,7 @@ export function WebApp() {
                         <h2 className="w-rotulo"><span className="w-rotulo-texto">{periodo}</span><span className="w-rotulo-conta">{itens.length}</span></h2>
                         <div className="w-conversas">
                           <ConversationList conversations={itens} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
-                            ativa={focada} naoVistas={naoVistas} vazio="" />
+                            ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} vazio="" />
                         </div>
                       </section>
                     ))}
@@ -492,7 +599,7 @@ export function WebApp() {
                                   title={project.path}
                                   aria-label={project.name}
                                 >
-                                  <FolderIcon aria-hidden className="h-3.5 w-3.5 shrink-0 w-projeto-icone" />
+                                  <span className="w-projeto-icone"><IconeDoProjeto projeto={project} className="h-3.5 w-3.5" /></span>
                                   <span className="w-projeto-nome">{project.name}</span>
                                   {ativos > 0 && <span className="m-dot m-dot-ativo" aria-label={`${ativos} trabalhando`} />}
                                   {aguardando > 0 && <span className="m-badge m-badge-alerta">{aguardando}</span>}
@@ -510,7 +617,7 @@ export function WebApp() {
                         <h2 className="w-rotulo"><ChatIcon aria-hidden className="h-3 w-3" />Resultados<span className="w-rotulo-conta">{daLista.length}</span></h2>
                         <div className="w-conversas">
                           <ConversationList conversations={daLista} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
-                            ativa={focada} naoVistas={naoVistas} vazio="Nenhuma conversa encontrada." />
+                            ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} vazio="Nenhuma conversa encontrada." />
                         </div>
                       </section>
                     ) : (
@@ -518,7 +625,7 @@ export function WebApp() {
                         <section className="w-secao">
                           <h2 className="w-rotulo"><span className="m-dot m-dot-ativo" aria-hidden />
                             <span className="w-rotulo-texto">Abertas no PC</span>
-                            {projetoAtivo && <span className="w-rotulo-projeto" title={projetoAtivo.path}><FolderIcon aria-hidden className="h-3 w-3" />{projetoAtivo.name}</span>}
+                            {projetoAtivo && <span className="w-rotulo-projeto" title={projetoAtivo.path}><IconeDoProjeto projeto={projetoAtivo} className="h-3 w-3" />{projetoAtivo.name}</span>}
                             <span className="w-rotulo-conta">{abertasDoProjeto.length}</span></h2>
                           {abertasDoProjeto.length === 0 && (
                             <p className="w-vazio">{carregado ? "Nenhuma conversa aberta neste projeto." : "Carregando…"}</p>
@@ -528,7 +635,7 @@ export function WebApp() {
                               <h3 className="w-grupo-titulo"><span className={`m-dot ${tom}`} aria-hidden />{grupo}<span className="w-grupo-conta">{itens.length}</span></h3>
                               <div className="w-conversas">
                                 <ConversationList conversations={itens} perfis={perfis} projetos={projetos} abrir={abrirConversa}
-                                  ativa={focada} naoVistas={naoVistas} vazio="" abertas={abertas}
+                                  ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} vazio="" abertas={abertas}
                                   aoLado={naDivisao.length > 0 ? (id) => abrirConversa(id, true) : undefined} />
                               </div>
                             </div>
@@ -557,7 +664,7 @@ export function WebApp() {
                             <span className="w-rotulo-dica">todos os projetos</span></h2>
                           <div className="w-conversas">
                             <ConversationList conversations={ultimas} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
-                              ativa={focada} naoVistas={naoVistas} vazio={carregado ? "Nenhuma conversa ainda." : "Carregando…"} />
+                              ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} vazio={carregado ? "Nenhuma conversa ainda." : "Carregando…"} />
                           </div>
                           <button type="button" className="w-ver-historico" onClick={() => trocarAbaLateral("historico")}>
                             <ClockIcon aria-hidden className="h-3.5 w-3.5" />Ver todo o histórico<span aria-hidden>→</span>
@@ -596,7 +703,33 @@ export function WebApp() {
                   onAba={() => undefined} onWorkspace={() => undefined} onClose={() => mostrar([], null, true)} />
               </div>
             );
-          })() : verExtensoes ? (
+          })() : verAjustes ? (
+            <div className="w-painel-central w-ajustes">
+              <div className="w-abas">
+                <span className="w-aba w-aba-ativa"><GearIcon aria-hidden className="h-3.5 w-3.5" />Configurações</span>
+                <span className="w-topo-espaco" />
+                <button type="button" className="btn btn-ghost w-fechar-terminal" onClick={() => mostrar([], null, true)}>Fechar</button>
+              </div>
+              <div className="w-ajustes-corpo">
+                <AjustesDoAparelho pagina="computador">
+                  <section className="m-ajustes-grupo glass" aria-labelledby="ajustes-tela">
+                    <header className="m-ajustes-cabeca">
+                      <h3 id="ajustes-tela" className="m-ajustes-titulo"><MonitorIcon aria-hidden className="h-3.5 w-3.5" />Tela</h3>
+                    </header>
+                    <label className="m-ajuste" htmlFor="ajustes-layout">
+                      <span className="m-ajuste-texto">
+                        <span className="m-ajuste-rotulo">Layout das conversas</span>
+                        <span className="m-ajuste-descricao">Como o centro divide as conversas abertas. O mesmo seletor fica no topo.</span>
+                      </span>
+                    </label>
+                    <Select id="ajustes-layout" size="sm" value={layout ?? ""} onChange={(valor) => escolherLayout(valor ? valor as LayoutPreset : null)}
+                      options={[{ value: "", label: "Automático (pela quantidade aberta)" },
+                        ...LAYOUT_PRESETS.map((item) => ({ value: item.id, label: item.label, hint: `${quantosPaineis(item.molde)} painéis` }))]} />
+                  </section>
+                </AjustesDoAparelho>
+              </div>
+            </div>
+          ) : verExtensoes ? (
             <div className="w-painel-central w-extensoes">
               <div className="w-abas">
                 <span className="w-aba w-aba-ativa"><BlocksIcon aria-hidden className="h-3.5 w-3.5" />Extensões</span>
@@ -623,20 +756,36 @@ export function WebApp() {
               </div>
             </>
           ) : naDivisao.length > 0 ? (
-            <div className={`w-divisao is-${naDivisao.length}`}>
-              {naDivisao.map((item) => (
-                <PainelDaConversa key={item.id} conversa={item} perfis={perfis} projetos={projetos}
-                  focada={item.id === focada} varias={naDivisao.length > 1} focar={() => setFocada(item.id)}
-                  fechar={() => fecharConversa(item.id)} refresh={refresh} abrirConversa={abrirConversa} />
-              ))}
+            // Cada painel é uma célula do layout (o mesmo molde dos layouts do PC). Célula vazia é um
+            // alvo: arraste uma conversa da lateral até ela.
+            <div className={`w-divisao w-layout is-${Math.min(naDivisao.length, 3)}`} onDragLeave={(evento) => {
+              if (!evento.currentTarget.contains(evento.relatedTarget as Node | null)) setAlvoDoArrasto(null);
+            }}>
+              {celulas(moldeDe(layout, naDivisao.length), { x: 0, y: 0, w: 1000, h: 1000 }, 0).map((celula, indice) => {
+                const item = naDivisao[indice];
+                return (
+                  <div key={item?.id ?? `vazia-${indice}`} className={`w-celula${alvoDoArrasto === indice ? " is-alvo" : ""}${item ? "" : " is-vazia"}`}
+                    style={{ "--x": `${celula.x / 10}%`, "--y": `${celula.y / 10}%`, "--w": `${celula.w / 10}%`, "--h": `${celula.h / 10}%` } as React.CSSProperties}
+                    onDragOver={aceitarArrasto(indice)} onDrop={(evento) => soltar(evento, indice)}>
+                    {item ? (
+                      <PainelDaConversa conversa={item} perfis={perfis} projetos={projetos}
+                        focada={item.id === focada} varias={naDivisao.length > 1} focar={() => setFocada(item.id)}
+                        fechar={() => fecharConversa(item.id)} refresh={refresh} abrirConversa={abrirConversa} />
+                    ) : (
+                      <p className="w-celula-dica">Arraste uma conversa da lateral para cá</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : (
-            <div className="w-boas-vindas">
+            <div className={`w-boas-vindas${alvoDoArrasto === 0 ? " is-alvo" : ""}`} onDragOver={aceitarArrasto(0)}
+              onDragLeave={() => setAlvoDoArrasto(null)} onDrop={(evento) => soltar(evento, 0)}>
               <OmniLogo className="neon-glow w-boas-vindas-logo" />
               <p className="w-vazio">
                 {abertas.length && carregado ? "Essa conversa não existe mais no PC." : "Escolha uma conversa à esquerda para acompanhar e responder."}
               </p>
-              <p className="w-dica">Dica: <kbd>/</kbd> busca conversas · <kbd>+</kbd> na lista abre outra conversa do projeto ao lado · <kbd>Enter</kbd> envia</p>
+              <p className="w-dica">Dica: <kbd>/</kbd> busca conversas · arraste uma conversa para cá ou use <kbd>+</kbd> para abrir ao lado · <kbd>Layouts</kbd> no topo divide a tela · <kbd>Enter</kbd> envia</p>
             </div>
           )}
         </main>
@@ -662,7 +811,8 @@ function PainelDaConversa({ conversa, perfis, projetos, focada, varias, focar, f
   const projeto = projetos.find((item) => item.id === conversa.project_id)?.name;
   return (
     <section className={`w-painel${focada && varias ? " is-focada" : ""}`} aria-label={conversa.title} onPointerDownCapture={focar}>
-      <div className="w-painel-topo">
+      <div className="w-painel-topo" draggable onDragStart={(evento) => arrastarConversa(evento, conversa.id)}
+        title="Arraste para trocar de lugar com outro painel">
         {conversa.provider && <span className="w-painel-avatar"><AgentIcon provider={conversa.provider} size={16} /></span>}
         <div className="w-topo-texto">
           <span className="w-topo-titulo" title={conversa.title}>{conversa.title}</span>
@@ -707,7 +857,7 @@ function ItemLateral({ conversa, ativa, abrir, projeto }: { conversa: Conversati
   const aprovar = Boolean(conversa.capabilities?.approve);
   return (
     <button type="button" className={`w-atencao-item${ativa ? " w-atencao-item-ativa" : ""}${aprovar ? " w-atencao-item-alerta" : ""}`}
-      onClick={() => abrir(conversa.id)} title={conversa.title}>
+      onClick={() => abrir(conversa.id)} title={conversa.title} draggable onDragStart={(evento) => arrastarConversa(evento, conversa.id)}>
       <span className="w-atencao-avatar">
         {conversa.provider && <AgentIcon provider={conversa.provider} size={14} />}
         <span className={`m-dot ${tomDoEstado(conversa)}`} aria-hidden />

@@ -63,9 +63,25 @@ export function resumeCommand(cliCommand: string, entry: HistoryEntry): string {
 
 // Caminhos do Windows chegam com caixa, barra e host do WSL diferentes conforme quem gravou. A
 // regra mora em `src/lib/paths.ts` — aqui era a terceira cópia, e a única que ignorava `wsl$`.
-import { samePath } from "../../lib/paths";
+import { normalizePath, samePath } from "../../lib/paths";
 
 export { samePath };
+
+/**
+ * Pasta do projeto de uma conversa. Ferramentas que rodam o CLI em subpastas descartáveis
+ * (`DOMUS-ADPILOT/.worker-data/videos/<uuid>`, `.claude/worktrees/x`) viravam um "projeto" de
+ * nome aleatório cada: vale o projeto do OMNI mais fundo que contém a pasta e, fora deles, o que
+ * vem antes da primeira pasta oculta.
+ */
+export function pastaDoProjeto(cwd: string, projetos: readonly string[]): string {
+  const alvo = normalizePath(cwd);
+  const dono = projetos
+    .filter((projeto) => { const base = normalizePath(projeto); return alvo === base || alvo.startsWith(`${base}/`); })
+    .sort((a, b) => b.length - a.length)[0];
+  if (dono) return dono;
+  const oculta = /[\\/]\.[^\\/]/.exec(cwd);
+  return oculta ? cwd.slice(0, oculta.index) : cwd;
+}
 
 export interface HistoryFilter {
   query: string;

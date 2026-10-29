@@ -198,6 +198,8 @@ export interface PublishedProject {
   id: string;
   name: string;
   path: string;
+  /** Ícone que a lateral mostra (escolhido ou o favicon achado): a web pede ao engine pelo id. */
+  icone?: string;
 }
 
 /** Aparência do PC que o celular copia. Só identificadores — o celular valida contra as tabelas. */

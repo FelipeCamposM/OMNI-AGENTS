@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { AppSettings, Background, GlassLevel, MotionLevel, Theme } from "../types/settings";
 import { UpdateCard } from "./UpdateCard";
@@ -6,7 +6,8 @@ import { acenderNaTela, SettingsSearch, type Achado } from "./SettingsSearch";
 import { BACKGROUND_EFFECTS, isBackgroundEffect } from "./backgrounds/registry";
 import { PALETAS } from "../lib/palettes";
 import { CHANGELOG } from "../lib/changelog";
-import { Button, Card, Field, Input, SegmentedControl, Slider } from "./ui";
+import { Button, Card, Field, Input, SegmentedControl, Select, Slider } from "./ui";
+import { Modal } from "./ui/Modal";
 import { AgentConnections } from "../features/terminal/AgentConnections";
 import { CompactacaoCard } from "../features/compactacao/CompactacaoCard";
 import { SkillsManager } from "../features/skills/SkillsManager";
@@ -28,18 +29,18 @@ type Icone = React.ComponentType<{ className?: string; "aria-hidden"?: boolean }
 
 /** Cada seção com ícone e uma linha do que tem dentro: o menu diz onde está cada coisa sem precisar
  *  abrir uma por uma. "Geral" saiu de "Aparência", que juntava sete cartões de assuntos diferentes. */
-const SECTIONS: { id: SectionId; label: string; desc: string; icon: Icone }[] = [
-  { id: "geral", label: "Geral", desc: "Conversa ou terminal, arquivos e avisos", icon: GearIcon },
-  { id: "aparencia", label: "Aparência", desc: "Tema, cor, fundo e animações", icon: BrushIcon },
-  { id: "agentes", label: "Agentes", desc: "CLIs instaladas e contas", icon: RobotIcon },
-  { id: "modelos", label: "Modelos de agentes", desc: "QA, revisor, orquestrador… criados com IA", icon: SparkleIcon },
-  { id: "extensoes", label: "Extensões", desc: "MCPs, plugins e conectores por IA", icon: BlocksIcon },
-  { id: "skills", label: "Skills", desc: "Skills do Claude e do projeto", icon: BookIcon },
-  { id: "mobile", label: "Acesso remoto", desc: "Celular e outro computador", icon: GlobeIcon },
-  { id: "relatorios", label: "Relatórios", desc: "Uso de IA por dia, contas e commits", icon: ChartIcon },
-  { id: "armazenamento", label: "Armazenamento", desc: "Espaço das conversas por IA e conta", icon: DatabaseIcon },
-  { id: "atalhos", label: "Atalhos", desc: "Teclas do app", icon: KeyboardIcon },
-  { id: "sobre", label: "Sobre", desc: "Versão, novidades e atualização", icon: StarIcon },
+const SECTIONS: { id: SectionId; label: string; desc: string; icon: Icone; grupo: string }[] = [
+  { id: "geral", label: "Geral", desc: "Conversa ou terminal, arquivos e avisos", icon: GearIcon, grupo: "Preferências" },
+  { id: "aparencia", label: "Aparência", desc: "Tema, cor, fundo e animações", icon: BrushIcon, grupo: "Preferências" },
+  { id: "atalhos", label: "Atalhos", desc: "Teclas do app", icon: KeyboardIcon, grupo: "Preferências" },
+  { id: "agentes", label: "Agentes", desc: "CLIs instaladas e contas", icon: RobotIcon, grupo: "Inteligência artificial" },
+  { id: "modelos", label: "Modelos de agentes", desc: "QA, revisor, orquestrador… criados com IA", icon: SparkleIcon, grupo: "Inteligência artificial" },
+  { id: "extensoes", label: "Extensões", desc: "MCPs, plugins e conectores por IA", icon: BlocksIcon, grupo: "Inteligência artificial" },
+  { id: "skills", label: "Skills", desc: "Skills do Claude e do projeto", icon: BookIcon, grupo: "Inteligência artificial" },
+  { id: "mobile", label: "Acesso remoto", desc: "Celular e outro computador", icon: GlobeIcon, grupo: "Dados e acesso" },
+  { id: "relatorios", label: "Relatórios", desc: "Uso de IA por dia, contas e commits", icon: ChartIcon, grupo: "Dados e acesso" },
+  { id: "armazenamento", label: "Armazenamento", desc: "Espaço das conversas por IA e conta", icon: DatabaseIcon, grupo: "Dados e acesso" },
+  { id: "sobre", label: "Sobre", desc: "Versão, novidades e atualização", icon: StarIcon, grupo: "App" },
 ];
 
 const THEMES: { value: Theme; label: string }[] = [
@@ -130,23 +131,27 @@ export function SettingsView({ settings, onChange, onReset, initialSection, proj
 
       <div className="settings-corpo">
         <nav aria-label="Seções de configurações" className="settings-menu glass">
-          {SECTIONS.map((s) => {
+          {SECTIONS.map((s, indice) => {
             const Icon = s.icon;
+            const novoGrupo = SECTIONS[indice - 1]?.grupo !== s.grupo;
             return (
+              <Fragment key={s.id}>
+              {novoGrupo && <span className="settings-menu-grupo" aria-hidden>{s.grupo}</span>}
               <button
-                key={s.id}
+                type="button"
                 onClick={() => setSection(s.id)}
                 aria-current={section === s.id ? "page" : undefined}
                 className={`settings-menu-item${porSecao && !porSecao.has(s.id) ? " is-apagado" : ""}`}
                 style={{ animationDelay: `${SECTIONS.indexOf(s) * 28}ms` }}
               >
-                <span className="settings-menu-icone" aria-hidden><Icon className="h-4 w-4" /></span>
+                <span className="settings-menu-icone" aria-hidden><Icon className="h-[18px] w-[18px]" /></span>
                 <span className="min-w-0">
                   <span className="settings-menu-nome">{s.label}</span>
                   <span className="settings-menu-desc">{s.desc}</span>
                 </span>
                 {porSecao?.has(s.id) && <span className="settings-menu-achados" aria-label={`${porSecao.get(s.id)} resultado(s)`}>{porSecao.get(s.id)}</span>}
               </button>
+              </Fragment>
             );
           })}
         </nav>
@@ -607,6 +612,8 @@ function AtalhosSection({ settings, onChange }: SectionProps) {
 
 function SobreSection({ onReset }: { onReset: () => void }) {
   const [version, setVersion] = useState<string | null>(null);
+  const [confirmarReset, setConfirmarReset] = useState(false);
+  const [escolhida, setEscolhida] = useState<string | null>(null);
 
   useEffect(() => {
     import("@tauri-apps/api/app")
@@ -614,6 +621,9 @@ function SobreSection({ onReset }: { onReset: () => void }) {
       .then(setVersion)
       .catch(() => setVersion(null));
   }, []);
+
+  // Só as notas de uma versão por vez: a instalada, ou a escolhida no seletor.
+  const entrada = CHANGELOG.find((item) => item.version === (escolhida ?? version)) ?? CHANGELOG[0];
 
   return (
     <>
@@ -627,41 +637,67 @@ function SobreSection({ onReset }: { onReset: () => void }) {
       <UpdateCard />
 
       <Card title="Novidades">
-        <div className="space-y-5">
-          {CHANGELOG.map((entrada) => (
-            <article key={entrada.version} className="space-y-2">
-              <div className="flex items-baseline gap-2">
-                <h3 className="text-text-primary text-xs font-semibold">
-                  Versão {entrada.version}
-                </h3>
-                <span className="text-text-muted text-[10px]">{entrada.date}</span>
-                {entrada.beta && (
-                  <span className="border border-warning text-warning px-1.5 py-0.5 text-[10px] uppercase tracking-wide">
-                    Beta
-                  </span>
-                )}
-              </div>
-              {entrada.beta && (
-                <p role="note" className="text-warning text-[11px] leading-relaxed">
-                  {entrada.beta}
-                </p>
-              )}
-              <ul className="text-text-secondary text-[11px] leading-relaxed space-y-1 list-disc pl-4">
-                {entrada.changes.map((mudanca) => (
-                  <li key={mudanca}>{mudanca}</li>
-                ))}
-              </ul>
-            </article>
-          ))}
+        <div className="space-y-4">
+          <Field label="Ver notas de outra versão" htmlFor="sobre-versao">
+            <Select id="sobre-versao" size="sm" value={entrada.version} searchable searchPlaceholder="Buscar versão ou data…"
+              onChange={setEscolhida}
+              options={CHANGELOG.map((item) => ({
+                value: item.version,
+                label: `Versão ${item.version}`,
+                hint: `${item.date}${item.version === version ? " · instalada" : ""}${item.beta ? " · beta" : ""}`,
+              }))} />
+          </Field>
+          <article key={entrada.version} className="sobre-nota space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="pixel-text text-sm text-text-primary">Versão {entrada.version}</h3>
+              {entrada.version === version && <span className="remoto-chip is-ok">instalada</span>}
+              {entrada.version === CHANGELOG[0].version && entrada.version !== version && <span className="remoto-chip">mais recente</span>}
+              {entrada.beta && <span className="border border-warning px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-warning">Beta</span>}
+              <span className="ml-auto text-[11px] text-text-muted">{entrada.date} · {entrada.changes.length} novidades</span>
+            </div>
+            {entrada.beta && (
+              <p role="note" className="text-warning text-[11px] leading-relaxed">
+                {entrada.beta}
+              </p>
+            )}
+            <ul className="sobre-nota-lista">
+              {entrada.changes.map((mudanca) => (
+                <li key={mudanca}>{mudanca}</li>
+              ))}
+            </ul>
+            {escolhida && escolhida !== version && version && CHANGELOG.some((item) => item.version === version) && (
+              <button type="button" className="text-[11px] text-accent underline" onClick={() => setEscolhida(null)}>
+                Voltar para a versão instalada
+              </button>
+            )}
+          </article>
         </div>
       </Card>
 
       <Card title="Dados do app">
         <p className="text-text-muted text-[11px]">Preferências ficam salvas neste computador.</p>
-        <Button variant="danger" onClick={onReset}>
+        <Button variant="danger" onClick={() => setConfirmarReset(true)}>
           Restaurar configurações padrão
         </Button>
       </Card>
+
+      {confirmarReset && (
+        <Modal titulo="Restaurar configurações padrão?" largura="sm" onFechar={() => setConfirmarReset(false)}>
+          <div className="modal-secao">
+            <p className="text-sm text-text-primary">Todas as preferências voltam ao padrão. Isto não dá para desfazer.</p>
+            <ul className="modal-explica">
+              <li>Tema, cores, fundo, atalhos e as outras opções destas Configurações voltam ao que vem de fábrica.</li>
+              <li>Projetos, workspaces, conversas e contas dos agentes não são apagados.</li>
+            </ul>
+            <div className="modal-acoes">
+              <Button size="sm" variant="ghost" onClick={() => setConfirmarReset(false)}>Cancelar</Button>
+              <Button size="sm" variant="danger" onClick={() => { onReset(); setConfirmarReset(false); }}>
+                Restaurar padrão
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }

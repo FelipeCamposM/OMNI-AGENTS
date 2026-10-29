@@ -356,6 +356,15 @@ pub fn imagem(fontes: &[(PathBuf, String, Option<u64>)], n: usize, k: usize, cac
         let linha = std::io::BufRead::lines(arquivo).map_while(Result::ok)
             .find(|linha| linha.contains(&uuid) && serde_json::from_str::<Value>(linha).is_ok_and(|v| v["uuid"] == uuid.as_str()))?;
         let valor: Value = serde_json::from_str(&linha).ok()?;
+        // Primeiro as coladas (blocos), depois as anexadas pelo caminho — a ordem de `items`.
+        let blocos = blocos_de_imagem(&valor["message"]).count();
+        if k >= blocos {
+            use base64::Engine as _;
+            let caminho = anexos_de_imagem(&entrada.item.text).into_iter().nth(k - blocos)?;
+            let nome = caminho.to_string_lossy().to_ascii_lowercase();
+            let tipo = EXTENSOES_DE_IMAGEM.iter().find(|(ext, _)| nome.ends_with(ext))?.1;
+            return Some((tipo.to_owned(), base64::engine::general_purpose::STANDARD.encode(std::fs::read(&caminho).ok()?)));
+        }
         let bloco = blocos_de_imagem(&valor["message"]).nth(k)?;
         let tipo = bloco["source"]["media_type"].as_str().filter(|t| t.starts_with("image/"))?.to_owned();
         return Some((tipo, bloco["source"]["data"].as_str()?.to_owned()));
@@ -382,8 +391,11 @@ pub fn items(value: &Value, provider: &str) -> Vec<Item> {
             }
             if value["isMeta"] == true { return saida; }
             if role == "user" {
-                let imagens = blocos_de_imagem(message).count();
-                let Some(texto) = conteudo_texto(message).map(|t| sem_colado(&t)).or_else(|| (imagens > 0).then(String::new)) else { return saida };
+                let blocos = blocos_de_imagem(message).count();
+                let Some(texto) = conteudo_texto(message).map(|t| sem_colado(&t)).or_else(|| (blocos > 0).then(String::new)) else { return saida };
+                // A CLI antiga trocava o caminho anexado por `[Image #N]` (vira bloco); a nova deixa o
+                // caminho no texto — a imagem aparece do mesmo jeito, lida do arquivo.
+                let imagens = blocos + anexos_de_imagem(&texto).len();
                 if let Some(comando) = comando_digitado(&texto) {
                     saida.push(item(Kind::Command, "user", comando, None, value));
                 } else if texto.trim_start().starts_with("[Request interrupted") {
@@ -455,6 +467,20 @@ pub fn items(value: &Value, provider: &str) -> Vec<Item> {
 
 const EXTENSOES_DE_IMAGEM: [(&str, &str); 5] =
     [(".png", "image/png"), (".jpg", "image/jpeg"), (".jpeg", "image/jpeg"), (".gif", "image/gif"), (".webp", "image/webp")];
+
+/// Ícone de um projeto para a web/celular: `(tipo, base64)`. Só imagem de até 256 KB que mora de
+/// verdade dentro da pasta do projeto (canônico, sem `..` nem link para fora) — o caminho vem do
+/// desktop, mas a rota é HTTP e não serve arquivo qualquer.
+pub fn icone_do_projeto(pasta: &Path, arquivo: &Path) -> Option<(String, String)> {
+    use base64::Engine as _;
+    let pasta = std::fs::canonicalize(pasta).ok()?;
+    let arquivo = std::fs::canonicalize(arquivo).ok()?;
+    if !arquivo.starts_with(&pasta) || std::fs::metadata(&arquivo).ok()?.len() > 256 * 1024 { return None; }
+    let nome = arquivo.to_string_lossy().to_ascii_lowercase();
+    let tipo = EXTENSOES_DE_IMAGEM.iter().chain(&[(".svg", "image/svg+xml"), (".ico", "image/x-icon")])
+        .find(|(ext, _)| nome.ends_with(ext))?.1;
+    Some((tipo.to_owned(), base64::engine::general_purpose::STANDARD.encode(std::fs::read(&arquivo).ok()?)))
+}
 /// Maior imagem citada que a conversa mostra (o JSON leva o arquivo inteiro em base64).
 const IMAGEM_MAX_BYTES: u64 = 15 * 1024 * 1024;
 
@@ -462,6 +488,22 @@ const IMAGEM_MAX_BYTES: u64 = 15 * 1024 * 1024;
 /// `C:\…`, `C:/…` e `/…`, com espaços (`C:\Users\Fulano de Tal\…`; no Mac o print padrão é
 /// "Screenshot 2026-10-19 at 01.09.png"): o arquivo precisa existir, então texto solto não passa.
 /// O caminho vem do texto do agente, nunca de quem pede pela rede, e só imagens comuns passam.
+/// Imagens da lista de anexos que o OMNI põe no fim do prompt (`[Anexos enviados pelo OMNI]` +
+/// `- <caminho>`, ver `src/mobile/anexos.ts`) que ainda existem. Só dessa lista: caminho solto que a
+/// pessoa digitou continua texto.
+pub fn anexos_de_imagem(texto: &str) -> Vec<PathBuf> {
+    let Some(inicio) = ["[Anexos enviados pelo OMNI]", "[Anexos enviados pelo celular]"].iter().filter_map(|m| texto.rfind(m).map(|i| i + m.len())).max() else {
+        return Vec::new();
+    };
+    texto[inicio..].lines().filter_map(|linha| linha.trim().strip_prefix("- ")).map(|c| PathBuf::from(c.trim()))
+        .filter(|caminho| {
+            let nome = caminho.to_string_lossy().to_ascii_lowercase();
+            EXTENSOES_DE_IMAGEM.iter().any(|(ext, _)| nome.ends_with(ext))
+                && std::fs::metadata(caminho).is_ok_and(|m| m.is_file() && m.len() <= IMAGEM_MAX_BYTES)
+        })
+        .collect()
+}
+
 pub fn caminhos_de_imagem(texto: &str) -> Vec<PathBuf> {
     let mut achados: Vec<PathBuf> = Vec::new();
     for linha in texto.lines() {
@@ -586,6 +628,21 @@ impl FeedCache {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn icone_do_projeto_so_serve_imagem_pequena_de_dentro_da_pasta() {
+        let raiz = tempfile::tempdir().unwrap();
+        let projeto = raiz.path().join("app");
+        std::fs::create_dir_all(projeto.join("public")).unwrap();
+        std::fs::write(projeto.join("public/favicon.png"), b"png").unwrap();
+        std::fs::write(raiz.path().join("fora.png"), b"png").unwrap();
+        std::fs::write(projeto.join("segredo.txt"), b"x").unwrap();
+        std::fs::write(projeto.join("grande.png"), vec![0u8; 300 * 1024]).unwrap();
+        assert_eq!(icone_do_projeto(&projeto, &projeto.join("public/favicon.png")).unwrap().0, "image/png");
+        assert!(icone_do_projeto(&projeto, &projeto.join("../fora.png")).is_none());
+        assert!(icone_do_projeto(&projeto, &projeto.join("segredo.txt")).is_none());
+        assert!(icone_do_projeto(&projeto, &projeto.join("grande.png")).is_none());
+    }
+
     use super::*;
     use serde_json::json;
 
@@ -687,6 +744,29 @@ mod tests {
         assert_eq!(imagem(&fontes, 0, 0, &mut cache), None);
         assert_eq!(sem_marcas_de_imagem("[Image #1]bom dia [Image #12] veja"), "bom dia  veja");
         assert_eq!(sem_marcas_de_imagem("[Image #x] fica"), "[Image #x] fica");
+    }
+
+    /// A CLI nova deixa o caminho do anexo no texto (dentro de `<pasted_content>`), sem bloco: a
+    /// imagem vem do arquivo, depois das coladas.
+    #[test]
+    fn imagem_anexada_pelo_caminho_vira_imagem_da_mensagem() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("1793-ab12-image.png");
+        std::fs::write(&png, b"png").unwrap();
+        let caminho = dir.path().join("t.jsonl");
+        let texto = format!("<pasted_content id=\"1\">\nolha isso\n\n[Anexos enviados pelo OMNI]\n- {}\n- {}\n- {}\n</pasted_content id=\"1\">\n",
+            png.display(), dir.path().join("notas.txt").display(), dir.path().join("sumiu.png").display());
+        let linha = json!({"type": "user", "uuid": "u1", "message": {"role": "user", "content": [
+            {"type": "text", "text": texto},
+            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "/9j"}}]}});
+        std::fs::write(&caminho, format!("{linha}\n")).unwrap();
+        let mut cache = FeedCache::default();
+        assert_eq!(cache.read(&caminho, "claude").unwrap()[0].item.imagens, 2);
+        let fontes = [(caminho, "claude".to_owned(), None)];
+        assert_eq!(imagem(&fontes, 0, 0, &mut cache), Some(("image/jpeg".into(), "/9j".into())));
+        assert_eq!(imagem(&fontes, 0, 1, &mut cache), Some(("image/png".into(), "cG5n".into())));
+        assert_eq!(imagem(&fontes, 0, 2, &mut cache), None);
+        assert!(anexos_de_imagem(&format!("veja {}", png.display())).is_empty());
     }
 
     #[test]

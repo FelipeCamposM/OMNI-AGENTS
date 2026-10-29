@@ -1140,7 +1140,7 @@ const API_ERROR_LINES: [&str; 3] = [
 ];
 /// Marcadores que a TUI põe antes da mensagem (`⎿`, `●`, `■`…); o resto da linha tem de começar
 /// com a frase.
-const MARCADORES: &str = "⎿●■⏺•✻└│∙";
+const MARCADORES: &str = "⎿●■⏺•✻└│∙⚠";
 
 #[cfg(test)]
 fn detect_notice(screen_text: &str) -> Option<String> {
@@ -1169,6 +1169,19 @@ fn notice_counts(screen_text: &str) -> (usize, usize) {
         }
     }
     counts
+}
+
+/// A CLI no limite **agora**: o rodapé embaixo do campo diz isso enquanto a conta está bloqueada
+/// (Claude 2.1.3xx: "⚠ Usage limit reached · limit resets 1:40am" + "Continuing automatically at…").
+/// É o estado atual, não histórico: não depende da contagem de avisos do turno, que errava quando o
+/// aviso já estava na tela antes do turno começar (a troca automática nunca disparava).
+pub(crate) fn limite_no_rodape(screen_text: &str) -> bool {
+    let linhas: Vec<&str> = screen_text.lines().collect();
+    let Some(campo) = linhas.iter().rposition(|l| l.trim_start().starts_with('❯')) else { return false };
+    linhas[campo + 1..].iter().any(|linha| {
+        let linha = linha.trim_start_matches(|c: char| c.is_whitespace() || MARCADORES.contains(c)).replace('’', "'").to_ascii_lowercase();
+        USAGE_LIMIT_LINES.iter().any(|p| linha.starts_with(p)) && linha.contains("limit")
+    })
 }
 
 /// O aviso **deste turno**: só conta o que apareceu na tela depois que ele começou. A mensagem de
@@ -1233,7 +1246,9 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
     // No meio do turno ("esc to interrupt" na tela) o agente está trabalhando: o que aparecer é
     // saída dele, não a CLI avisando que parou.
     let em_turno = tracked_provider.as_deref().is_some_and(|provider| in_turn(&screen_text, provider));
-    let notice = if em_turno { None } else { notice_since(counts, *base) };
+    let notice = if em_turno { None }
+        else if tracked_provider.is_some() && limite_no_rodape(&screen_text) { Some("usage_limit".into()) }
+        else { notice_since(counts, *base) };
     if let Ok(mut output) = session.output.lock() {
         let sequence = output.next_seq;
         output.next_seq += 1;
@@ -1916,6 +1931,17 @@ mod tests {
         garantir_verdadeiro(&estado, "resumeReturnDismissed");
         let valor: serde_json::Value = serde_json::from_str(&fs::read_to_string(&estado).unwrap()).unwrap();
         assert!(valor["resumeReturnDismissed"] == true && valor["oauthAccount"]["x"] == 1);
+    }
+
+    #[test]
+    fn rodape_do_limite_vale_mesmo_com_o_aviso_ja_na_tela() {
+        let borda = "─".repeat(40);
+        let tela = format!("● Usage limit reached · continuing automatically at 1:40am · esc to cancel\n\n✻ Brewed for 9m 31s · done 1:22\n\n{borda}\n❯ \n{borda}\n  ⚠ Usage limit reached · limit resets 1:40am · clau.de/wrap-up\n  Continuing automatically at 1:40am · Esc to cancel · /usage-credits to continue now\n  ⏵⏵ auto mode on (shift+tab to cycle)");
+        assert!(limite_no_rodape(&tela));
+        assert_eq!(detect_notice(&tela).as_deref(), Some("usage_limit"));
+        // Só o histórico acima do campo (conta nova depois da troca): não está no limite agora.
+        let depois = format!("● Usage limit reached · continuing automatically at 1:40am · esc to cancel\n\n{borda}\n❯ \n{borda}\n  ⏵⏵ auto mode on (shift+tab to cycle)");
+        assert!(!limite_no_rodape(&depois));
     }
 
     #[test]

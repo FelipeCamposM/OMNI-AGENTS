@@ -151,6 +151,16 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   cor do estado (`TopBar` ganhou `marca`). Conferido em print com o engine instalado.
 - Pendente: favicon do projeto também no celular (precisa de rota no engine servindo o arquivo).
 
+### Imagem anexada volta a aparecer como imagem (2026-10-29, sem release)
+
+- Causa: a CLI nova do Claude embrulha o colado em `<pasted_content>` e não troca mais o caminho da imagem
+  anexada por `[Image #N]` (até 21/10 trocava). Sem bloco de imagem no transcript, a bolha só mostrava o cartão "image.png".
+- `crates/omni-core/src/feed.rs`: `anexos_de_imagem` lê a lista `[Anexos enviados pelo OMNI]` da mensagem do
+  usuário; imagem que existe conta em `Item::imagens` (depois das coladas) e a rota `/conversas/{id}/imagens/{n}/{k}`
+  serve o arquivo. Caminho solto digitado continua texto.
+- `src/mobile/Chat.tsx` (`MessageBubble`): imagem já servida como imagem não vira cartão também.
+- Engine mudou: o app instalado só pega na próxima release (`npm run dev` já mostra).
+
 ### Ícone real de MCP, plugin e conector, também na conversa (2026-10-27, v0.7.8)
 
 - `src-tauri/src/icones_remotos.rs` (`icone_da_extensao(destino, nome)`): MCP remoto → `initialize`/`serverInfo.icons`;
@@ -208,3 +218,97 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 - Instalador NSIS com visual novo (`src-tauri/installer/sidebar.bmp` 164x314 e `header.bmp` 150x57, gerados com PIL a
   partir de `icons/icon.png`), ícone do app e idioma `PortugueseBR` (`bundle.windows.nsis`). Compilado localmente; telas
   do instalador não conferidas rodando.
+
+### Ícone do projeto igual ao do workspace (2026-10-28, sem release)
+
+- Linha do projeto na lateral ganhou o botão de imagem "Trocar ícone" (`Sidebar.tsx`, `pedidosDeIcone`), como a do workspace;
+  o seletor do projeto (`AvatarDoProjeto`, prop `vizinhos`) oferece também os favicons dos outros projetos do workspace.
+  Teste em `iconesDoProjeto.test.tsx`.
+
+### Menu das Configurações em grupos (2026-10-28, sem release)
+
+- `SettingsView.tsx`: seções com `grupo` (Preferências, Inteligência artificial, Dados e acesso, App), rótulo com fio entre
+  grupos; Atalhos foi para Preferências. CSS no fim do `index.css`: ícone sempre aceso em avatar com degradê (cheio no item
+  aberto), título e descrição maiores, item aberto com degradê/anel/brilho da lateral. Conferido em prévia, não no app.
+
+### Tela de Acesso remoto refeita (2026-10-28, sem release)
+
+- `MobileSettings.tsx` + bloco `remoto-*` no fim do `index.css`: cabeçalho com brilho e "N de 4 prontos"; passos em linha
+  do tempo (número no trilho, fio verde nos feitos, passo atual com anel e chip "agora"); modos Direto/HTTPS como cartões
+  com ícone (radio `sr-only`, foco no cartão); celular e computador em cartões com ícone. Textos e fluxo iguais; testes
+  passam. Conferido em prévia com dados falsos, não no app.
+- 2ª passada: QR agora é SVG próprio (`QRCode.create`): pontos, olhos de canto levemente arredondado, miolo vazio para a
+  logo, moldura em degradê com brilho pulsando, cantos de mira e linha de leitura (some com reduced-motion). **Raio do
+  olho ≤ 0,6 módulo**: com 0,8+ o OpenCV não acha mais o QR (testado). Os dois QRs (acesso e Authy) decodificam na captura.
+  Botões da tela viraram `Acao` (ícone + texto; o principal cheio com degradê e brilho); links em caixa tracejada.
+- Secundários do `Acao` com o contorno preto + sombra deslocada do `.btn`. Depois, o mesmo visual em **todo `.btn` dentro de
+  `.settings-conteudo`** (CSS sem camada no fim do `index.css`): neutros com contorno preto, brilho e leve subida no hover;
+  `btn-primary` e segmentado selecionado (`aria-pressed`) em degradê da cor do tema com brilho. Fora das Configurações nada muda.
+
+### Sobre: confirmação do reset e uma nota de versão por vez (2026-10-28, sem release)
+
+- "Restaurar configurações padrão" agora abre `Modal` de confirmação (antes restaurava direto). Explica que só preferências
+  voltam; projetos, workspaces, conversas e contas ficam.
+- Novidades mostra só a versão instalada (`getVersion`; sem ela, a mais recente). `Select searchable` troca a versão (busca
+  por número/data); selos "instalada"/"mais recente", lista com marcadores na cor do tema. Teste: `src/test/sobre.test.tsx`.
+
+### Lateral: Recentes (mini histórico) e projeto na conversa (2026-10-28, sem release)
+
+- `RecentesConversas.tsx`: abaixo de CHATS, as 6 conversas mais novas do Histórico (Claude + Codex, todos os projetos), sem
+  as já abertas (`external_session_id`). Ícone do projeto no canto do avatar do agente, projeto e conta na 2ª linha; clique
+  retoma via `resumeHistory` do App (prop `onResumeHistory`); "Ver histórico completo" abre o Histórico.
+- `ProjetosContext` (`features/projects/projetosContext.ts`, provido no App): acha o projeto (e o ícone escolhido) por pasta.
+  Topo da aba de conversa mostra ícone + nome do projeto (some o nome em aba estreita).
+- CSS: linhas da lateral com leve deslize no hover, avatar acende, item ativo com anel e brilho. Teste: `RecentesConversas.test.tsx`.
+
+### Lateral e Histórico: ícone do projeto em todo lugar, sem "projetos" aleatórios (2026-10-29, sem release)
+
+- CHATS também tem o ícone do projeto no canto do avatar (`IconeDoProjetoDaSessao`, por `session.cwd`). Cabeçalhos das seções
+  (`.lateral-secao`) com fio na cor do tema; selo do projeto acende no hover/ativo.
+- Histórico: `pastaDoProjeto` (historyService) junta conversas de subpastas descartáveis no projeto pai — o DOMUS-ADPILOT roda
+  o Claude em `.worker-data/videos/<uuid>`, e cada uuid virava um "projeto". Regra: projeto do OMNI mais fundo que contém a
+  pasta; fora deles, corta na primeira pasta oculta. Filtro com ícone + "N conversas", projetos do OMNI primeiro, busca a partir
+  de 7 opções; linha com selo do projeto e "subpasta"; detalhe com ícone. Travado (Novo agente) segue pasta exata (o `--resume`).
+  Teste: `historyService.test.ts`.
+
+### Lateral premium: linhas de projetos, chats, terminais e recentes (2026-10-29, sem release)
+
+- Bloco "Lateral premium" no fim do `index.css`: superfície com fio de luz no topo, reflexo atravessando a linha no hover, avatar em vidro, anel girando em volta do agente trabalhando (`@property --lateral-giro`), luz correndo na barra de quem trabalha, brilho pulsando em quem pede aprovação, entrada suave e ações do hover em vidro (`.lateral-acoes`).
+- `Sidebar.tsx`: linha do chat ganhou `data-status` (status da conversa; terminal rodando = trabalhando). Respeita reduzir movimento e animações desligadas.
+- Compacta: linhas da lateral ~50px → ~38px (avatar 26px, respiro e entrelinha menores), só dentro do `aside` (Histórico mantém o tamanho).
+
+### Troca de conta no limite: tela nova do Claude 2.1.312 (2026-10-29, sem release)
+
+- Causa: o Claude passou a mostrar o limite no rodapé (`⚠ Usage limit reached · limit resets…` + `Continuing automatically at… · Esc to cancel`). O "Esc to cancel" fazia `cancelavel()` achar menu aberto → campo "não reconhecido" e troca manual bloqueada; o aviso não virava `usage_limit` (⚠ fora dos marcadores + contagem do turno), então a troca automática nunca disparava.
+- Correção: `limite_no_rodape` (main.rs) lê o estado atual embaixo do campo e marca `usage_limit` independente da contagem; `cancelavel` ignora a linha "continuing automatically"; ⚠ entrou em `MARCADORES`. Na interface, `podeReabrir` libera trocar conta/modelo com o agente parado ou no limite (só bloqueia trabalhando).
+- Rede: tela real `tests-fixtures/telas/claude.nada.limite-continua-sozinho-2.1.312.txt` (o `telas_do_acervo` cobra campo livre + limite em toda tela `.limite-`) e teste `rodape_do_limite_vale_mesmo_com_o_aviso_ja_na_tela`.
+- Pendente: chega ao app instalado só na próxima release.
+
+### Web/celular: projetos certos, ícones do PC, layouts, arrastar e Ajustes com avisos (2026-10-29, sem release)
+
+- **Engine**: `raiz_do_projeto`/`dono_da_pasta` (mobile.rs) — mesma regra de `pastaDoProjeto`: subpasta descartável
+  (`.worker-data/videos/<uuid>`) conta como do projeto pai, na lista de projetos e no `project_id` das conversas do
+  histórico. Teste `subpasta_descartavel_conta_como_do_projeto_pai`.
+- **Ícone do projeto na web**: o desktop publica o ícone efetivo (`useWorkspace` → `PublishedProject.icone`, escolhido
+  ou o favicon achado). O caminho **não** sai no HTTP: o catálogo só diz `icone: true`, e `GET /projetos/{id}/icone`
+  devolve `{tipo, dados}` via `omni_core::feed::icone_do_projeto` (canônico dentro da pasta do projeto, imagem, ≤256 KB;
+  teste no feed.rs). Web/celular: `src/mobile/IconeDoProjeto.tsx` (lista de projetos, cartões, filtro do histórico).
+- Web: filtro do histórico virou `Select` com ícone e "N conversas" (só projetos com conversa). `Select` ganhou `aria-label`.
+- Web: **Layouts** no topo (o mesmo `LayoutPresetPicker` do PC, agora com `onEscolher`/`atual`/`onAutomatico`); o centro
+  monta as células pelo molde (`celulas`), até 6 conversas. **Arrastar**: cartão da lateral → célula; topo do painel →
+  outra célula troca de lugar (`colocarNaCelula`). Layout guardado no navegador (`omni-web-layout`). Botão de avisos no topo.
+- Celular: **barra de baixo** (Início · Precisa de você com contador · Ajustes) e tela **Ajustes** (`#/ajustes`,
+  `AjustesDoAparelho.tsx`): notificações (pedir permissão, aprovação, terminou, vibrar, com a página na tela, teste),
+  conexão (PC, versão, versão de computador) e "Desconectar este aparelho" com confirmação. Uso/Prévia foram para o fim do início.
+- Avisos: `src/mobile/notificacoes.ts` + `src/mobile/sw.js` (emitido no build, público em `/sw.js`; só mostra aviso e
+  foca a página no toque). Só em HTTPS (modo "Seguro com HTTPS"); com a página fechada de vez não chega — Web Push
+  (VAPID) seria o próximo passo. Histórico do PC: botões no padrão das Configurações (`:is(.settings-conteudo, .historico)`).
+- Testes: `celularAjustes.test.tsx`, `WebApp.test.tsx` (Select), `useWorkspace.test.tsx` (publicação agora assíncrona).
+- Depois: **Configurações na web** (engrenagem no topo, `#/ajustes`): a mesma `AjustesDoAparelho` (prop `pagina`, `children`)
+  + grupo "Tela" com o layout das conversas. Celular: engrenagem também no topo do início. Lateral do PC: **busca nos
+  Recentes** (input ali mesmo, procura no histórico inteiro, até 10 resultados).
+
+### Seletor de ícone abria sozinho (2026-10-28, sem release)
+
+- Trocar de aba na lateral e voltar remontava `AvatarDoProjeto`/`AvatarDoWorkspace` com o `pedido` antigo (contador guardado
+  no Sidebar) e o efeito reabria o seletor. `useAbrirAoPedir` ignora o valor da montagem; teste em `iconesDoProjeto.test.tsx`.

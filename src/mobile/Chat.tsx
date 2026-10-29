@@ -162,7 +162,8 @@ export const MessageBubble = memo(function MessageBubble({ lado, provider, texto
   const doUsuario = lado === "user";
   const separado = doUsuario ? separarAnexos(texto) : { texto, anexos: [] as string[] };
   const corpo = doUsuario ? semMarcasDeImagem(separado.texto) : separado.texto;
-  const anexos = separado.anexos;
+  // Imagem anexada que o engine já serve como imagem (`imagens`) não vira cartão também.
+  const anexos = imagens?.total ? separado.anexos.filter((caminho) => !/\.(png|jpe?g|gif|webp)$/i.test(caminho)) : separado.anexos;
   const cartoes = anexosLocais ?? anexos.map((caminho) => ({ nome: nomeDoCaminho(caminho) }));
   const autor = doUsuario ? "Você" : NOME_DO_AGENTE[provider ?? ""] ?? provider ?? "Agente";
   const hora = horarioCurto(horario);

@@ -14,6 +14,21 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.9",
+    date: "2026-10-29",
+    changes: [
+      "Corrigido: a troca de conta no limite de uso voltou a funcionar, automática e manual. A versão nova do Claude mudou o aviso de limite e a conversa ficava travada como \"não reconhecida\".",
+      "Trocar de conta ou de modelo agora funciona sempre que o agente estiver parado, mesmo quando a tela dele não é reconhecida.",
+      "Lateral: as conversas mostram o ícone do projeto, as linhas ficaram mais baixas e com visual novo, e o agente trabalhando ganha um anel animado.",
+      "Novo: busca direto em Recentes, na lateral, sem abrir o histórico completo.",
+      "Histórico: o filtro de projetos mostra os ícones e não lista mais pastas temporárias com nomes aleatórios.",
+      "Web e celular: os projetos aparecem com o mesmo ícone do app, e as pastas temporárias somem da lista.",
+      "Celular: visual novo, barra de navegação embaixo e tela de Ajustes, com avisos de aprovação e de conversa terminada.",
+      "Web: layouts iguais aos do app, conversas arrastáveis para os painéis e página de Configurações.",
+      "Imagem anexada numa mensagem aparece como imagem, não mais como arquivo.",
+    ],
+  },
+  {
     version: "0.7.8",
     date: "2026-10-28",
     changes: [

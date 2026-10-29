@@ -159,24 +159,42 @@ function GradeDoProjeto({ grupo, atual, mostrarNome, ordem, onEscolher }: {
   );
 }
 
+/** Abre o seletor quando `pedido` muda depois da montagem. O valor que já vem na montagem é ignorado: o
+ *  contador fica guardado na lateral, e trocar de aba e voltar remontava o avatar e reabria o seletor sozinho. */
+function useAbrirAoPedir(pedido: number, abrir: () => void) {
+  const visto = useRef(pedido);
+  useEffect(() => {
+    if (pedido === visto.current) return;
+    visto.current = pedido;
+    abrir();
+  }, [pedido]); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
 /** Avatar do projeto na lateral: o favicon (escolhido ou o primeiro achado) ou a pasta. Clicar abre a escolha. */
-export function AvatarDoProjeto({ project, onEscolher }: {
+export function AvatarDoProjeto({ project, onEscolher, vizinhos = [], pedido = 0 }: {
   project: Project;
   onEscolher: (projectId: string, icone: string | null | undefined) => void;
+  /** Os outros projetos do workspace: os favicons deles também servem, como no workspace. */
+  vizinhos?: Project[];
+  /** Muda para abrir o seletor de fora (o botão "Trocar ícone" da linha). */
+  pedido?: number;
 }) {
   const achados = useIconesDoProjeto(project.path);
   const efetivo = iconeEfetivo(project.icone, achados);
   const [ancora, setAncora] = useState<HTMLElement | null>(null);
+  const botao = useRef<HTMLButtonElement>(null);
+  useAbrirAoPedir(pedido, () => setAncora(botao.current));
   const pasta = <FolderIcon className="h-3.5 w-3.5 text-accent" aria-hidden />;
   return (
     <>
-      <BotaoDoAvatar rotulo={`Trocar ícone do projeto ${project.name}`} aberto={ancora !== null}
+      <BotaoDoAvatar botaoRef={botao} rotulo={`Trocar ícone do projeto ${project.name}`} aberto={ancora !== null}
         onClick={(el) => setAncora((atual) => (atual ? null : el))}>
         <ImagemDeIcone caminho={efetivo} reserva={pasta} />
       </BotaoDoAvatar>
       {ancora && (
         <EscolherIcone ancora={ancora} titulo={`Ícone de ${project.name}`} subtitulo="O símbolo do projeto na lateral"
-          atual={project.icone} grupos={[{ id: project.id, nome: project.name, raiz: project.path }]}
+          atual={project.icone} grupos={[project, ...vizinhos.filter((outro) => outro.id !== project.id)]
+            .map((item) => ({ id: item.id, nome: item.name, raiz: item.path }))}
           opcoes={[
             { valor: undefined, rotulo: "Automático", dica: achados?.[0] ? "O primeiro favicon da pasta" : "Usa um favicon quando aparecer um",
               icone: <ImagemDeIcone caminho={achados?.[0] ?? null} reserva={<ImageIcon aria-hidden className="h-4 w-4" />} /> },
@@ -209,9 +227,7 @@ export function AvatarDoWorkspace({ workspace, onEscolher, pedido = 0 }: {
 }) {
   const [ancora, setAncora] = useState<HTMLElement | null>(null);
   const botao = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    if (pedido > 0) setAncora(botao.current);
-  }, [pedido]);
+  useAbrirAoPedir(pedido, () => setAncora(botao.current));
   const efetivo = useIconeDoWorkspace(workspace);
   const caixa = <BoxIcon className="h-3.5 w-3.5 text-accent" aria-hidden />;
   return (

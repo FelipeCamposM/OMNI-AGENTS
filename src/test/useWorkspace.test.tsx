@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useWorkspace } from "../features/workspace/useWorkspace";
 
@@ -16,10 +16,10 @@ beforeEach(() => {
 describe("publicação do workspace para o celular", () => {
   it("publica na montagem e ao abrir projeto, mas não a cada mexida de layout", async () => {
     const { result } = renderHook(() => useWorkspace());
-    expect(publishWorkspace).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(publishWorkspace).toHaveBeenCalledTimes(1));
 
     await act(async () => { result.current.dispatch({ type: "ADD_PROJECT", path: "C:\\dev\\projeto" }); });
-    expect(publishWorkspace).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(publishWorkspace).toHaveBeenCalledTimes(2));
     const [projetos] = publishWorkspace.mock.calls[1] as [{ id: string; name: string; path: string }[]];
     expect(projetos.some((projeto) => projeto.path === "C:\\dev\\projeto")).toBe(true);
 
@@ -27,6 +27,7 @@ describe("publicação do workspace para o celular", () => {
     // viraria um IPC.
     const paneId = result.current.activeProject?.activePaneId ?? "";
     await act(async () => { result.current.dispatch({ type: "SPLIT_PANE", paneId, direction: "horizontal" }); });
+    await act(async () => { await new Promise((fim) => setTimeout(fim, 20)); });
     expect(publishWorkspace).toHaveBeenCalledTimes(2);
   });
 

@@ -16,6 +16,7 @@ import { RodapeDoProjeto, WorkspaceView } from "./features/workspace/WorkspaceVi
 import { useKanban } from "./features/kanban/useKanban";
 import { useKanbanDispatcher } from "./features/kanban/useKanbanDispatcher";
 import { SessionProvidersContext } from "./features/terminal/sessionProviders";
+import { ProjetosContext } from "./features/projects/projetosContext";
 import { useTerminalSessions } from "./features/terminal/useTerminalSessions";
 import { latestPerConversation, useAttention, type AttentionItem } from "./features/terminal/useAttention";
 import { useAttentionNotifier } from "./features/terminal/useAttentionNotifier";
@@ -78,6 +79,7 @@ export function App() {
     () => Object.fromEntries(sessions.map((session) => [session.id, session])),
     [sessions]
   );
+  const todosOsProjetos = useMemo(() => workspaces.flatMap((item) => item.projects), [workspaces]);
 
   function closeSettings() {
     setView(viewBeforeSettings);
@@ -227,6 +229,7 @@ export function App() {
 
   return (
     <SessionProvidersContext.Provider value={sessionsById}>
+    <ProjetosContext.Provider value={todosOsProjetos}>
     <div className="flex h-screen flex-col overflow-hidden">
       <AppBackground settings={settings} />
       <TitleBar
@@ -246,7 +249,7 @@ export function App() {
             Panorama
           </button>
           <UsoDeTodasAsContas engineOnline={engineOnline} contaAtiva={sessaoAtiva ? sessionsById[sessaoAtiva]?.profile_id ?? null : null} />
-          {view === "workspace" && activeProject && <LayoutPresetPicker dispatch={dispatch} />}
+          {view === "workspace" && activeProject && <LayoutPresetPicker onEscolher={(preset) => dispatch({ type: "APPLY_LAYOUT_PRESET", preset })} />}
         </>}
         onHome={() => setView("workspace")}
         onOpenSettings={(section) => {
@@ -313,6 +316,7 @@ export function App() {
           setView("workspace");
         }}
         onOpenHistory={openHistory}
+        onResumeHistory={resumeHistory}
         onHome={() => setView("workspace")}
         onAddProject={(path) => {
           rememberProject(path);
@@ -443,6 +447,7 @@ export function App() {
       </div>
       </div>
     </div>
+    </ProjetosContext.Provider>
     </SessionProvidersContext.Provider>
   );
 }

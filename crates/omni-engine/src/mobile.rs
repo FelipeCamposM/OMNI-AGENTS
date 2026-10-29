@@ -560,6 +560,7 @@ pub fn start(state: Arc<EngineState>) {
 fn rotas() -> Router<Arc<EngineState>> {
     Router::new().route("/conversas",get(conversations))
         .route("/projetos",get(projects))
+        .route("/projetos/{id}/icone",get(icone_do_projeto))
         .route("/painel",get(painel))
         .route("/conversas/{id}/timeline",get(timeline))
         .route("/conversas/{id}/terminal",get(terminal))
@@ -800,6 +801,27 @@ fn same_path(left: &str, right: &str) -> bool {
     normalized_path(left) == normalized_path(right)
 }
 
+/// Pasta do projeto de uma conversa. Ferramentas que rodam o CLI em subpastas descartáveis
+/// (`DOMUS/.worker-data/videos/<uuid>`) viravam um projeto de nome aleatório cada: vale o projeto
+/// conhecido mais fundo que contém a pasta e, fora deles, o que vem antes da primeira pasta oculta.
+/// Mesma regra de `pastaDoProjeto` (historyService.ts).
+fn raiz_do_projeto(cwd: &str, projects: &[PublishedProject]) -> String {
+    if let Some(dono) = dono_da_pasta(projects, cwd) { return dono.path.clone() }
+    match cwd.match_indices(['/', '\\']).find(|(i, _)| cwd[i + 1..].starts_with('.')) {
+        Some((i, _)) if i > 0 => cwd[..i].to_owned(),
+        _ => cwd.to_owned(),
+    }
+}
+
+/// Projeto conhecido mais fundo que contém `cwd` (ou é ele).
+fn dono_da_pasta<'a>(projects: &'a [PublishedProject], cwd: &str) -> Option<&'a PublishedProject> {
+    let alvo = normalized_path(cwd);
+    projects.iter().filter(|p| !p.path.is_empty()).filter(|p| {
+        let base = normalized_path(&p.path);
+        alvo == base || alvo.starts_with(&format!("{base}/"))
+    }).max_by_key(|p| p.path.len())
+}
+
 fn history_key(provider: &str, session_id: &str) -> String {
     format!("{provider}\0{session_id}")
 }
@@ -875,8 +897,8 @@ fn summaries(state: &EngineState) -> Vec<Value> {
             continue;
         }
         let project_id = entry.cwd.as_deref()
-            .and_then(|cwd|projects.iter().find(|project|same_path(&project.path,cwd)).map(|project|project.id.clone()))
-            .unwrap_or_else(||history_project_id(entry.cwd.as_deref().unwrap_or("")));
+            .and_then(|cwd|dono_da_pasta(&projects,cwd).map(|project|project.id.clone()))
+            .unwrap_or_else(||history_project_id(&raiz_do_projeto(entry.cwd.as_deref().unwrap_or(""),&projects)));
         let title = entry.title.clone().or(entry.first_prompt.clone()).unwrap_or_else(||"Conversa anterior".into());
         result.push((entry.updated_at_ms,json!({"id":history_id(&entry),"title":title,"project_id":project_id,"provider":entry.provider,
             "profile_id":entry.profile_id,"state":Value::Null,"mode":Value::Null,"capabilities":Value::Null,"historical":true,
@@ -1009,8 +1031,8 @@ fn para_exportar(state: &EngineState, id: &str) -> Result<(String, String, Strin
         .map_err(|_|error(StatusCode::NOT_FOUND,"Histórico não encontrado"))?
         .iter().map(|e|(entry.provider.clone(),e.item.clone())).collect();
     let cwd = entry.cwd.clone().unwrap_or_default();
-    let mesmo = |a: &str, b: &str| a.replace('\\',"/").trim_end_matches('/').eq_ignore_ascii_case(b.replace('\\',"/").trim_end_matches('/'));
-    let projeto = known_projects(state).into_iter().find(|p| !cwd.is_empty() && mesmo(&p.path,&cwd)).map(|p| p.id);
+    let projetos = known_projects(state);
+    let projeto = if cwd.is_empty() { None } else { dono_da_pasta(&projetos,&cwd).map(|p| p.id.clone()) };
     let titulo = entry.title.clone().or(entry.first_prompt.clone()).unwrap_or_else(|| "Conversa".into());
     Ok((titulo, cwd, entry.provider.clone(), projeto, itens))
 }
@@ -1058,17 +1080,19 @@ fn known_projects(state: &EngineState) -> Vec<PublishedProject> {
     let dir = state.state_file.parent().unwrap();
     let mut projects = state.mobile.workspace.lock().expect("workspace poisoned").projects.clone();
     for conversation in omni_core::conversations::read_index(dir) {
-        if projects.iter().any(|p| p.id == conversation.project_id || same_path(&p.path,&conversation.cwd)) { continue }
+        if projects.iter().any(|p| p.id == conversation.project_id) || dono_da_pasta(&projects,&conversation.cwd).is_some() { continue }
         let name = Path::new(&conversation.cwd).file_name().map(|n|n.to_string_lossy().into_owned())
             .unwrap_or_else(|| conversation.cwd.clone());
-        projects.push(PublishedProject { id: conversation.project_id.clone(), name, path: conversation.cwd.clone() });
+        projects.push(PublishedProject { id: conversation.project_id.clone(), name, path: conversation.cwd.clone(), icone: None });
     }
     for entry in historical_entries(state) {
         let cwd = entry.cwd.unwrap_or_default();
+        if !cwd.is_empty() && dono_da_pasta(&projects,&cwd).is_some() { continue }
+        let cwd = raiz_do_projeto(&cwd,&projects);
         if projects.iter().any(|project|same_path(&project.path,&cwd)) { continue }
         let name = Path::new(&cwd).file_name().filter(|name|!name.is_empty()).map(|name|name.to_string_lossy().into_owned())
             .unwrap_or_else(||"Histórico".into());
-        projects.push(PublishedProject { id: history_project_id(&cwd), name, path: cwd });
+        projects.push(PublishedProject { id: history_project_id(&cwd), name, path: cwd, icone: None });
     }
     projects
 }
@@ -1082,7 +1106,21 @@ fn catalogo(state: &EngineState) -> Value {
     // `config_dir` fica de fora de propósito: é caminho de credencial e o celular não precisa.
     let profiles: Vec<_> = omni_core::profiles(dir).into_iter()
         .map(|p| json!({"id":p.id,"provider":p.provider,"name":p.name})).collect();
-    json!({"published_at_ms":published_at_ms,"projects":known_projects(state),"agents":agents,"profiles":profiles,"theme":theme})
+    // O caminho do ícone fica no engine: a web só fica sabendo que existe e pede pela rota.
+    let projects: Vec<_> = known_projects(state).into_iter()
+        .map(|p| json!({"id":p.id,"name":p.name,"path":p.path,"icone":p.icone.is_some()})).collect();
+    json!({"published_at_ms":published_at_ms,"projects":projects,"agents":agents,"profiles":profiles,"theme":theme})
+}
+
+/// Ícone do projeto como o desktop mostra (escolhido ou o favicon achado), em base64.
+async fn icone_do_projeto(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let projeto = state.mobile.workspace.lock().expect("workspace poisoned").projects.iter().find(|p| p.id == id).cloned();
+        let (tipo, dados) = projeto.as_ref().and_then(|p| Some((p, p.icone.as_deref()?)))
+            .and_then(|(p, icone)| omni_core::feed::icone_do_projeto(Path::new(&p.path), Path::new(icone)))
+            .ok_or_else(|| error(StatusCode::NOT_FOUND,"Projeto sem ícone"))?;
+        Ok(Json(json!({"tipo":tipo,"dados":dados})))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler o ícone"))?
 }
 
 async fn projects(State(state): State<Arc<EngineState>>) -> Json<Value> {
@@ -2256,8 +2294,9 @@ fn plano_de_retomada(state: &EngineState, id: &str, ajustes: Ajustes) -> Result<
         .ok_or_else(||error(StatusCode::NOT_FOUND,"Conversa não encontrada"))?;
     let cwd = entrada.cwd.clone().filter(|cwd| Path::new(cwd).is_dir())
         .ok_or_else(||error(StatusCode::CONFLICT,"A pasta desta conversa não existe mais neste PC"))?;
-    let project_id = known_projects(state).into_iter().find(|p| same_path(&p.path,&cwd)).map(|p| p.id)
-        .unwrap_or_else(|| history_project_id(&cwd));
+    let projetos = known_projects(state);
+    let project_id = dono_da_pasta(&projetos,&cwd).map(|p| p.id.clone())
+        .unwrap_or_else(|| history_project_id(&raiz_do_projeto(&cwd,&projetos)));
     Ok(Retomada {
         // Id estável: um segundo toque (mesma chave) acha a mesma conversa em vez de criar outra.
         conversation_id: stable_id("conv",&[id]), project_id, cwd,
@@ -2574,8 +2613,9 @@ fn execute_checked(state:&Arc<EngineState>, action:&Action, is_running: impl Fn(
 /// `X-Omni-Token` — ao adicionar à tela inicial, e antes mesmo de o JavaScript rodar. Antes eles
 /// caíam no 401 e o celular ficava sem ícone.
 // `/parear` é pública porque quem chama ainda não tem token; quem a protege é a trava de tentativas.
-const ARQUIVOS_PUBLICOS: [&str; 6] =
-    ["/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/favicon.png", "/parear"];
+// `/sw.js` (só avisos, sem dados) também: o navegador registra o service worker sem o token.
+const ARQUIVOS_PUBLICOS: [&str; 7] =
+    ["/manifest.webmanifest", "/apple-touch-icon.png", "/icon-192.png", "/icon-512.png", "/favicon.png", "/sw.js", "/parear"];
 
 fn caminho_publico(path: &str) -> bool {
     // A casca das duas páginas é pública (só HTML estático); quem protege os dados é a API.
@@ -2663,8 +2703,8 @@ mod tests {
             {"id":"c3","project_id":"loja","cwd":"C:/dev/loja","title":"Migrar para Next 16","created_at_ms":1,"segments":[]},
         ]})).unwrap();
         publish(&state,
-            vec![PublishedProject{id:"p".into(),name:"omni-agents".into(),path:"C:/dev/omni-agents".into()},
-                 PublishedProject{id:"loja".into(),name:"loja-virtual".into(),path:"C:/dev/loja".into()}],
+            vec![PublishedProject{id:"p".into(),name:"omni-agents".into(),path:"C:/dev/omni-agents".into(),icone:None},
+                 PublishedProject{id:"loja".into(),name:"loja-virtual".into(),path:"C:/dev/loja".into(),icone:None}],
             vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:Some("--continue".into())},
                  PublishedAgent{id:"codex".into(),label:"Codex".into(),command:"codex".into(),resume:None}],
             Some(PublishedTheme{accent:std::env::var("OMNI_FIXTURE_ACCENT").unwrap_or_else(|_|"roxo".into()),
@@ -2903,7 +2943,7 @@ quebra"}"#] {
     #[tokio::test] async fn http_so_abre_sessao_dentro_do_que_ja_e_conhecido() {
         let (_dir,state) = fixture();
         publish(&state,
-            vec![PublishedProject{id:"p".into(),name:"Teste".into(),path:"C:/test".into()}],
+            vec![PublishedProject{id:"p".into(),name:"Teste".into(),path:"C:/test".into(),icone:None}],
             vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:None}],
             None,
         ).unwrap();
@@ -2931,7 +2971,7 @@ quebra"}"#] {
     #[test] fn o_plano_de_spawn_tira_o_caminho_do_registro_do_servidor() {
         let (_dir,state) = fixture();
         publish(&state,
-            vec![PublishedProject{id:"p".into(),name:"Teste".into(),path:".".into()}],
+            vec![PublishedProject{id:"p".into(),name:"Teste".into(),path:".".into(),icone:None}],
             vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:None}],
             None,
         ).unwrap();
@@ -3009,10 +3049,19 @@ quebra"}"#] {
     /// A união com o `conversations.json` é o que mantém o celular útil quando o desktop nunca
     /// publicou ou está fechado há muito tempo. Sem ela, um app recém-instalado mostraria zero
     /// projetos até alguém abrir a janela no PC.
+    #[test] fn subpasta_descartavel_conta_como_do_projeto_pai() {
+        let omni = PublishedProject { id: "p1".into(), name: "OMNI".into(), path: r"D:\P\OMNI".into(), icone: None };
+        let projetos = [omni];
+        assert_eq!(raiz_do_projeto("D:/SITES/DOMUS/.worker-data/videos/a91b", &projetos), "D:/SITES/DOMUS");
+        assert_eq!(raiz_do_projeto("d:/p/omni/src", &projetos), r"D:\P\OMNI");
+        assert_eq!(raiz_do_projeto("D:/P/OMNI-2", &projetos), "D:/P/OMNI-2");
+        assert_eq!(dono_da_pasta(&projetos, "D:/P/OMNI/.claude/worktrees/x").map(|p| p.id.as_str()), Some("p1"));
+    }
+
     #[tokio::test] async fn projetos_publicados_se_unem_aos_das_conversas() {
         let (_dir,state) = fixture();
         publish(&state,
-            vec![PublishedProject{id:"publicado".into(),name:"Publicado".into(),path:"C:/pub".into()}],
+            vec![PublishedProject{id:"publicado".into(),name:"Publicado".into(),path:"C:/pub".into(),icone:None}],
             vec![PublishedAgent{id:"claude".into(),label:"Claude".into(),command:"claude".into(),resume:Some("--continue".into())}],
             None,
         ).unwrap();
@@ -3061,7 +3110,7 @@ quebra"}"#] {
 
     #[test] fn publicacao_sobrevive_ao_reinicio_do_engine() {
         let (dir,state) = fixture();
-        publish(&state,vec![PublishedProject{id:"p1".into(),name:"Um".into(),path:"C:/um".into()}],vec![],None).unwrap();
+        publish(&state,vec![PublishedProject{id:"p1".into(),name:"Um".into(),path:"C:/um".into(),icone:None}],vec![],None).unwrap();
         // Um `MobileRuntime` novo é o que o engine monta ao subir de novo.
         let renascido = MobileRuntime::new(dir.path());
         assert_eq!(renascido.workspace.lock().unwrap().projects[0].id,"p1");

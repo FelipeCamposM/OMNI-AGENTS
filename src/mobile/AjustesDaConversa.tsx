@@ -42,6 +42,15 @@ function modeloDaLista(opcoes: Opcoes): string {
  * reabre a conversa (`--resume`) com o ajuste novo: leva alguns segundos e nada se perde. Só com o
  * agente parado — no meio de um turno isso mataria o trabalho.
  */
+/**
+ * Trocar conta/modelo reabre a sessão: vale com o campo livre **e** com o agente parado sem campo
+ * reconhecido (tela nova da CLI, limite de uso). Só o agente trabalhando bloqueia — reabrir mataria o
+ * turno. Antes exigia o campo livre, e uma tela de limite não reconhecida impedia justo a troca de conta.
+ */
+export function podeReabrir(conversa: { state: string | null; capabilities?: { prompt: boolean } | null; notice?: string | null }): boolean {
+  return Boolean(conversa.capabilities?.prompt) || conversa.notice === "usage_limit" || (conversa.state !== null && conversa.state !== "working");
+}
+
 export function AjustesDaConversa({ conversaId, pronto, onAplicar, onRetomar }: {
   conversaId: string;
   pronto: boolean;

@@ -1,0 +1,34 @@
+● Seu limite de uso foi atingido, então parei aqui. Essa mudança está pronta e no commit dc6a742,  
+  local, sem push e sem versão nova. Os testes passaram (typecheck ok, vitest 233, pytest 83), mas  
+  ainda não vi o aviso numa sincronização de verdade no app.
+
+  O que mudou no aviso:
+  - "Lendo turmas": antes o aviso ficava parado em 2% por uns 30 segundos. Agora essa parte vai de 2% a
+  10% e mostra "Lendo turmas (1 de N)", "(2 de N)"... Depois aparece "N turma(s) encontrada(s)", e  
+  as turmas ocupam de 10% a 98%.
+  - Porcentagem: aparece ao lado da barra, em destaque.
+  - Tempo restante: aparece "falta ~X". A partir de 10% é calculado pelo ritmo real da tarefa; antes  
+  disso, pelo tempo que essa operação levou nas vezes anteriores.
+  - Todas as tarefas do aviso, não só a sincronização: entre uma atualização real e outra, a barra  
+  continua andando devagar, no ritmo da etapa anterior. Ela nunca chega ao próximo marco, então não  
+  mostra mais do que já foi feito de fato.
+  - Tarefas sem nenhum dado de progresso: continuam com a faixa em movimento, já que não tem como  
+  estimar.
+
+  O que ficou para depois:
+  - Ver o aviso numa sincronização real dentro do app.
+  - Lançar uma versão nova, se você quiser que isso chegue aos professores.
+  - O pedido do CRM ("sessão nova CRM com mensagens, leads, configurações, conexões de sites"): a tela 
+  da imagem é do DOMUS/AdPilot, outro projeto. Não mexi; você recusou a busca pela pasta dele. Se  
+  quiser que eu faça, me diga onde fica o repositório.
+
+● Usage limit reached · continuing automatically at 1:40am · esc to cancel
+
+✻ Brewed for 9m 31s · done 1:22
+
+───────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+───────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⚠ Usage limit reached · limit resets 1:40am · clau.de/wrap-up
+  Continuing automatically at 1:40am · Esc to cancel · /usage-credits to continue now
+  ⏵⏵ auto mode on (shift+tab to cycle)

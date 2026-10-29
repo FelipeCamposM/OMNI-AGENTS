@@ -46,7 +46,8 @@ export interface Mensagem {
 export interface Projects {
   /** 0 = o desktop nunca publicou; a lista veio só das conversas já registradas. */
   published_at_ms: number;
-  projects: { id: string; name: string; path: string }[];
+  /** `icone`: o PC publicou um ícone para o projeto — vem por `GET /projetos/{id}/icone`. */
+  projects: { id: string; name: string; path: string; icone?: boolean }[];
   agents: { id: string; label: string; command: string; resume: string | null }[];
   profiles: { id: string; provider: string; name: string }[];
   /** Aparência publicada pelo PC. `null` quando o PC é de uma versão que ainda não publicava. */

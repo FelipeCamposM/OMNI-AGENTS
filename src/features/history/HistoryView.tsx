@@ -1,17 +1,22 @@
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Button, Input, SegmentedControl, Select } from "../../components/ui";
 import { AgentIcon } from "../../components/ui/AgentIcon";
 import { ChatIcon, ClockIcon, CloseIcon, FolderIcon, PlayIcon, ReloadIcon } from "../../components/ui/PixelIcon";
 import { shortcutFor } from "../../lib/shortcuts";
 import { baseName } from "../files/filesService";
+import { SimboloDoProjeto } from "../../components/EscolherIcone";
+import { ProjetosContext } from "../projects/projetosContext";
+import { normalizePath } from "../../lib/paths";
+import type { Project } from "../../types/workspace";
 import { EditableLabel } from "../../components/ui/EditableLabel";
 import { listConversations, listProfiles, renameConversation, type Conversation, type Profile } from "../terminal/terminalService";
 import {
   filterHistory,
   listHistory,
+  pastaDoProjeto,
   readTranscript,
   type HistoryEntry,
   type HistoryProvider,
@@ -131,21 +136,56 @@ export function HistoryView({ onResume, lock, actions, onClose }: HistoryViewPro
     setLimit(PAGE);
   }
 
+  // Cada conversa no projeto a que pertence: subpastas descartáveis (worker, worktree) juntam no pai.
+  const projetos = useContext(ProjetosContext);
+  const projetoDe = useMemo(() => {
+    const caminhos = projetos.map((projeto) => projeto.path);
+    const porPasta = new Map<string, ProjetoDaConversa>();
+    return (cwd: string | null): ProjetoDaConversa | null => {
+      if (!cwd) return null;
+      const chave = normalizePath(cwd);
+      let achado = porPasta.get(chave);
+      if (!achado) {
+        const raiz = pastaDoProjeto(cwd, caminhos);
+        const projeto = projetos.find((item) => normalizePath(item.path) === normalizePath(raiz)) ?? null;
+        achado = { raiz, chave: normalizePath(raiz), nome: projeto?.name ?? baseName(raiz), projeto };
+        porPasta.set(chave, achado);
+      }
+      return achado;
+    };
+  }, [projetos]);
+
   const projectOptions = useMemo(() => {
-    const byKey = new Map<string, string>();
+    const grupos = new Map<string, { info: ProjetoDaConversa; total: number }>();
     for (const entry of entries ?? []) {
-      if (entry.cwd && !byKey.has(entry.cwd.toLowerCase())) byKey.set(entry.cwd.toLowerCase(), entry.cwd);
+      const info = projetoDe(entry.cwd);
+      if (!info) continue;
+      const grupo = grupos.get(info.chave);
+      if (grupo) grupo.total += 1; else grupos.set(info.chave, { info, total: 1 });
     }
-    const paths = [...byKey.values()].sort((a, b) => baseName(a).localeCompare(baseName(b)));
-    return [{ value: "", label: "Todos os projetos" }, ...paths.map((path) => ({ value: path, label: baseName(path), hint: path }))];
-  }, [entries]);
+    // Projetos abertos no OMNI primeiro, depois os demais; nome em ordem alfabética.
+    const lista = [...grupos.values()].sort((a, b) =>
+      Number(!a.info.projeto) - Number(!b.info.projeto) || a.info.nome.localeCompare(b.info.nome));
+    return [
+      { value: "", label: "Todos os projetos", icon: <FolderIcon className="h-3.5 w-3.5 shrink-0 text-text-muted" aria-hidden /> },
+      ...lista.map(({ info, total }) => ({
+        value: info.raiz, label: info.nome, hint: `${total} ${total === 1 ? "conversa" : "conversas"}`,
+        icon: <SimboloDoProjeto project={info.projeto ?? { path: info.raiz }} className="h-3.5 w-3.5" />,
+      })),
+    ];
+  }, [entries, projetoDe]);
 
   const profileOptions = useMemo(() => {
     const names = new Map((entries ?? []).map((entry) => [entry.profile_id, entry.profile_name]));
     return [{ value: "", label: "Todas as contas" }, ...[...names].map(([value, label]) => ({ value, label }))];
   }, [entries]);
 
-  const filtered = useMemo(() => filterHistory(entries ?? [], { query, cwd, profileId }), [entries, query, cwd, profileId]);
+  // Travado (Novo agente) a pasta é exata: o `--resume` só acha conversas daquela pasta.
+  const filtered = useMemo(() => lock
+    ? filterHistory(entries ?? [], { query, cwd, profileId })
+    : filterHistory(entries ?? [], { query, cwd: "", profileId })
+      .filter((entry) => !cwd || projetoDe(entry.cwd)?.chave === normalizePath(cwd)),
+  [entries, query, cwd, profileId, lock, projetoDe]);
   const selected = filtered.find((entry) => entry.path === selectedPath) ?? null;
 
   return (
@@ -205,7 +245,7 @@ export function HistoryView({ onResume, lock, actions, onClose }: HistoryViewPro
             setCwd(value);
             setLimit(PAGE);
           }}
-          searchable={projectOptions.length > 15}
+          searchable={projectOptions.length > 6}
           searchPlaceholder="Pesquisar projeto…"
           className="min-w-0 flex-[1_1_10rem]"
         />}
@@ -230,6 +270,7 @@ export function HistoryView({ onResume, lock, actions, onClose }: HistoryViewPro
             {/* Mesmo cartão das conversas da lateral (`Sidebar` → `SessionLabel`). */}
             {filtered.slice(0, limit).map((entry) => {
               const ativa = entry.path === selectedPath;
+              const info = projetoDe(entry.cwd);
               return (
                 <li key={entry.path}
                   className={`lateral-item border-l-2 ring-1 ring-inset transition-colors ${
@@ -239,10 +280,16 @@ export function HistoryView({ onResume, lock, actions, onClose }: HistoryViewPro
                     type="button"
                     onClick={() => setSelectedPath(entry.path)}
                     aria-current={ativa ? "true" : undefined}
+                    title={entry.cwd ?? undefined}
                     className="flex w-full min-w-0 items-center gap-2.5 px-2 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                   >
-                    <span className="lateral-avatar grid h-8 w-8 shrink-0 place-items-center border border-border-subtle">
+                    <span className="lateral-avatar relative grid h-8 w-8 shrink-0 place-items-center border border-border-subtle">
                       <AgentIcon provider={entry.provider} size={16} />
+                      {info && (
+                        <span className="lateral-recente-projeto" aria-hidden>
+                          <SimboloDoProjeto project={info.projeto ?? { path: info.raiz }} className="h-2.5 w-2.5" />
+                        </span>
+                      )}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="flex min-w-0 items-baseline gap-2">
@@ -254,8 +301,10 @@ export function HistoryView({ onResume, lock, actions, onClose }: HistoryViewPro
                         </time>
                       </span>
                       <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] leading-4 text-text-muted">
-                        <FolderIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-                        <span className="truncate">{entry.cwd ? baseName(entry.cwd) : "sem pasta"}</span>
+                        <span className="truncate">{info?.nome ?? "sem pasta"}</span>
+                        {info && entry.cwd && normalizePath(entry.cwd) !== info.chave && (
+                          <span className="historico-subpasta">subpasta</span>
+                        )}
                         <span aria-hidden>·</span>
                         <span className="truncate">{entry.profile_name}</span>
                       </span>
@@ -282,6 +331,7 @@ export function HistoryView({ onResume, lock, actions, onClose }: HistoryViewPro
             <ConversationDetail
               key={selected.path}
               entry={selected}
+              projeto={projetoDe(selected.cwd)}
               conversa={conversasPorSessao[selected.session_id] ?? null}
               contas={contas.filter((conta) => conta.provider === selected.provider)}
               onResume={onResume}
@@ -299,13 +349,24 @@ export function HistoryView({ onResume, lock, actions, onClose }: HistoryViewPro
   );
 }
 
+interface ProjetoDaConversa {
+  /** Pasta do projeto (o pai, se a conversa rodou numa subpasta descartável). */
+  raiz: string;
+  chave: string;
+  nome: string;
+  /** Projeto do OMNI com essa pasta: é dele que vem o ícone escolhido. */
+  projeto: Project | null;
+}
+
 function ConversationDetail({
   entry,
+  projeto,
   conversa,
   contas,
   onResume,
 }: {
   entry: HistoryEntry;
+  projeto: ProjetoDaConversa | null;
   conversa: Conversation | null;
   /** Contas do mesmo agente da conversa. */
   contas: Profile[];
@@ -370,7 +431,10 @@ function ConversationDetail({
             <h2 className="text-sm font-semibold text-text-primary">{entry.title ?? entry.first_prompt}</h2>
           )}
           <p className="historico-detalhe-meta">
-            <span title={entry.cwd ?? undefined}><FolderIcon className="h-3 w-3" aria-hidden="true" />{entry.cwd ? baseName(entry.cwd) : "Pasta não registrada"}</span>
+            <span title={entry.cwd ?? undefined} className="historico-detalhe-projeto">
+              {projeto ? <SimboloDoProjeto project={projeto.projeto ?? { path: projeto.raiz }} className="h-3.5 w-3.5" /> : <FolderIcon className="h-3 w-3" aria-hidden="true" />}
+              {projeto?.nome ?? "Pasta não registrada"}
+            </span>
             <span><ClockIcon className="h-3 w-3" aria-hidden="true" />{formatDate(entry.updated_at_ms)}</span>
             {transcript && <span><ChatIcon className="h-3 w-3" aria-hidden="true" />{transcript.total} mensagens</span>}
           </p>

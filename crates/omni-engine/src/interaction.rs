@@ -243,7 +243,12 @@ pub fn ready(screen: &vt100::Screen, provider: &str) -> bool {
 /// /compact e a conversa travava em "não reconhecida" com o campo vazio logo embaixo.
 fn cancelavel(texto: &str) -> bool {
     area_do_turno(texto).lines().filter(|l| !l.trim_start().starts_with(['●', '⏺']))
-        .any(|l| l.to_lowercase().contains("esc to cancel"))
+        .map(str::to_lowercase)
+        // Rodapé do limite ("Continuing automatically at 1:40am · Esc to cancel"): o Esc cancela a
+        // retomada automática, não um menu — o campo está livre. Contar isso travava a conversa em
+        // "não reconhecida" justo quando era preciso trocar de conta.
+        .filter(|l| !l.contains("continuing automatically"))
+        .any(|l| l.contains("esc to cancel"))
 }
 
 /// Turno parado com texto sobrando no campo: o Esc antes de a CLI ler o prompt devolve o texto ao
@@ -1311,6 +1316,11 @@ Ready to submit your answers?
             assert_eq!(aprova, esperado == "aprovacao", "{nome}: aprovação");
             // Como em `capabilities`: com aprovação na tela, menu nem é procurado.
             assert_eq!(!aprova && escolha(&tela).is_some(), esperado == "escolha", "{nome}: escolha");
+            if nome.contains(".limite-") {
+                // Rodapé do limite de uso: campo livre (troca de conta liberada) e aviso reconhecido.
+                assert!(!cancelavel(&tela), "{nome}: rodapé do limite travou o campo");
+                assert!(crate::limite_no_rodape(&tela), "{nome}: limite não reconhecido");
+            }
             vistas += 1;
         }
         assert!(vistas >= 5, "acervo sumiu? só {vistas} telas");

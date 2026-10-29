@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, actionKey, request, type Timeline, type Conversation } from "../../mobile/api";
-import { AjustesDaConversa, type Ajustes } from "../../mobile/AjustesDaConversa";
+import { AjustesDaConversa, podeReabrir, type Ajustes } from "../../mobile/AjustesDaConversa";
 import { usePoll } from "../../mobile/usePoll";
 import { CheckIcon, ChatIcon, TerminalIcon } from "../../components/ui/PixelIcon";
 import { AgentIcon } from "../../components/ui/AgentIcon";
@@ -11,6 +11,9 @@ import { ConversationDetail } from "../../mobile/MobileApp";
 import { listTerminalSessions } from "../terminal/terminalService";
 import { useSessionProvider } from "../terminal/sessionProviders";
 import { GitBranchStatus } from "../git/GitBranchStatus";
+import { SimboloDoProjeto } from "../../components/EscolherIcone";
+import { useProjetoDaPasta } from "../projects/projetosContext";
+import { baseName } from "../files/filesService";
 import { NOME_DO_AGENTE, temConversa } from "../../mobile/api";
 import type { AgentView } from "../../types/settings";
 import "../../mobile/mobile.css";
@@ -103,7 +106,7 @@ function FaixaDoTerminal({ sessionId, abas }: { sessionId: string; abas: ReactNo
       {erro && <span role="alert" className="text-[11px] text-danger">{erro}</span>}
       {conversa?.capabilities && (
         <div className="aba-agente-chips">
-          <AjustesDaConversa conversaId={conversa.id} pronto={Boolean(conversa.capabilities.prompt)} onAplicar={aplicar} />
+          <AjustesDaConversa conversaId={conversa.id} pronto={podeReabrir(conversa)} onAplicar={aplicar} />
         </div>
       )}
     </div>
@@ -256,6 +259,7 @@ function ChatDaSessao({ sessionId, onVerTerminal }: { sessionId: string; onVerTe
     <div ref={area} className="aba-conversa-tela absolute inset-0 z-20 flex flex-col bg-bg-surface">
       <div className="aba-agente-topo">
         <AbasDoAgente vendo="conversa" onTrocar={(aba) => { if (aba === "terminal") onVerTerminal(); }} />
+        {pasta && <ProjetoDaConversa pasta={pasta} />}
         <span className="flex-1" />
         {!abrindo && (aoVivo ?? conversa) && <ResumoDaConversa conversa={(aoVivo ?? conversa)!} />}
         {pasta && <GitBranchStatus projectPath={pasta} />}
@@ -317,5 +321,16 @@ function AbrindoAgente({ provider, etapa, onVerTerminal, onPular }: {
         <button type="button" onClick={onPular} className="btn btn-ghost min-h-0 px-2 py-1 text-xs">Mostrar a conversa</button>
       </div>
     </div>
+  );
+}
+
+/** Ícone e nome do projeto da conversa no topo da aba: o mesmo símbolo da lateral. */
+function ProjetoDaConversa({ pasta }: { pasta: string }) {
+  const projeto = useProjetoDaPasta(pasta);
+  return (
+    <span className="aba-agente-projeto" title={pasta}>
+      <SimboloDoProjeto project={projeto ?? { path: pasta }} className="h-4 w-4" />
+      <span className="truncate">{projeto?.name ?? baseName(pasta)}</span>
+    </span>
   );
 }
