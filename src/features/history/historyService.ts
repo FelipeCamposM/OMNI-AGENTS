@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { engineApi } from "../terminal/terminalService";
 
-export type HistoryProvider = "claude" | "codex";
+export type HistoryProvider = "claude" | "codex" | "cursor";
 
 /** Uma conversa gravada pelo próprio CLI (`omni_core::history::HistoryEntry`). */
 export interface HistoryEntry {
@@ -56,9 +56,9 @@ export async function levarParaConta(entry: HistoryEntry, destino: string): Prom
 }
 
 export function resumeCommand(cliCommand: string, entry: HistoryEntry): string {
-  return entry.provider === "claude"
-    ? `${cliCommand} --resume ${entry.session_id}`
-    : `${cliCommand} resume ${entry.session_id}`;
+  return entry.provider === "codex"
+    ? `${cliCommand} resume ${entry.session_id}`
+    : `${cliCommand} --resume ${entry.session_id}`;
 }
 
 // Caminhos do Windows chegam com caixa, barra e host do WSL diferentes conforme quem gravou. A

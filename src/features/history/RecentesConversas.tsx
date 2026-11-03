@@ -36,8 +36,8 @@ export function RecentesConversas({ abertas, agora, onRetomar, onVerTodas }: {
   // Relê quando abre/fecha uma conversa (a que fechou volta para cá). O scan tem cache por arquivo.
   useEffect(() => {
     let vivo = true;
-    Promise.all([listHistory("claude"), listHistory("codex")].map((p) => p.catch(() => [] as HistoryEntry[])))
-      .then(([claude, codex]) => { if (vivo) setEntradas([...claude, ...codex]); });
+    Promise.all([listHistory("claude"), listHistory("codex"), listHistory("cursor")].map((p) => p.catch(() => [] as HistoryEntry[])))
+      .then((listas) => { if (vivo) setEntradas(listas.flat()); });
     return () => { vivo = false; };
   }, [chave]);
 

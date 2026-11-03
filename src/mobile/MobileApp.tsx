@@ -69,14 +69,25 @@ function tomDoEstado(state: string | null, approve: boolean): string {
 }
 
 /** "agora", "5 min", "3 h", "2 d": quanto faz desde a última atividade da conversa. */
+/** Quando foi, como nos apps de chat: "agora", "12 min", hoje a hora ("14:20"), "ontem", o dia da
+ *  semana até 6 dias, depois a data ("12 out", com ano se não for este). */
 export function haQuanto(ms: number | undefined, agora = Date.now()): string | null {
   if (!ms) return null;
   const minutos = Math.floor(Math.max(0, agora - ms) / 60_000);
   if (minutos < 1) return "agora";
   if (minutos < 60) return `${minutos} min`;
-  if (minutos < 24 * 60) return `${Math.floor(minutos / 60)} h`;
-  return `${Math.floor(minutos / (24 * 60))} d`;
+  const quando = new Date(ms), hoje = new Date(agora);
+  const dias = Math.round((new Date(hoje.toDateString()).getTime() - new Date(quando.toDateString()).getTime()) / 86_400_000);
+  if (dias <= 0) return quando.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+  if (dias === 1) return "ontem";
+  if (dias < 7) return quando.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "");
+  return quando.toLocaleDateString("pt-BR", { day: "numeric", month: "short", ...(quando.getFullYear() !== hoje.getFullYear() && { year: "numeric" }) })
+    .replace(/\./g, "").replace(/ de /g, " ");
 }
+
+/** Data e hora completas, para o `title` da data curta. */
+export const dataCompleta = (ms: number) =>
+  new Date(ms).toLocaleString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit" });
 
 /** Guarda uma preferência só desta aba. Navegador sem armazenamento segue sem ela. */
 function lerSessao(chave: string): string | null {
@@ -249,7 +260,7 @@ export function ProjectList({ projects, conversations, abrir, limite = Infinity,
   </>;
 }
 
-export function ConversationList({ conversations, perfis, projetos = [], mostrarProjeto = false, abrir, vazio, ativa = null, naoVistas, aoLado, abertas, aoArrastar }: {
+export function ConversationList({ conversations, perfis, projetos = [], mostrarProjeto = false, abrir, vazio, ativa = null, naoVistas, aoLado, abertas, aoArrastar, aoBifurcar, bifurcando, aoRenomear }: {
   conversations: Conversation[]; perfis: Projects["profiles"]; projetos?: Projects["projects"];
   mostrarProjeto?: boolean; abrir: (id: string) => void; vazio: string;
   /** Conversa aberta ao lado (web): fica marcada na lista. */
@@ -261,7 +272,13 @@ export function ConversationList({ conversations, perfis, projetos = [], mostrar
   abertas?: readonly string[];
   /** Web: o cartão pode ser arrastado até um painel do centro. */
   aoArrastar?: (evento: DragEvent, id: string) => void;
+  /** Web: bifurca a conversa (Claude/Codex aberta no PC) direto da lista, como a lateral do app. */
+  aoBifurcar?: (id: string) => void;
+  bifurcando?: string | null;
+  /** Web: renomeia direto no cartão (lápis no hover, ou F2). */
+  aoRenomear?: (id: string, nome: string) => Promise<void>;
 }) {
+  const [editando, setEditando] = useState<string | null>(null);
   if (conversations.length === 0) return <Vazio>{vazio}</Vazio>;
   return <ul className="m-lista">{conversations.map(c => {
     const aprovar = Boolean(c.capabilities?.approve);
@@ -275,8 +292,24 @@ export function ConversationList({ conversations, perfis, projetos = [], mostrar
     const projeto = mostrarProjeto ? doProjeto?.name : null;
     const detalhe = [STATES[c.state ?? ""] ?? "Histórico", NOME_DO_AGENTE[c.provider ?? ""] ?? c.provider, conta]
       .filter(Boolean).join(" · ");
-    return <li key={c.id}>
+    const podeBifurcar = Boolean(aoBifurcar) && (c.provider === "claude" || c.provider === "codex");
+    const aoLadoAqui = Boolean(aoLado) && !abertas?.includes(c.id);
+    return <li key={c.id} className={editando === c.id ? "is-editando" : undefined}>
+      {editando === c.id && aoRenomear ? (
+        <form className="m-card glass m-card-editando" data-status={status} onSubmit={(evento) => {
+          evento.preventDefault();
+          const nome = String(new FormData(evento.currentTarget).get("nome") ?? "").trim();
+          setEditando(null);
+          if (nome && nome !== c.title) void aoRenomear(c.id, nome);
+        }}>
+          <EditIcon aria-hidden className="h-3.5 w-3.5 shrink-0" />
+          <input name="nome" defaultValue={c.title} autoFocus aria-label={`Novo nome de ${c.title}`} maxLength={120} className="m-card-nome"
+            onFocus={(evento) => evento.currentTarget.select()} onBlur={(evento) => evento.currentTarget.form?.requestSubmit()}
+            onKeyDown={(evento) => { if (evento.key === "Escape") { evento.preventDefault(); setEditando(null); } }} />
+        </form>
+      ) : <>
       <button type="button" className={`m-card glass glass-hover${c.id === ativa ? " m-card-ativo" : ""}`} data-status={status} onClick={() => abrir(c.id)}
+        onKeyDown={aoRenomear ? (evento) => { if (evento.key === "F2") { evento.preventDefault(); setEditando(c.id); } } : undefined}
         draggable={Boolean(aoArrastar)} onDragStart={aoArrastar ? (evento) => aoArrastar(evento, c.id) : undefined}
         aria-label={`Abrir conversa ${c.title}`} aria-current={c.id === ativa ? "true" : undefined}>
         <span className="m-card-icone">
@@ -293,11 +326,27 @@ export function ConversationList({ conversations, perfis, projetos = [], mostrar
         </span>
         <span className="m-card-lado">
           <EtiquetaDoStatus status={status} />
-          {haQuanto(c.updated_at_ms) && <time className="m-card-tempo">{haQuanto(c.updated_at_ms)}</time>}
+          {haQuanto(c.updated_at_ms) && <time className="m-card-tempo" dateTime={new Date(c.updated_at_ms!).toISOString()}
+            title={dataCompleta(c.updated_at_ms!)}>{haQuanto(c.updated_at_ms)}</time>}
         </span>
       </button>
-      {aoLado && !abertas?.includes(c.id) && <button type="button" className="m-card-aolado" onClick={() => aoLado(c.id)}
-        aria-label={`Abrir ${c.title} ao lado`} title="Abrir ao lado">+</button>}
+      {(aoRenomear || podeBifurcar || aoLadoAqui) && (
+        <span className="m-card-acoes">
+          {aoRenomear && <button type="button" className="m-card-aolado m-card-acao" onClick={() => setEditando(c.id)}
+            aria-label={`Renomear conversa ${c.title}`} title="Renomear (F2)"><EditIcon aria-hidden className="h-3.5 w-3.5" /></button>}
+          {podeBifurcar && (
+            <button type="button" className="m-card-aolado m-card-acao" disabled={bifurcando === c.id} onClick={() => aoBifurcar!(c.id)}
+              aria-label={`Bifurcar conversa ${c.title}`}
+              title={c.live ? "Bifurcar: abre uma conversa nova com todo o histórico desta, que segue independente"
+                : "Bifurcar: abre no PC uma conversa nova com todo o histórico desta (a original continua fechada)"}>
+              <GitBranchIcon aria-hidden className={`h-3.5 w-3.5${bifurcando === c.id ? " anexo-girando" : ""}`} />
+            </button>
+          )}
+          {aoLadoAqui && <button type="button" className="m-card-aolado" onClick={() => aoLado!(c.id)}
+            aria-label={`Abrir ${c.title} ao lado`} title="Abrir ao lado">+</button>}
+        </span>
+      )}
+      </>}
     </li>;
   })}</ul>;
 }

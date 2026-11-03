@@ -586,6 +586,13 @@ impl FeedCache {
     pub fn read(&mut self, path: &Path, provider: &str) -> std::io::Result<&[Entry]> {
         self.relogio += 1;
         let agora = self.relogio;
+        // Cursor: SQLite, não JSONL. Relido inteiro (conversa local e pequena), no mesmo cache.
+        if provider == "cursor" {
+            let itens = crate::cursor::itens(path)?;
+            let feed = self.feeds.entry(path.to_path_buf()).or_default();
+            *feed = Feed { entries: itens, usado_em: agora, ..Feed::default() };
+            return Ok(&self.feeds[path].entries);
+        }
         let mut file = File::open(path)?;
         let tamanho = file.metadata()?.len();
         if !self.feeds.contains_key(path) && self.feeds.len() >= CACHE_MAX {

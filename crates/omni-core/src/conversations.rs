@@ -225,12 +225,16 @@ pub fn resolve_transcript(
     }
     if let Some(path) = &segment.transcript_path {
         let path = Path::new(path).canonicalize().ok()?;
-        let extensao = if segment.provider == "antigravity" { "db" } else { "jsonl" };
+        let extensao = if matches!(segment.provider.as_str(), "antigravity" | "cursor") { "db" } else { "jsonl" };
         return (path.starts_with(&root) && path.extension().is_some_and(|e| e == extensao)).then_some(path);
     }
     // O agy não aceita id escolhido no spawn: a conversa é achada pela pasta + instante no índice dele.
     if segment.provider == "antigravity" {
         return crate::antigravity::descobrir(&root, &conversation.cwd, segment.started_at_ms).map(|(_, path)| path);
+    }
+    // O agent também não: o chat é o primeiro criado na pasta depois que a sessão abriu.
+    if segment.provider == "cursor" {
+        return crate::cursor::descobrir(&root, &conversation.cwd, segment.started_at_ms).map(|(_, path)| path);
     }
     if segment.provider != "codex" { return None; }
     let candidates: Vec<_> = crate::rollouts(&root.join("sessions")).into_iter().filter(|path| {
@@ -270,7 +274,7 @@ pub fn discover_codex_transcripts(
             let should_discover = {
                 let segment = &conversations[conversation_index].segments[segment_index];
                 // Antigravity troca de conversa dentro da mesma sessão: o ponteiro é conferido sempre.
-                (segment.provider == "codex" && segment.transcript_path.is_none()) || segment.provider == "antigravity"
+                (matches!(segment.provider.as_str(), "codex" | "cursor") && segment.transcript_path.is_none()) || segment.provider == "antigravity"
             };
             if !should_discover {
                 continue;
@@ -282,9 +286,12 @@ pub fn discover_codex_transcripts(
             let Some(path) = resolved else { continue };
             let atual = conversations[conversation_index].segments[segment_index].transcript_path.as_deref().map(Path::new);
             if atual.is_some_and(|atual| atual == path) { continue; }
-            let session_id = if conversations[conversation_index].segments[segment_index].provider == "antigravity" {
-                path.file_stem().map(|s| s.to_string_lossy().into_owned())
-            } else { codex_session_id(&path) };
+            let session_id = match conversations[conversation_index].segments[segment_index].provider.as_str() {
+                "antigravity" => path.file_stem().map(|s| s.to_string_lossy().into_owned()),
+                // `<config>/chats/<hash>/<chatId>/store.db`: o id é a pasta, o que o `--resume` recebe.
+                "cursor" => path.parent().and_then(Path::file_name).map(|s| s.to_string_lossy().into_owned()),
+                _ => codex_session_id(&path),
+            };
             let segment = &mut conversations[conversation_index].segments[segment_index];
             segment.transcript_path = Some(path.to_string_lossy().into_owned());
             if segment.external_session_id.is_none() || segment.provider == "antigravity" {
@@ -402,8 +409,9 @@ pub fn itens_cached(
         // ponytail: o SQLite do agy é relido inteiro a cada consulta (conversa pequena, leitura local);
         // cache por mtime se uma conversa longa pesar.
         let lidos;
-        let entries: &[crate::feed::Entry] = if segment.provider == "antigravity" {
-            let Ok(itens) = crate::antigravity::itens(&path) else { unavailable.push(segment_index); continue };
+        let entries: &[crate::feed::Entry] = if matches!(segment.provider.as_str(), "antigravity" | "cursor") {
+            let lido = if segment.provider == "cursor" { crate::cursor::itens(&path) } else { crate::antigravity::itens(&path) };
+            let Ok(itens) = lido else { unavailable.push(segment_index); continue };
             lidos = itens;
             &lidos
         } else {

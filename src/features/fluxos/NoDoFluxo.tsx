@@ -9,6 +9,9 @@ export type DadosDoNo = {
   no: NoDoFluxo;
   estado?: EstadoDoNo;
   cli?: string;
+  /** Saídas que já têm ligação ("" = a normal) e se alguém chega nele: a porta usada fica acesa. */
+  ligadas?: string[];
+  temEntrada?: boolean;
   /** Modelo/esforço efetivos (o do nó por cima do do agente), para o rótulo. */
   modelo?: string;
   esforco?: string;
@@ -18,7 +21,7 @@ export type DadosDoNo = {
 };
 export type NoOmni = Node<DadosDoNo, "omni">;
 
-const ICONE = { entrada: PlayIcon, agente: RobotIcon, condicao: ShieldIcon, aprovacao: CheckIcon, sala: ChatIcon, pr: GitBranchIcon, comando: TerminalIcon, juntar: BlocksIcon, fim: FlagIcon } as const;
+export const ICONE = { entrada: PlayIcon, agente: RobotIcon, condicao: ShieldIcon, aprovacao: CheckIcon, sala: ChatIcon, pr: GitBranchIcon, comando: TerminalIcon, juntar: BlocksIcon, fim: FlagIcon } as const;
 const NOME = { entrada: "Entrada", agente: "Agente", condicao: "Condição", aprovacao: "Aprovação", sala: "Time", pr: "Pull request", comando: "Comando", juntar: "Juntar", fim: "Fim" } as const;
 const ROTULO_SAIDA: Record<string, string> = { sim: "sim", nao: "não", esgotado: "esgotou" };
 const STATUS: Record<string, string> = { pendente: "", rodando: "rodando", concluido: "feito", falhou: "falhou", pausado: "pausado", aguardando: "sua vez" };
@@ -26,7 +29,9 @@ const STATUS: Record<string, string> = { pendente: "", rodando: "rodando", concl
 /** Uma etapa do fluxo no canvas. No editor ganha a barrinha de duplicar/apagar; na execução, a cor
  *  do estado, o que o agente está fazendo agora e tempo/custo. */
 export const NoDoFluxoView = memo(function NoDoFluxoView({ data, selected }: NodeProps<NoOmni>) {
-  const { no, estado, cli, modelo, esforco } = data;
+  const { no, estado, cli, modelo, esforco, ligadas = [], temEntrada } = data;
+  // Ligada = tem conexão; tomada = por onde a execução saiu deste nó.
+  const marca = (s: string) => `${ligadas.includes(s) ? " is-ligada" : ""}${estado?.caminho && estado.caminho === s ? " is-tomada" : ""}`;
   const Icone = ICONE[no.tipo];
   const saidas = SAIDAS[no.tipo];
   const subtitulo = no.tipo === "agente" ? [no.agente || "escolha um agente", modelo, esforco && (ROTULO_ESFORCO[esforco] ?? esforco).toLowerCase()].filter(Boolean).join(" · ")
@@ -47,7 +52,7 @@ export const NoDoFluxoView = memo(function NoDoFluxoView({ data, selected }: Nod
           <button type="button" className="is-perigo" onClick={() => data.onApagar?.(no.id)} title="Apagar etapa (Delete)"><TrashIcon aria-hidden className="h-3.5 w-3.5" />Apagar</button>
         </NodeToolbar>
       )}
-      {no.tipo !== "entrada" && <Handle type="target" position={Position.Left} className="fx-porta fx-porta-entrada" />}
+      {no.tipo !== "entrada" && <Handle type="target" position={Position.Left} className={`fx-porta fx-porta-entrada${temEntrada ? " is-ligada" : ""}`} />}
       <div className="fx-no-topo">
         <span className="fx-no-icone">{no.tipo === "agente" && cli ? <AgentIcon provider={cli} size={14} /> : <Icone aria-hidden className="h-3.5 w-3.5" />}</span>
         <span className="fx-no-tipo">{NOME[no.tipo]}</span>
@@ -65,13 +70,13 @@ export const NoDoFluxoView = memo(function NoDoFluxoView({ data, selected }: Nod
           {estado.custo_usd > 0 && <span>US$ {estado.custo_usd.toFixed(2)}</span>}
         </div>
       )}
-      {saidas.length === 1 && <Handle type="source" position={Position.Right} id="out" className="fx-porta" title="Arraste para ligar à próxima etapa" />}
+      {saidas.length === 1 && <Handle type="source" position={Position.Right} id="out" className={`fx-porta${marca("")}`} title="Arraste para ligar à próxima etapa" />}
       {saidas.length > 1 && (
         <div className="fx-saidas">
           {saidas.map((s) => (
-            <div key={s} className={`fx-saida is-${s}`}>
+            <div key={s} className={`fx-saida is-${s}${marca(s)}`}>
               <span>{ROTULO_SAIDA[s] ?? s}</span>
-              <Handle type="source" position={Position.Right} id={s} className={`fx-porta is-${s}`} title={`Arraste para onde ir quando for “${ROTULO_SAIDA[s] ?? s}”`} />
+              <Handle type="source" position={Position.Right} id={s} className={`fx-porta is-${s}${marca(s)}`} title={`Arraste para onde ir quando for “${ROTULO_SAIDA[s] ?? s}”`} />
             </div>
           ))}
         </div>

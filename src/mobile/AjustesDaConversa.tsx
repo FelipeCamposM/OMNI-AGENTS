@@ -127,6 +127,7 @@ export function AjustesDaConversa({ conversaId, pronto, onAplicar, onRetomar }: 
       {opcoes.models.length > 0 && (
         <span className="m-chip" title={motivo ?? "Modelo"}>
           <Select size="sm" value={modelo} disabled={bloqueado} onChange={setModelo}
+            searchable={opcoes.models.length > 15} searchPlaceholder="Buscar modelo…"
             options={[{ value: "", label: "Modelo padrão", icon: iconeModelo },
               ...opcoes.models.map((m) => ({ value: m.id, label: m.label, hint: m.hint || undefined, section: m.section || undefined, icon: iconeModelo }))]} />
         </span>

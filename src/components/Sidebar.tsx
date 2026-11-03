@@ -495,7 +495,7 @@ Arraste para mudar a ordem`}
             ) : ABAS[id].precisaProjeto && !activeProjectId ? (
               <p className="px-3 py-1.5 text-xs text-text-muted">Abra um projeto para ver {ABAS[id].rotulo.toLowerCase()}.</p>
             ) : (
-              <div className="space-y-1">
+              <div className={`space-y-1${id === "files" ? " flex min-h-full flex-col" : ""}`}>
                 <p className="flex items-center gap-2 px-3 pt-1 text-[10px] font-medium uppercase tracking-wider text-text-muted">
                   {(() => { const Icone = ABAS[id].icone; return <Icone className="h-3 w-3 shrink-0" aria-hidden />; })()}
                   {ABAS[id].rotulo}

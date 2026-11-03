@@ -1485,3 +1485,25 @@ li[data-estado="agora"] > .abrindo-agente-marca { color: rgb(var(--c-accent)); b
   .m-barra, .m-barra-badge, .m-shell-com-barra > .m-conteudo { animation: none; }
 }
 :root[data-motion="desligadas"] :is(.m-barra, .m-barra-badge, .m-shell-com-barra > .m-conteudo) { animation: none; }
+
+/* Chips do composer, v2 (pedido: "deixe os dropdowns do input mais bonitos"): gatilho com um anel só,
+   menu de vidro como o da árvore de arquivos, check à direita, sem o ícone repetido em cada opção. */
+.m-chip > .relative > .field { min-height: 1.875rem; transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease; }
+.m-chip > .relative > .field:focus-visible { box-shadow: 0 0 0 2px rgb(var(--c-accent) / .35); }
+.m-chip > .relative > .field.select-aberto { box-shadow: none; }
+.m-chip .popover {
+  width: max-content; min-width: 12rem; max-width: min(21rem, calc(100vw - 2rem)); padding: .3rem;
+  background: rgb(var(--c-bg-elevated) / .94); backdrop-filter: blur(14px) saturate(1.4);
+  border: 1px solid rgb(var(--c-border)); border-top-color: rgb(var(--c-overlay) / .16);
+  box-shadow: 0 18px 40px -14px rgb(0 0 0 / .7), 0 0 0 1px rgb(0 0 0 / .25), inset 0 1px 0 rgb(var(--c-overlay) / .06);
+}
+.m-chip .select-opcao { gap: .75rem; padding: .35rem .55rem; border: 1px solid transparent; }
+.m-chip .select-opcao + .select-opcao { margin-top: 2px; }
+.m-chip .select-opcao > svg:first-child { order: 2; margin-left: auto; width: .875rem; height: .875rem; color: rgb(var(--c-accent)); }
+.m-chip .select-opcao .text-xs > :is(svg, img) { display: none; }
+.m-chip .select-opcao .text-\[10px\] { color: rgb(var(--c-text-muted)); }
+.m-chip .select-opcao.is-marcada { background: rgb(var(--c-accent) / .08); }
+.m-chip .select-opcao.is-ativa { background: rgb(var(--c-overlay) / .07); border-color: rgb(var(--c-border-subtle)); }
+.m-chip .select-opcao.is-marcada.is-ativa { background: rgb(var(--c-accent) / .14); border-color: rgb(var(--c-accent) / .3); }
+.m-chip .select-opcao.is-ativa::before { left: -1px; top: 22%; bottom: 22%; }
+.m-chip .select-secao { margin: .3rem .2rem .15rem; padding: .4rem .35rem .1rem; border-top-style: dashed; font-size: .5625rem; }

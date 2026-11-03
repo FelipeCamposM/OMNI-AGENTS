@@ -56,7 +56,23 @@ it("Antigravity aparece com o nome e o botão de atualizar", async () => {
   ]))));
   render(<UsoDasContas contaAtiva={null} />);
   const conta = (await screen.findByText("Google")).closest("li")!;
-  expect(within(conta).getByText("Antigravity")).toBeInTheDocument();
+  expect(screen.getByText("Antigravity")).toBeInTheDocument(); // cabeçalho do grupo do agente
   expect(within(conta).getByText("12%")).toBeInTheDocument();
   expect(within(conta).getByRole("button", { name: "Atualizar uso de Google" })).toBeInTheDocument();
+});
+
+it("contas do mesmo agente ficam juntas e mostram quando o uso reseta", async () => {
+  const reset = Math.floor(Date.now() / 1000) + 2 * 3600 + 600;
+  const uso = { status: "available", reason: null, primary: { used_percent: 50, resets_at: reset, reset_label: null }, secondary: null };
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([
+    { id: "a", provider: "claude", name: "Pessoal", usage: uso },
+    { id: "b", provider: "codex", name: "Trabalho", usage: uso },
+    { id: "c", provider: "claude", name: "Uber", usage: uso },
+  ]))));
+  render(<UsoDasContas contaAtiva={null} />);
+  await screen.findByText("Uber");
+  const nomes = [...document.querySelectorAll(".w-uso-texto")].map((el) => el.textContent);
+  expect(nomes).toEqual(["Pessoal", "Uber", "Trabalho"]);
+  expect(screen.getByText("2 contas")).toBeInTheDocument();
+  expect(screen.getAllByText(/em 2h 1\d?min/).length).toBe(3);
 });

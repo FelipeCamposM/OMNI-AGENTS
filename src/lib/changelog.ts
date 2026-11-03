@@ -14,6 +14,22 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.10",
+    date: "2026-11-03",
+    changes: [
+      "Novo: o Cursor ganhou a visão Conversa ao vivo. Mande mensagens, acompanhe as respostas e escolha o modelo direto no chat, com busca entre todos os modelos da sua conta.",
+      "Conversas do Cursor aparecem no Histórico e podem ser retomadas. Reiniciar uma conversa do Cursor volta para o mesmo chat em vez de abrir um novo.",
+      "Aba Arquivos: clique com o botão direito ou solte arquivos em qualquer parte da aba, não só onde já há arquivos. O menu ficou mais bonito, e F2 renomeia e Delete exclui o item selecionado.",
+      "Menus de conta, modelo e esforço da conversa com visual novo.",
+      "Fluxos com visual novo e uma tela melhor para criar fluxos.",
+      "Web: nova conversa rápida, com projeto, agente, conta e nome numa janela só.",
+      "Web: renomear e bifurcar conversas direto da lista, inclusive conversas já fechadas, e a lateral ganhou o visual do app.",
+      "Web: as conversas abertas no PC aparecem todas, de qualquer projeto, e \"Precisa de você\" mostra o motivo de cada item.",
+      "Uso das contas mostra quando cada limite reseta e agrupa as contas do mesmo agente.",
+      "Corrigido: conversas apareciam como ativas \"agora\" sem estar fazendo nada.",
+    ],
+  },
+  {
     version: "0.7.9",
     date: "2026-10-29",
     changes: [

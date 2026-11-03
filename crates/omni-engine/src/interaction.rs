@@ -222,9 +222,30 @@ fn escolha_numerada(text: &str) -> Option<Escolha> {
     Some(Escolha { pergunta, detalhe: (!detalhe.is_empty()).then_some(detalhe), opcoes, multipla, etapas, previa, setas: None })
 }
 
+/// Campo do Cursor Agent (2026.10.22): a última linha `→ …`. Vazio ele mostra a dica
+/// ("Plan, search, build anything" na conversa nova, "Add a follow-up" depois); trabalhando, a mesma
+/// linha ganha "ctrl+c to stop" no fim. O cursor do terminal fica parado no fim da linha, então o
+/// `composer_vazio` (que olha o que está antes do cursor) não serve para ele.
+fn campo_do_cursor(texto: &str) -> Option<&str> {
+    texto.lines().rev().map(str::trim).find_map(|l| l.strip_prefix("→ "))
+}
+
+pub(crate) fn cursor_em_turno(texto: &str) -> bool {
+    campo_do_cursor(texto).is_some_and(|campo| campo.ends_with("ctrl+c to stop"))
+}
+
+/// Campo do Cursor sem texto digitado: só a dica (com ou sem o "ctrl+c to stop" do turno).
+pub(crate) fn cursor_campo_vazio(texto: &str) -> bool {
+    campo_do_cursor(texto).is_some_and(|campo| {
+        let dica = campo.trim_end_matches("ctrl+c to stop").trim_end();
+        dica == "Plan, search, build anything" || dica == "Add a follow-up"
+    })
+}
+
 /// Require provider chrome plus an empty composer at the actual terminal cursor.
 pub fn ready(screen: &vt100::Screen, provider: &str) -> bool {
     let text = screen.contents();
+    if provider == "cursor" { return screen.bracketed_paste() && cursor_campo_vazio(&text) && !cursor_em_turno(&text); }
     // "Claude Code" only shows in the startup banner; it scrolls out of the visible screen after
     // the first exchange, so requiring it here made this permanently false for any session with
     // history (confirmed against a real running session — the idle composer never re-shows it).
@@ -278,6 +299,8 @@ pub fn area_do_turno(texto: &str) -> String {
 /// do `ready`, só que com o "esc to interrupt" na tela em vez de proibido por ele.
 pub fn pode_enfileirar(screen: &vt100::Screen, provider: &str) -> bool {
     let text = screen.contents();
+    // O Cursor também aceita mensagem no meio do turno ("Add a follow-up" com "ctrl+c to stop").
+    if provider == "cursor" { return screen.bracketed_paste() && cursor_campo_vazio(&text) && cursor_em_turno(&text); }
     let brand = matches!(provider, "claude" | "codex");
     brand && screen.bracketed_paste() && composer_vazio(screen)
         && area_do_turno(&text).to_lowercase().contains("esc to interrupt")
@@ -353,7 +376,7 @@ pub fn submeter_colagem(session: &Arc<LiveSession>) -> Result<()> {
     let limite = Instant::now() + ESPERA_DA_COLAGEM;
     loop {
         let vazio = session.interaction.lock().map_err(|_| anyhow!("screen poisoned"))
-            .map(|context| composer_vazio(context.parser.screen()))?;
+            .map(|context| composer_vazio(context.parser.screen()) || cursor_campo_vazio(&context.parser.screen().contents()))?;
         // Campo preenchido: a colagem chegou. Sem eco até o limite, manda assim mesmo — é o único
         // jeito de submeter, e uma CLI que não desenha o campo não pode travar o envio para sempre.
         if !vazio || Instant::now() >= limite { break; }
@@ -390,7 +413,8 @@ pub fn approval(text: &str, provider: &str) -> Option<(String, String, String)> 
 
 /// Nome do executável de cada CLI quando difere do id do provider.
 fn executavel(provider: &str) -> &str {
-    match provider { "antigravity" => "agy", outro => outro }
+    // O `agent` do Cursor é um .cmd que sobe o `node.exe` empacotado com ele.
+    match provider { "antigravity" => "agy", "cursor" => "node", outro => outro }
 }
 
 #[cfg(windows)]
@@ -1316,6 +1340,16 @@ Ready to submit your answers?
             assert_eq!(aprova, esperado == "aprovacao", "{nome}: aprovação");
             // Como em `capabilities`: com aprovação na tela, menu nem é procurado.
             assert_eq!(!aprova && escolha(&tela).is_some(), esperado == "escolha", "{nome}: escolha");
+            if cli == "cursor" {
+                // Cursor: campo parado só com a dica = pronto; "ctrl+c to stop" = turno (aceita fila).
+                let mut parser = vt100::Parser::new(40, 120, 0);
+                parser.process(format!("\x1b[?2004h{}", tela.replace('\n', "\r\n")).as_bytes());
+                let parado = nome.contains(".inicio-") || nome.contains(".pronto-");
+                let turno = nome.contains(".trabalhando-") || nome.contains(".rodando-");
+                assert_eq!(ready(parser.screen(), cli), parado, "{nome}: pronto");
+                assert_eq!(cursor_em_turno(&tela), turno, "{nome}: turno");
+                assert_eq!(pode_enfileirar(parser.screen(), cli), turno, "{nome}: fila");
+            }
             if nome.contains(".limite-") {
                 // Rodapé do limite de uso: campo livre (troca de conta liberada) e aviso reconhecido.
                 assert!(!cancelavel(&tela), "{nome}: rodapé do limite travou o campo");
@@ -1333,8 +1367,9 @@ Ready to submit your answers?
         let mut ctx = Interaction::new(j["rows"].as_u64().unwrap() as u16, j["cols"].as_u64().unwrap() as u16);
         ctx.parser.process(&sem_substituto(j["data"].as_str().unwrap().as_bytes()));
         let tela = linha_a_linha(ctx.parser.screen());
+        let cli = std::env::var("OMNI_TELA_CLI").unwrap_or_else(|_| "claude".into());
         println!("=== TELA ===\n{tela}\n=== ready={} composer_vazio={} escolha={:?} approval={:?} cursor={:?}",
-            ready(ctx.parser.screen(), "claude"), composer_vazio(ctx.parser.screen()), escolha(&tela).map(|e| e.pergunta), approval(&tela, "claude").map(|a| a.0), ctx.parser.screen().cursor_position());
+            ready(ctx.parser.screen(), &cli), composer_vazio(ctx.parser.screen()), escolha(&tela).map(|e| e.pergunta), approval(&tela, &cli).map(|a| a.0), ctx.parser.screen().cursor_position());
     }
 }
 
@@ -1347,6 +1382,57 @@ mod sonda {
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
     use super::composer_vazio;
+
+    /// Sonda do Cursor Agent: abre o `agent`, manda `OMNI_SONDA_PEDIDOS` (separados por `|`) e grava
+    /// cada tela diferente (com cursor e bracketed paste) em `OMNI_SONDA_SAIDA`, para montar o acervo.
+    #[test]
+    #[ignore = "abre a CLI real e gasta um pouco de uso da conta"]
+    fn sonda_cursor() {
+        let pty = native_pty_system().openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let mut comando = CommandBuilder::new("cmd.exe");
+        for a in ["/c", "agent", "--trust"] { comando.arg(a); }
+        comando.cwd(std::env::var("OMNI_SONDA_CWD").unwrap_or_else(|_| std::env::temp_dir().to_string_lossy().into_owned()));
+        let _filho = pty.slave.spawn_command(comando).unwrap();
+        let parser = Arc::new(Mutex::new(vt100::Parser::new(40, 120, 0)));
+        let mut leitor = pty.master.try_clone_reader().unwrap();
+        let mut escritor = pty.master.take_writer().unwrap();
+        let p = parser.clone();
+        let pedidos = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let pd = pedidos.clone();
+        std::thread::spawn(move || { let mut buf = [0u8; 8192]; while let Ok(n) = leitor.read(&mut buf) { if n == 0 { break; }
+            pd.fetch_add(buf[..n].windows(4).filter(|w| *w == b"\x1b[6n").count(), std::sync::atomic::Ordering::SeqCst);
+            p.lock().unwrap().process(&super::sem_substituto(&buf[..n])); } });
+        let mut saida = String::new();
+        let mut ultima = String::new();
+        let mut respondidos = 0;
+        let mut amostrar = |escritor: &mut Box<dyn Write + Send>, segundos: u64, saida: &mut String, rotulo: &str| {
+            let fim = Instant::now() + Duration::from_secs(segundos);
+            while Instant::now() < fim {
+                std::thread::sleep(Duration::from_millis(250));
+                let agora = pedidos.load(std::sync::atomic::Ordering::SeqCst);
+                for _ in respondidos..agora { let _ = escritor.write_all(b"\x1b[1;1R"); }
+                respondidos = agora;
+                let p = parser.lock().unwrap();
+                let tela = p.screen().contents();
+                if tela != ultima {
+                    saida.push_str(&format!("
+===== {rotulo} cursor={:?} paste={} =====
+{tela}
+", p.screen().cursor_position(), p.screen().bracketed_paste()));
+                    ultima = tela;
+                }
+            }
+        };
+        amostrar(&mut escritor, 25, &mut saida, "inicio");
+        for pedido in std::env::var("OMNI_SONDA_PEDIDOS").unwrap_or_default().split('|').filter(|p| !p.is_empty()) {
+            let _ = escritor.write_all(format!("\x1b[200~{pedido}\x1b[201~").as_bytes());
+            amostrar(&mut escritor, 2, &mut saida, &format!("colado {pedido}"));
+            let _ = escritor.write_all(b"\r");
+            amostrar(&mut escritor, 45, &mut saida, &format!("depois {pedido}"));
+        }
+        std::fs::write(std::env::var("OMNI_SONDA_SAIDA").unwrap(), &saida).unwrap();
+        let _ = escritor.write_all(b"\x03"); std::thread::sleep(Duration::from_millis(300)); let _ = escritor.write_all(b"\x03");
+    }
 
     #[test]
     #[ignore = "abre a CLI real e gasta um pouco de uso da conta"]

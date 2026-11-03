@@ -765,6 +765,7 @@ fn historical_entries(state: &EngineState) -> Vec<omni_core::history::HistoryEnt
     let profiles = omni_core::profiles(state.state_file.parent().unwrap());
     let mut entries = omni_core::history::scan("claude", &profiles, &mut history.scan);
     entries.extend(omni_core::history::scan("codex", &profiles, &mut history.scan));
+    entries.extend(omni_core::history::scan("cursor", &profiles, &mut history.scan));
     entries.sort_by_key(|entry| std::cmp::Reverse(entry.updated_at_ms));
     history.entries = entries;
     history.scanned_at_ms = now;
@@ -851,7 +852,10 @@ fn resumo(state: &EngineState, c: &omni_core::conversations::Conversation) -> Va
 /// Último sinal de vida da conversa: saída do terminal, escrita no transcript ou a criação. É o que
 /// ordena a lista — a conversa em que você está mexendo fica no topo, como num app de mensagens.
 fn atividade(c: &omni_core::conversations::Conversation, live: Option<&Arc<LiveSession>>) -> u64 {
-    let terminal = live.and_then(|s| s.meta.lock().ok().map(|meta| meta.last_activity_at_ms)).unwrap_or(0);
+    // `last_activity_at_ms` sobe a cada redesenho da TUI (cursor, relógio): parada, mostrava "agora" para
+    // sempre. Vale o último evento de verdade; a atividade do terminal só enquanto trabalha.
+    let terminal = live.and_then(|s| s.meta.lock().ok().map(|meta|
+        if meta.state == omni_protocol::SessionState::Working { meta.last_activity_at_ms } else { meta.attention_at_ms })).unwrap_or(0);
     let transcript = c.segments.last().and_then(|s| s.transcript_path.as_deref())
         .and_then(|path| omni_protocol::modified_ms(Path::new(path))).unwrap_or(0);
     c.created_at_ms.max(terminal).max(transcript)
@@ -999,9 +1003,11 @@ async fn ocultar(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath
 /// que sai o id da CLI e a conta. Devolve o id da conversa nova para a tela abrir.
 async fn bifurcar_rota(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>) -> Result<(StatusCode,Json<Value>), ApiError> {
     tokio::task::spawn_blocking(move || {
-        let (_, sessao) = current(&state,&id)?;
-        let sessao = sessao.ok_or_else(||error(StatusCode::CONFLICT,"Retome a conversa antes de bifurcar: ela precisa estar aberta no PC"))?;
-        let fonte = sessao.meta.lock().map(|meta| meta.clone()).map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Sessão indisponível"))?;
+        let viva = current(&state,&id).ok().and_then(|(_, sessao)| sessao);
+        let fonte = match viva {
+            Some(sessao) => sessao.meta.lock().map(|meta| meta.clone()).map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Sessão indisponível"))?,
+            None => origem_do_historico(&state,&id)?,
+        };
         let provider = fonte.provider.clone().filter(|p| p == "claude" || p == "codex")
             .ok_or_else(||error(StatusCode::CONFLICT,"Só dá para bifurcar conversas do Claude e do Codex"))?;
         if state.sessions.lock().expect("sessions poisoned").values()
@@ -1012,6 +1018,25 @@ async fn bifurcar_rota(State(state): State<Arc<EngineState>>, RoutePath(id): Rou
         let EngineResponse::Session { session } = resposta else { return Err(error(StatusCode::INTERNAL_SERVER_ERROR,"Resposta inesperada")); };
         Ok((StatusCode::CREATED,Json(json!({"id":session.conversation_id,"title":session.name}))))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao bifurcar"))?
+}
+
+/// Conversa fechada (do índice ou só do histórico da CLI) como origem do fork, sem reabrir a original:
+/// o fork só precisa de pasta, conta e id da sessão da CLI — o mesmo que a retomada resolve.
+fn origem_do_historico(state: &EngineState, id: &str) -> Result<TerminalSession, ApiError> {
+    let plano = plano_de_retomada(state,id,Ajustes { profile_id: None, model: None, effort: None })?;
+    let env = omni_core::profiles(state.state_file.parent().unwrap()).iter()
+        .find(|p| Some(&p.id) == plano.profile_id.as_ref() && p.provider == plano.provider)
+        .map(omni_core::env_for).unwrap_or_default();
+    let mut sessao: TerminalSession = serde_json::from_value(json!({
+        "id": "", "project_id": plano.project_id, "name": plano.title, "cwd": plano.cwd, "shell": "", "state": "stopped",
+        "pid": null, "created_at_ms": 0, "last_activity_at_ms": 0, "output_seq": 0, "rows": 30, "cols": 120,
+    })).map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Sessão indisponível"))?;
+    sessao.env = env;
+    sessao.provider = Some(plano.provider);
+    sessao.profile_id = plano.profile_id;
+    sessao.conversation_id = Some(plano.conversation_id);
+    sessao.external_session_id = Some(plano.session_id);
+    Ok(sessao)
 }
 
 /// A conversa (do índice ou só do histórico da CLI) como itens da timeline, com título, pasta,
@@ -1374,10 +1399,38 @@ async fn parar(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<S
 async fn renomear(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>, Json(body): Json<NomeBody>) -> Result<Json<Value>, ApiError> {
     tokio::task::spawn_blocking(move || {
         let dir = state.state_file.parent().unwrap();
-        let conversa = omni_core::conversations::rename(dir,&id,&body.nome)
-            .map_err(|erro| error(StatusCode::BAD_REQUEST,&erro))?;
+        let conversa = match omni_core::conversations::rename(dir,&id,&body.nome) {
+            // Só no histórico da CLI (nunca passou pelo OMNI): entra no índice, fechada, e aí ganha o nome.
+            Err(erro) if erro == "Conversa não encontrada" => {
+                let novo = adotar_do_historico(&state,&id)?;
+                omni_core::conversations::rename(dir,&novo,&body.nome)
+            }
+            outro => outro,
+        }.map_err(|erro| error(StatusCode::BAD_REQUEST,&erro))?;
         Ok(Json(json!({"id":conversa.id,"title":conversa.title})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao renomear"))?
+}
+
+/// Põe no índice, fechada, uma conversa que só existe no histórico da CLI — com o mesmo id que a
+/// retomada daria. A lista deixa de mostrar a entrada do histórico (mesma sessão) e mostra esta.
+fn adotar_do_historico(state: &EngineState, id: &str) -> Result<String, ApiError> {
+    let plano = plano_de_retomada(state,id,Ajustes { profile_id: None, model: None, effort: None })?;
+    let dir = state.state_file.parent().unwrap();
+    let mut indice = omni_core::conversations::read_index(dir);
+    if !indice.iter().any(|c| c.id == plano.conversation_id) {
+        // Data da última mensagem, não de agora: senão a conversa antiga subiria para o topo como "agora".
+        let quando = plano.transcript.as_deref().and_then(|t| omni_protocol::modified_ms(Path::new(t))).unwrap_or(0);
+        indice.push(omni_core::conversations::Conversation {
+            id: plano.conversation_id.clone(), project_id: plano.project_id, cwd: plano.cwd, title: plano.title,
+            title_source: omni_core::conversations::TitleSource::Auto, created_at_ms: quando,
+            segments: vec![omni_core::conversations::Segment {
+                provider: plano.provider, profile_id: plano.profile_id, external_session_id: Some(plano.session_id),
+                transcript_path: plano.transcript, terminal_session_id: None, started_at_ms: quando, ended_at_ms: Some(quando), historico_ate_ms: None,
+            }],
+        });
+        omni_core::conversations::write_index(dir,&indice).map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao gravar"))?;
+    }
+    Ok(plano.conversation_id)
 }
 
 /// Tamanho máximo de um anexo vindo do celular. Cobre foto de câmera, PDF e print com folga, e
@@ -1744,17 +1797,29 @@ fn modelos_codex(config_dir: &Path) -> Vec<Value> {
 /// então fica guardada um dia em `modelos-antigravity.txt` no engine. Falhou e não há cópia: vazio, e
 /// o seletor some em vez de travar a conversa.
 fn saida_agy_models(dir: &Path) -> String {
-    let arquivo = dir.join("modelos-antigravity.txt");
+    let mut comando = std::process::Command::new("agy");
+    comando.arg("models");
+    saida_em_cache(dir, "modelos-antigravity.txt", comando, |texto| !omni_core::antigravity::variantes(texto).is_empty())
+}
+
+/// `agent models` (Cursor), guardado um dia como o do Antigravity. O `agent` é um `.cmd`: só pelo `cmd`.
+fn saida_agent_models(dir: &Path) -> String {
+    let mut comando = std::process::Command::new("cmd");
+    comando.args(["/c", "agent", "models"]);
+    saida_em_cache(dir, "modelos-cursor.txt", comando, |texto| !omni_core::cursor::modelos(texto).is_empty())
+}
+
+fn saida_em_cache(dir: &Path, nome: &str, mut comando: std::process::Command, valida: fn(&str) -> bool) -> String {
+    let arquivo = dir.join(nome);
     let fresca = std::fs::metadata(&arquivo).and_then(|m| m.modified()).ok()
         .and_then(|quando| quando.elapsed().ok()).is_some_and(|idade| idade < std::time::Duration::from_secs(24 * 3600));
     let guardada = std::fs::read_to_string(&arquivo).ok();
     if fresca { if let Some(texto) = guardada.clone() { return texto; } }
     omni_core::cli_path::ampliar_path();
-    let mut comando = std::process::Command::new("agy");
-    comando.arg("models").stdin(std::process::Stdio::null());
+    comando.stdin(std::process::Stdio::null());
     #[cfg(windows)] { use std::os::windows::process::CommandExt; comando.creation_flags(0x08000000); }
     match comando.output() {
-        Ok(saida) if saida.status.success() && !omni_core::antigravity::variantes(&String::from_utf8_lossy(&saida.stdout)).is_empty() => {
+        Ok(saida) if saida.status.success() && valida(&String::from_utf8_lossy(&saida.stdout)) => {
             let texto = String::from_utf8_lossy(&saida.stdout).into_owned();
             let _ = std::fs::write(&arquivo, &texto);
             texto
@@ -1816,12 +1881,16 @@ fn opcoes_da_conversa(state: &EngineState, id: &str) -> Result<Value, ApiError> 
         "codex" => atual.map(|perfil| modelos_codex(Path::new(&perfil.config_dir))).unwrap_or_default(),
         "antigravity" => omni_core::antigravity::familias(&saida_agy).into_iter()
             .map(|f| json!({"id":f.id,"label":f.label,"efforts":f.esforcos})).collect(),
+        "cursor" => omni_core::cursor::modelos(&saida_agent_models(dir)).into_iter()
+            .map(|(id,label)| json!({"id":id,"label":label,"hint":id,"efforts":[]})).collect(),
         _ => Vec::new(),
     };
+    let modelo_cursor = segmento.transcript_path.as_deref().filter(|_| segmento.provider == "cursor")
+        .and_then(|store| omni_core::cursor::modelo(Path::new(store)));
     Ok(json!({
         "provider": segmento.provider,
         "profile_id": segmento.profile_id,
-        "model": runtime.as_ref().and_then(|r| r.model.clone()).or(modelo_agy),
+        "model": runtime.as_ref().and_then(|r| r.model.clone()).or(modelo_agy).or(modelo_cursor),
         "effort": runtime.as_ref().and_then(|r| r.effort.clone()).or(esforco_agy),
         "profiles": perfis.iter().map(|p| json!({"id":p.id,"name":p.name})).collect::<Vec<_>>(),
         "models": modelos,
@@ -2169,12 +2238,14 @@ fn comando_de_retomada(base: &str, provider: &str, sessao: &str, ajustes: &Ajust
     let mut comando = match provider {
         "claude" => format!("{base} --resume {sessao}"),
         "codex" => format!("{base} resume {sessao}"),
+        // O agent não tem esforço separado: ele vem no nome do modelo (`claude-opus-4-8[effort=high]`).
+        "cursor" => format!("{base} --resume {sessao}"),
         _ => return Err(anyhow!("Este agente não permite trocar conta, modelo ou esforço")),
     };
     if let Some(modelo) = &ajustes.model {
-        comando += &if provider == "claude" { format!(" --model {modelo}") } else { format!(" -m {modelo}") };
+        comando += &if provider == "codex" { format!(" -m {modelo}") } else { format!(" --model {modelo}") };
     }
-    if let Some(esforco) = &ajustes.effort {
+    if let Some(esforco) = ajustes.effort.as_ref().filter(|_| provider != "cursor") {
         // Sem aspas de propósito: o `-c` do Codex lê o valor como TOML e, se não for TOML válido,
         // usa o texto cru — e aspas mudariam de sentido entre bash e PowerShell.
         comando += &if provider == "claude" { format!(" --effort {esforco}") } else { format!(" -c model_reasoning_effort={esforco}") };
@@ -2896,7 +2967,7 @@ mod tests {
 quebra"}"#] {
             assert_eq!(app.clone().oneshot(req("POST","/conversas/c/nome","http://127.0.0.1:47322",lixo)).await.unwrap().status(),StatusCode::BAD_REQUEST);
         }
-        assert_eq!(app.oneshot(req("POST","/conversas/desconhecida/nome","http://127.0.0.1:47322",r#"{"nome":"x"}"#)).await.unwrap().status(),StatusCode::BAD_REQUEST);
+        assert_eq!(app.oneshot(req("POST","/conversas/desconhecida/nome","http://127.0.0.1:47322",r#"{"nome":"x"}"#)).await.unwrap().status(),StatusCode::NOT_FOUND);
     }
 
     /// Ocultar tira da lista (marca `hidden`), reabrir devolve; id estranho nem chega ao disco.
@@ -3613,7 +3684,8 @@ quebra"}"#] {
             assert_eq!(comando_de_retomada("codex","codex","xyz",&ajustes(Some("gpt-5.6-sol"),Some("xhigh"))).unwrap(),
                 "codex resume xyz -m gpt-5.6-sol -c model_reasoning_effort=xhigh");
             assert_eq!(comando_de_retomada("claude","claude","abc",&ajustes(None,None)).unwrap(), "claude --resume abc");
-            assert!(comando_de_retomada("cursor-agent","cursor","abc",&ajustes(None,None)).is_err());
+            assert_eq!(comando_de_retomada("agent --trust","cursor","chat-1",&ajustes(Some("gpt-5"),Some("high"))).unwrap(), "agent --trust --resume chat-1 --model gpt-5");
+            assert!(comando_de_retomada("x","outro","abc",&ajustes(None,None)).is_err());
             assert_eq!(comando_de_retomada("agy","antigravity","c1",&ajustes(Some("gemini-4-argon"),Some("high"))).unwrap(),
                 "agy --model gemini-4-argon --effort high --conversation c1");
             assert_eq!(comando_de_retomada("agy","antigravity","c1",&ajustes(None,None)).unwrap(), "agy --conversation c1");

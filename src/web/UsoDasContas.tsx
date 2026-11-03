@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { ChartIcon, ChevronDownIcon, ReloadIcon } from "../components/ui/PixelIcon";
@@ -33,8 +33,17 @@ function Janela({ rotulo, janela }: { rotulo: string; janela: UsageWindow | null
         <span className={`w-uso-preenchido ${tom.bar}`} style={{ width: `${usado}%` }} />
       </span>
       <span className={`w-uso-pct ${tom.text}`} data-valor={janela.used_percent}>{janela.used_percent.toLocaleString("pt-BR")}%</span>
+      <span className="w-uso-reset">{reset ? <>reseta {reset}{janela.resets_at ? <b> · {faltaPara(janela.resets_at * 1000)}</b> : null}</> : "—"}</span>
     </span>
   );
+}
+
+/** "em 2h 10min" até o reset; "agora" se já passou. */
+function faltaPara(ms: number, agora = Date.now()): string {
+  const min = Math.round((ms - agora) / 60_000);
+  if (min <= 0) return "agora";
+  const d = Math.floor(min / 1440), h = Math.floor((min % 1440) / 60), m = min % 60;
+  return `em ${d ? `${d}d ${h}h` : h ? `${h}h ${m}min` : `${m}min`}`;
 }
 
 /**
@@ -96,8 +105,11 @@ export function UsoDasContas({ contaAtiva, daConversa, animar = false }: {
     return () => ctx.revert();
   }, [animar, temContas]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const visiveis = !daConversa ? contas : contas.filter((conta) => daConversa.profileId
-    ? conta.id === daConversa.profileId : conta.provider === daConversa.provider);
+  // Contas do mesmo agente juntas (as duas do Claude lado a lado), na ordem Claude, Codex, Antigravity, Cursor.
+  const ordem = (provider: string) => { const i = Object.keys(AGENTE).indexOf(provider); return i < 0 ? 99 : i; };
+  const visiveis = (!daConversa ? contas : contas.filter((conta) => daConversa.profileId
+    ? conta.id === daConversa.profileId : conta.provider === daConversa.provider))
+    .map((conta, i) => ({ conta, i })).sort((a, b) => ordem(a.conta.provider) - ordem(b.conta.provider) || a.i - b.i).map(({ conta }) => conta);
   if (visiveis.length === 0) return null;
   // Claude, Codex e Antigravity sabem reler o uso na hora; o Cursor não tem leitura.
   const atualizaveis = visiveis.filter((conta) => AGENTES_COM_USO.includes(conta.provider));
@@ -115,12 +127,20 @@ export function UsoDasContas({ contaAtiva, daConversa, animar = false }: {
         )}
       </div>}
       <ul ref={lista} className={`w-uso${animar ? " is-animado" : ""}`}>
-        {visiveis.map((conta) => (
-          <li key={conta.id} className={`w-uso-conta${conta.id === contaAtiva ? " w-uso-conta-ativa" : ""}`}>
+        {visiveis.map((conta, i) => (
+          <Fragment key={conta.id}>
+          {!daConversa && conta.provider !== visiveis[i - 1]?.provider && (
+            <li className="w-uso-grupo" aria-hidden>
+              <AgentIcon provider={conta.provider} size={12} className="shrink-0" />
+              <span>{AGENTE[conta.provider] ?? conta.provider}</span>
+              {(() => { const n = visiveis.filter((c) => c.provider === conta.provider).length; return <span className="w-uso-grupo-conta">{n} {n === 1 ? "conta" : "contas"}</span>; })()}
+            </li>
+          )}
+          <li className={`w-uso-conta${conta.id === contaAtiva ? " w-uso-conta-ativa" : ""}`}>
             <span className="w-uso-nome">
               <AgentIcon provider={conta.provider} size={12} className="shrink-0" />
               <span className="w-uso-texto">{conta.name}</span>
-              <span className="w-uso-agente">{AGENTE[conta.provider] ?? conta.provider}</span>
+              {daConversa && <span className="w-uso-agente">{AGENTE[conta.provider] ?? conta.provider}</span>}
             </span>
             {erros[conta.id] && <span className="w-uso-vazio w-uso-erro" role="alert">{erros[conta.id]}</span>}
             {conta.usage && conta.usage.status !== "unavailable" ? (
@@ -140,6 +160,7 @@ export function UsoDasContas({ contaAtiva, daConversa, animar = false }: {
               </button>
             )}
           </li>
+          </Fragment>
         ))}
       </ul>
     </>

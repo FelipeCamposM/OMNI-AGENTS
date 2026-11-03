@@ -192,6 +192,7 @@ export interface AgentLaunch {
 export const AGENT_RESUME_FLAG: Partial<Record<AgentCliId, string>> = {
   claude: "--continue",
   codex: "resume --last",
+  cursor: "--continue",
 };
 
 export interface PublishedProject {

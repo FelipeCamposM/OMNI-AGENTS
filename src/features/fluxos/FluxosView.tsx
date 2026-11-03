@@ -17,10 +17,12 @@ import { ManualDeAgentes } from "../agentes/ManualDeAgentes";
 import { Microfone } from "../../mobile/Composer";
 import "../../mobile/mobile.css";
 import { ArestaDoFluxo, type ArestaOmni } from "./ArestaDoFluxo";
-import { NoDoFluxoView, type NoOmni } from "./NoDoFluxo";
+import { ICONE, NoDoFluxoView, type NoOmni } from "./NoDoFluxo";
+import { NovoFluxo } from "./NovoFluxo";
+import "./fluxos.css";
 import {
   abrirConversaDoNo, acaoNaExecucao, apagarFluxo, aprovarNo, criarFluxoComIa, etapasDoFluxo, fluxoVazio, historicoDoNo, iniciarExecucao,
-  lerJsonDeFluxo, listarConversasParaFluxo, listarExecucoes, listarFluxos, obterExecucao, pedidoComConversa, salvarFluxo, TIPOS, validarFluxo,
+  lerJsonDeFluxo, listarConversasParaFluxo, listarExecucoes, listarFluxos, obterExecucao, pedidoComConversa, SAIDAS, salvarFluxo, TIPOS, validarFluxo,
   type Execucao, type Fluxo, type FluxoGerado, type FluxoSalvo, type ItemDoHistorico, type NoDoFluxo, type ResumoDaExecucao, type TipoDeNo,
 } from "./fluxosService";
 
@@ -92,7 +94,7 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
   const [iniciando, setIniciando] = useState(false);
-  const [dialogo, setDialogo] = useState<"executar" | "ia" | "json" | null>(null);
+  const [dialogo, setDialogo] = useState<"novo" | "executar" | "ia" | "json" | null>(null);
   const [manual, setManual] = useState(false);
   const [menu, setMenu] = useState<MenuRapido | null>(null);
   const [detalhes, setDetalhes] = useState(false);
@@ -162,6 +164,8 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
       deletable: !emExecucao && no.tipo !== "entrada", draggable: !emExecucao,
       data: {
         no, estado, cli: estado?.cli ?? agente?.cli,
+        ligadas: (fluxoNaTela?.conexoes ?? []).filter((c) => c.de === no.id).map((c) => c.saida ?? ""),
+        temEntrada: (fluxoNaTela?.conexoes ?? []).some((c) => c.para === no.id),
         modelo: estado?.modelo ?? (String(no.config.modelo ?? "") || agente?.modelo || undefined),
         esforco: estado?.esforco ?? (String(no.config.esforco ?? "") || agente?.esforco || undefined),
         ...(emExecucao ? {} : { onDuplicar: duplicarNo, onApagar: apagarNo }),
@@ -251,6 +255,27 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
     setMenu(null);
   }
 
+  /** "+ Etapa" com uma etapa selecionada: entra logo depois dela, já ligada. Se ela já ia para outra
+   *  etapa, a nova fica no meio do caminho e o que vinha depois anda uma casa para a direita. */
+  function adicionarEtapa(tipo: TipoDeNo) {
+    const base = rascunho?.nos.find((n) => n.id === selecionado);
+    const saida = base ? SAIDAS[base.tipo][0] : undefined;
+    if (!base || saida === undefined) { criarNo(tipo); return; }
+    const novo = criarNo(tipo, { x: base.x + 280 + 110, y: base.y + 40 });
+    if (!novo) return;
+    const saidaNova = SAIDAS[tipo][0];
+    mudarRascunho((r) => {
+      const seguinte = r.conexoes.find((c) => c.de === base.id && (c.saida ?? "") === saida);
+      if (!seguinte || saidaNova === undefined) return r;
+      return {
+        ...r,
+        nos: r.nos.map((n) => (n.id !== novo.id && n.x > base.x ? { ...n, x: n.x + 280 } : n)),
+        conexoes: r.conexoes.map((c) => (c === seguinte ? { de: novo.id, para: c.para, ...(saidaNova ? { saida: saidaNova } : {}) } : c)),
+      };
+    });
+    ligar(base.id, novo.id, saida || undefined);
+  }
+
   async function salvar() {
     if (!rascunho) return;
     const fluxo = { ...rascunho, id: rascunho.id || nomeDeArquivo(rascunho.nome) };
@@ -315,7 +340,7 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
             {(fechar) => (
               <div className="fx-menu-fluxos">
                 <div className="fx-menu-fluxos-acoes">
-                  <Button variant="primary" size="sm" onClick={() => { fechar(); abrirFluxo(null); }}>+ Novo</Button>
+                  <Button variant="primary" size="sm" onClick={() => { fechar(); setDialogo("novo"); }}>+ Novo</Button>
                   <Button variant="ghost" size="sm" onClick={() => { fechar(); setDialogo("ia"); }}><SparkleIcon aria-hidden className="h-3.5 w-3.5" />Com IA</Button>
                   <Button variant="ghost" size="sm" title="Como usar fluxos e agentes" onClick={() => { fechar(); setManual(true); }}><BookIcon aria-hidden className="h-3.5 w-3.5" />Manual</Button>
                 </div>
@@ -374,11 +399,14 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
               {sujo && <span className="fx-sujo" title="Alterações não salvas">não salvo</span>}
               <span className="flex-1" />
               <Suspenso titulo="Adicionar etapa" alinhar="direita" rotulo="+ Etapa">
-                {(fechar) => TIPOS.map((t) => (
-                  <button key={t.tipo} type="button" role="menuitem" className={`fx-opcao is-${t.tipo}`} onClick={() => { fechar(); criarNo(t.tipo); }}>
-                    <span className="fx-paleta-cor" /><span><b>{t.nome}</b><small>{t.dica}</small></span>
-                  </button>
-                ))}
+                {(fechar) => <>
+                  <p className="fx-suspenso-rotulo">{noSelecionado && SAIDAS[noSelecionado.tipo].length ? `Depois de “${noSelecionado.titulo || NOME_TIPO[noSelecionado.tipo]}”, já ligada` : "No centro da tela (selecione uma etapa para ligar depois dela)"}</p>
+                  {TIPOS.map((t) => { const Icone = ICONE[t.tipo]; return (
+                    <button key={t.tipo} type="button" role="menuitem" className={`fx-opcao is-${t.tipo}`} onClick={() => { fechar(); adicionarEtapa(t.tipo); }}>
+                      <span className="fx-paleta-icone"><Icone aria-hidden className="h-3.5 w-3.5" /></span><span><b>{t.nome}</b><small>{t.dica}</small></span>
+                    </button>
+                  ); })}
+                </>}
               </Suspenso>
               <Suspenso titulo="Mais opções do fluxo" alinhar="direita" rotulo="Opções">
                 {(fechar) => (
@@ -441,16 +469,31 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
               <h3 className="pixel-text">Monte times de agentes como no n8n</h3>
               <p>Arraste etapas, ligue umas nas outras e rode no seu projeto — cada agente numa cópia isolada do repositório.</p>
               <div className="flex flex-wrap justify-center gap-2">
-                <Button variant="primary" onClick={() => abrirFluxo(null)}>+ Novo fluxo</Button>
+                <Button variant="primary" onClick={() => setDialogo("novo")}>+ Novo fluxo</Button>
                 <Button variant="ghost" onClick={() => setDialogo("ia")}><SparkleIcon aria-hidden className="h-3.5 w-3.5" />Criar com IA</Button>
                 <Button variant="ghost" onClick={() => setManual(true)}><BookIcon aria-hidden className="h-3.5 w-3.5" />Como usar</Button>
               </div>
+              {fluxos.length > 0 && (
+                <ul className="fx-boas-vindas-fluxos" aria-label="Seus fluxos">
+                  {fluxos.slice(0, 6).map((f) => (
+                    <li key={`${f.escopo}:${f.id}`}>
+                      <button type="button" className="fx-novo-cartao" onClick={() => abrirFluxo(f, { escopo: f.escopo, id: f.id })} title={f.descricao}>
+                        <span className="fx-novo-etapas" aria-hidden>
+                          {etapasDoFluxo(f).slice(0, 7).map((n) => { const Icone = ICONE[n.tipo]; return <span key={n.id} className={`fx-etapa-num is-${n.tipo}`}><Icone className="h-3 w-3" /></span>; })}
+                        </span>
+                        <b>{f.nome}</b>
+                        <small>{f.escopo === "global" ? "Global" : "Projeto"} · {f.nos.length} etapas</small>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
           {menu && (
             <div className="fx-menu-rapido" style={{ left: menu.x, top: menu.y }} role="menu" aria-label="Criar próxima etapa">
               <p>Próxima etapa{menu.saida && menu.saida !== "out" ? ` (${menu.saida === "nao" ? "não" : menu.saida})` : ""}</p>
-              {TIPOS.map((t) => <button key={t.tipo} type="button" role="menuitem" className={`is-${t.tipo}`} onClick={() => escolherDoMenu(t.tipo)}><span className="fx-paleta-cor" />{t.nome}</button>)}
+              {TIPOS.map((t) => { const Icone = ICONE[t.tipo]; return <button key={t.tipo} type="button" role="menuitem" className={`is-${t.tipo}`} onClick={() => escolherDoMenu(t.tipo)}><span className="fx-paleta-icone"><Icone aria-hidden className="h-3 w-3" /></span>{t.nome}</button>; })}
             </div>
           )}
         </div>
@@ -469,6 +512,10 @@ function Fluxos({ projectId, projectPath, onAbrirSessao, onClose }: Props) {
         ) : null}
       </aside>}
 
+      {dialogo === "novo" && (
+        <NovoFluxo temProjeto={Boolean(projectPath)} onCancelar={() => setDialogo(null)} onIa={() => setDialogo("ia")} onJson={() => setDialogo("json")}
+          onCriar={(f, onde) => { setDialogo(null); abrirFluxo(f, { escopo: onde }); }} />
+      )}
       {dialogo === "executar" && rascunho && (
         <DialogoDeExecucao fluxo={rascunho} agentes={agentes} projeto={projectPath} iniciando={iniciando} onCancelar={() => setDialogo(null)} onIniciar={(t) => void executar(t)} />
       )}

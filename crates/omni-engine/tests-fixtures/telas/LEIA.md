@@ -13,3 +13,7 @@ cargo test -p omni-engine telas_do_acervo
 
 Põe a versão da CLI no nome. Tirando `claude.nada.resposta-cita-pergunta.txt` (sintético: resposta que cita a
 frase de aprovação), todas são capturas reais.
+
+Cursor Agent: `OMNI_SONDA_PEDIDOS="pedido 1|pedido 2" OMNI_SONDA_SAIDA=<arquivo> cargo test -p omni-engine sonda_cursor -- --ignored --nocapture`
+grava cada tela diferente; recorte as que interessam. Nas `cursor.*` o teste também confere pronto (`inicio`/`pronto`) e
+turno (`trabalhando`/`rodando`).

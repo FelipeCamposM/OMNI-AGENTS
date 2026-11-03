@@ -13,6 +13,7 @@ vi.mock("../features/files/filesService", async (original) => ({
   ]),
   createFile: vi.fn().mockResolvedValue(undefined),
   renamePath: vi.fn().mockResolvedValue(undefined),
+  removePath: vi.fn().mockResolvedValue(undefined),
 }));
 
 // jsdom não tem PointerEvent: um MouseEvent com o tipo pointer* carrega button/clientX.
@@ -65,4 +66,17 @@ it("arrastar mostra o item preso ao ponteiro e some ao soltar", async () => {
 
   pointer(window, "pointerup", 100, 120);
   await waitFor(() => expect(screen.queryByTestId("file-drag-ghost")).not.toBeInTheDocument());
+});
+
+it("F2 renomeia e Delete exclui o item em foco", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true);
+  renderTree();
+  const item = (await screen.findByText("a.txt")).closest("button")!;
+  item.focus();
+  fireEvent.keyDown(item, { key: "F2" });
+  expect(screen.getByRole("textbox", { name: "Renomear a.txt" })).toBeInTheDocument();
+  fireEvent.keyDown(screen.getByRole("textbox"), { key: "Escape" });
+
+  fireEvent.keyDown((await screen.findByText("a.txt")).closest("button")!, { key: "Delete" });
+  await waitFor(() => expect(files.removePath).toHaveBeenCalledWith("/p", "/p/a.txt", false));
 });

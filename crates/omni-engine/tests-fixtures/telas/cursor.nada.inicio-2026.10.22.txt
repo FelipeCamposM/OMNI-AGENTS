@@ -1,0 +1,14 @@
+
+
+  Cursor Agent
+  v2026.10.22-27dcf5f
+  Tip: Hit shift+tab to enable Plan Mode for large or complex changes.
+
+
+
+ 
+  → Plan, search, build anything
+ 
+
+  Auto
+  ~\proj\sonda

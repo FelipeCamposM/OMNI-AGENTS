@@ -26,6 +26,7 @@ import {
 const PROVIDERS = [
   { value: "claude" as const, label: "Claude", icon: <AgentIcon provider="claude" size={14} /> },
   { value: "codex" as const, label: "Codex", icon: <AgentIcon provider="codex" size={14} /> },
+  { value: "cursor" as const, label: "Cursor", icon: <AgentIcon provider="cursor" size={14} /> },
 ];
 
 /** Lista longa (centenas de conversas) renderiza aos poucos; a busca é quem acha as antigas. */

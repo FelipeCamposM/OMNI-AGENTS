@@ -2721,9 +2721,48 @@ button.remoto-link:hover { background: rgb(var(--c-accent) / .15); border-style:
 :root[data-motion="desligadas"] .lateral-item:hover::after { transition: none; translate: -110% 0; }
 
 /* Lateral compacta: linhas mais baixas (avatar 26px, respiro menor), mais conversas cabem na tela */
-aside :is(.lateral-item > button, button.lateral-item) { padding-top: .3rem; padding-bottom: .3rem; }
-aside .lateral-item .lateral-avatar { width: 1.625rem; height: 1.625rem; }
-aside .lateral-item .lateral-avatar .lateral-recente-projeto { left: -4px; top: -4px; width: 13px; height: 13px; }
-aside .lateral-item :is(.leading-4) { line-height: .9rem; }
-aside .lateral-item .mt-0\.5 { margin-top: 0; }
+:is(aside, .historico-lista) :is(.lateral-item > button, button.lateral-item) { padding-top: .3rem; padding-bottom: .3rem; }
+:is(aside, .historico-lista) .lateral-item .lateral-avatar { width: 1.625rem; height: 1.625rem; }
+:is(aside, .historico-lista) .lateral-item .lateral-avatar .lateral-recente-projeto { left: -4px; top: -4px; width: 13px; height: 13px; }
+:is(aside, .historico-lista) .lateral-item :is(.leading-4) { line-height: .9rem; }
+:is(aside, .historico-lista) .lateral-item .mt-0\.5 { margin-top: 0; }
 aside .space-y-1 > .lateral-item + .lateral-item, aside .space-y-1 > * + .lateral-item { margin-top: .1875rem; }
+
+/* Menu do botão direito da árvore de arquivos: vidro, cabeçalho com o item e grupos com ícone. */
+.arvore-menu {
+  min-width: 13.5rem; max-width: 20rem; padding: .3rem;
+  background: rgb(var(--c-bg-elevated) / .94); backdrop-filter: blur(14px) saturate(1.4);
+  border: 1px solid rgb(var(--c-border)); border-top-color: rgb(var(--c-overlay) / .16);
+  box-shadow: 0 18px 40px -14px rgb(0 0 0 / .7), 0 0 0 1px rgb(0 0 0 / .25), inset 0 1px 0 rgb(var(--c-overlay) / .06);
+}
+.arvore-menu-cabeca {
+  display: flex; align-items: center; gap: .45rem; margin: -.3rem -.3rem .3rem; padding: .45rem .65rem;
+  font-size: .6875rem; font-weight: 700; color: rgb(var(--c-text-primary));
+  background: linear-gradient(90deg, rgb(var(--c-accent) / .12), transparent 80%);
+  border-bottom: 1px solid rgb(var(--c-border-subtle));
+}
+.arvore-menu-selo {
+  margin-left: auto; padding: 0 .3rem; font-size: .5625rem; font-weight: 800; text-transform: uppercase; letter-spacing: .08em;
+  color: rgb(var(--c-accent)); border: 1px solid rgb(var(--c-accent) / .45);
+}
+.arvore-menu-item {
+  position: relative; display: flex; align-items: center; gap: .55rem; width: 100%; padding: .3rem .45rem;
+  font: inherit; font-size: .75rem; text-align: left; color: rgb(var(--c-text-secondary));
+  background: none; border: 1px solid transparent; cursor: pointer; outline: none;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+  --menu-cor: var(--c-accent);
+}
+.arvore-menu-item.is-perigo { --menu-cor: var(--c-danger); color: rgb(var(--c-danger) / .9); }
+.arvore-menu-icone {
+  display: grid; place-items: center; flex-shrink: 0; width: 1.375rem; height: 1.375rem;
+  color: rgb(var(--menu-cor)); background: rgb(var(--menu-cor) / .1); border: 1px solid rgb(var(--menu-cor) / .3);
+  transition: box-shadow 140ms ease, background-color 140ms ease;
+}
+.arvore-menu-item:is(:hover, :focus-visible) { color: rgb(var(--c-text-primary)); background: rgb(var(--menu-cor) / .1); border-color: rgb(var(--menu-cor) / .35); }
+.arvore-menu-item.is-perigo:is(:hover, :focus-visible) { color: rgb(var(--c-danger)); }
+.arvore-menu-item:is(:hover, :focus-visible) .arvore-menu-icone { background: rgb(var(--menu-cor) / .2); box-shadow: 0 0 10px rgb(var(--menu-cor) / .35); }
+.arvore-menu-item:is(:hover, :focus-visible)::before {
+  content: ""; position: absolute; left: -1px; top: 20%; bottom: 20%; width: 2px; background: rgb(var(--menu-cor));
+}
+.arvore-menu-linha { margin: .25rem .35rem; border: 0; border-top: 1px dashed rgb(var(--c-border-subtle)); }
+.arvore-menu-atalho { padding: 0 .3rem; font: inherit; font-size: .5625rem; font-weight: 700; color: rgb(var(--c-text-muted)); border: 1px solid rgb(var(--c-border-subtle)); background: rgb(var(--c-overlay) / .04); }

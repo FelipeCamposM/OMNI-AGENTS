@@ -12,6 +12,7 @@ pub mod relatorio;
 pub mod agentes;
 pub mod fluxos;
 pub mod antigravity;
+pub mod cursor;
 pub mod comandos;
 pub mod armazenamento;
 pub mod mestra;

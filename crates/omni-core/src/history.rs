@@ -1,4 +1,4 @@
-//! Histórico nativo do Claude Code e do Codex: tudo que o CLI gravou em disco, com a conversa aberta
+//! Histórico nativo do Claude Code, do Codex e do Cursor: tudo que o CLI gravou em disco, com a conversa aberta
 //! pelo OMNI ou não. Diferente de `conversations`, que só conhece o que nasceu aqui dentro.
 //! Só lê transcripts dentro da pasta de uma conta cadastrada; nunca toca em credencial.
 use crate::{conversations::{text_message, timestamp}, Profile};
@@ -136,6 +136,24 @@ pub fn codex_entry(path: &Path, profile: &Profile, titles: &HashMap<String, Stri
     Some(entry)
 }
 
+/// `<config>/chats/<hash>/<chatId>/meta.json` + `store.db` (ver `crate::cursor`). O agent cria o
+/// chat ao abrir; sem nenhuma mensagem (`hasConversation` falso) não é conversa.
+pub fn cursor_entry(meta_json: &Path, profile: &Profile) -> Option<HistoryEntry> {
+    let meta = crate::cursor::meta(meta_json)?;
+    if meta["hasConversation"] != true { return None; }
+    let pasta = meta_json.parent()?;
+    let store = pasta.join("store.db");
+    let mut entry = blank("cursor", profile, pasta.file_name()?.to_string_lossy().into_owned(), &store);
+    entry.title = meta["title"].as_str().filter(|t| !t.trim().is_empty()).map(str::to_owned);
+    entry.cwd = meta["cwd"].as_str().map(str::to_owned);
+    entry.started_at_ms = meta["createdAtMs"].as_u64();
+    entry.updated_at_ms = meta["updatedAtMs"].as_u64().unwrap_or(entry.updated_at_ms);
+    entry.first_prompt = crate::cursor::itens(&store).ok()?.into_iter()
+        .find(|e| e.item.role == "user").map(|e| preview(&e.item.text));
+    entry.first_prompt.as_ref()?;
+    Some(entry)
+}
+
 fn codex_titles(config_dir: &Path) -> HashMap<String, String> {
     let Ok(file) = File::open(config_dir.join("session_index.jsonl")) else { return HashMap::new() };
     BufReader::new(file)
@@ -169,6 +187,8 @@ pub fn scan(provider: &str, profiles: &[Profile], cache: &mut ScanCache) -> Vec<
         let (paths, titles) = match provider {
             "claude" => (claude_transcripts(root), HashMap::new()),
             "codex" => (crate::rollouts(&root.join("sessions")), codex_titles(root)),
+            // O cache é pelo `meta.json`: o `store.db` em WAL não muda de data a cada mensagem.
+            "cursor" => (crate::cursor::chats(root), HashMap::new()),
             _ => continue,
         };
         for path in paths {
@@ -177,7 +197,11 @@ pub fn scan(provider: &str, profiles: &[Profile], cache: &mut ScanCache) -> Vec<
             let entry = match cached {
                 Some(entry) => entry,
                 None => {
-                    let entry = if provider == "claude" { claude_entry(&path, profile) } else { codex_entry(&path, profile, &titles) };
+                    let entry = match provider {
+                        "claude" => claude_entry(&path, profile),
+                        "cursor" => cursor_entry(&path, profile),
+                        _ => codex_entry(&path, profile, &titles),
+                    };
                     cache.insert(path.clone(), (modified, size, entry.clone()));
                     entry
                 }
@@ -194,11 +218,12 @@ pub fn scan(provider: &str, profiles: &[Profile], cache: &mut ScanCache) -> Vec<
     entries
 }
 
-/// O caminho canônico do transcript, só se ele é um `.jsonl` dentro da pasta de uma conta do
-/// provider. Quem lê transcript a partir de um caminho que veio de fora passa por aqui.
+/// O caminho canônico do transcript, só se ele é um `.jsonl` (o `store.db`, no Cursor) dentro da
+/// pasta de uma conta do provider. Quem lê transcript a partir de um caminho que veio de fora passa por aqui.
 pub fn validated(path: &Path, provider: &str, profiles: &[Profile]) -> Option<PathBuf> {
     let path = path.canonicalize().ok()?;
-    if path.extension().is_none_or(|extension| extension != "jsonl") { return None; }
+    let esperado = if provider == "cursor" { "db" } else { "jsonl" };
+    if path.extension().is_none_or(|extension| extension != esperado) { return None; }
     profiles
         .iter()
         .filter(|profile| profile.provider == provider)
@@ -211,6 +236,14 @@ pub fn validated(path: &Path, provider: &str, profiles: &[Profile]) -> Option<Pa
 /// provider. O caminho vem da UI, então é validado aqui e não lá.
 pub fn transcript(path: &Path, provider: &str, profiles: &[Profile]) -> Option<HistoryTranscript> {
     let path = validated(path, provider, profiles)?;
+    if provider == "cursor" {
+        let mensagens: Vec<_> = crate::cursor::itens(&path).ok()?.into_iter()
+            .filter(|e| e.item.kind == crate::feed::Kind::Text)
+            .map(|e| HistoryMessage { role: e.item.role, text: e.item.text, timestamp: e.item.timestamp })
+            .collect();
+        let total = mensagens.len();
+        return Some(HistoryTranscript { messages: mensagens.into_iter().rev().take(MAX_MESSAGES).rev().collect(), total });
+    }
     let mut messages = VecDeque::new();
     let mut total = 0;
     for line in BufReader::new(File::open(&path).ok()?).lines().map_while(Result::ok) {
@@ -280,5 +313,25 @@ mod tests {
         assert_eq!(full.messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["corrige   o login", "feito"]);
         // Caminho de outra conta/provider não é lido.
         assert!(transcript(Path::new(&claude[0].path), "codex", &[profile("codex", codex_dir.path())]).is_none());
+    }
+
+    #[test]
+    fn lista_os_chats_do_cursor_com_mensagem_e_le_a_conversa() {
+        let dir = tempfile::tempdir().unwrap();
+        let chat = dir.path().join("chats").join("hash").join("chat-1");
+        crate::cursor::tests::gravar_chat(&chat, "D:/proj", 1_000, &crate::cursor::tests::conversa_de_exemplo());
+        // Aberto e nunca usado: o agent grava só o meta.json.
+        let vazio = dir.path().join("chats").join("hash").join("chat-2");
+        fs::create_dir_all(&vazio).unwrap();
+        fs::write(vazio.join("meta.json"), json!({"createdAtMs":2000,"hasConversation":false,"cwd":"D:/proj"}).to_string()).unwrap();
+
+        let perfis = [profile("cursor", dir.path())];
+        let lista = scan("cursor", &perfis, &mut ScanCache::new());
+        assert_eq!(lista.len(), 1);
+        assert_eq!((lista[0].session_id.as_str(), lista[0].title.as_deref(), lista[0].first_prompt.as_deref(), lista[0].updated_at_ms),
+            ("chat-1", Some("Bom dia"), Some("bom dia"), 1_005));
+        let conversa = transcript(Path::new(&lista[0].path), "cursor", &perfis).unwrap();
+        assert_eq!(conversa.messages.iter().map(|m| m.text.as_str()).collect::<Vec<_>>(), ["bom dia", "Bom dia. Vou conferir.", "Em que posso ajudar?"]);
+        assert!(transcript(Path::new(&lista[0].path), "claude", &[profile("claude", dir.path())]).is_none(), "store.db não é transcript do Claude");
     }
 }

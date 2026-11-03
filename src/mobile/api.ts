@@ -71,10 +71,9 @@ export interface Painel { conversations: Conversation[]; catalog: Projects }
 
 /** Precisa de você: aprovação pendente ou agente parado esperando a próxima mensagem. Mesma regra
  *  que o servidor usava no `/atencao`. */
-/** Agentes que a visão Conversa entende: o OMNI lê o transcript e reconhece a tela deles. O Cursor
- *  não grava transcript legível, então a aba dele fica no terminal (que funciona normalmente).
- *  O Antigravity grava num SQLite que o engine lê (`omni_core::antigravity`). */
-export const AGENTES_COM_CONVERSA = ["claude", "codex", "antigravity"];
+/** Agentes que a visão Conversa entende: o OMNI lê o transcript e reconhece a tela deles.
+ *  O Antigravity e o Cursor gravam em SQLite que o engine lê (`omni_core::antigravity`, `omni_core::cursor`). */
+export const AGENTES_COM_CONVERSA = ["claude", "codex", "antigravity", "cursor"];
 /** Agentes com uso de conta (5 h e semana) que o OMNI consegue ler. */
 export const AGENTES_COM_USO = ["claude", "codex", "antigravity"];
 /** Nome de cada agente para a tela, na ordem em que aparecem nas listas. */
@@ -135,9 +134,12 @@ export function salvarToken(valor: string) {
 /** Quem leva a requisição até o engine. No celular e na web é o `fetch` HTTP; no app do PC é o
  *  protocolo local do engine (`usarTransporte` em `src/main.tsx`) — mesmas rotas, sem servidor HTTP. */
 type Transporte = (path: string, init: RequestInit) => Promise<Response>;
-let transporte: Transporte = (path, init) => fetch(path, init);
+// Fica no `globalThis`: o hot-reload do `npm run dev` reexecuta este módulo sem reexecutar o
+// `main.tsx`, e uma variável local voltava ao `fetch` (o Vite devolve o HTML da página).
+const global = globalThis as { __omniTransporte?: Transporte };
+const transporte: Transporte = (path, init) => (global.__omniTransporte ?? fetch)(path, init);
 export function usarTransporte(novo: Transporte) {
-  transporte = novo;
+  global.__omniTransporte = novo;
 }
 
 /** Um comando `/` do agente (`GET /conversas/{id}/comandos`). `origem`: `cli`, `seu`, `projeto`,

@@ -135,3 +135,28 @@ export const fluxoVazio = (): Fluxo => ({
   nos: [{ id: "entrada", tipo: "entrada", titulo: "Tarefa", config: {}, x: 0, y: 120 }, { id: "fim", tipo: "fim", titulo: "Fim", config: {}, x: 560, y: 120 }],
   conexoes: [],
 });
+
+/** Ponto de partida do "Novo fluxo": os desenhos mais comuns, com os agentes do kit (dev, qa, revisor…). */
+export interface ModeloDeFluxo { id: string; nome: string; dica: string; fluxo: () => Fluxo }
+const no = (id: string, tipo: TipoDeNo, titulo: string, coluna: number, linha = 0, extra: Partial<NoDoFluxo> = {}): NoDoFluxo =>
+  ({ id, tipo, titulo, config: {}, x: coluna * 280, y: 120 + linha * 180, ...extra });
+const modelo = (nome: string, descricao: string, nos: NoDoFluxo[], conexoes: Conexao[]): Fluxo => ({ id: "", nome, descricao, nos, conexoes });
+export const MODELOS_DE_FLUXO: ModeloDeFluxo[] = [
+  { id: "qa", nome: "Dev com QA em loop", dica: "O dev faz, o QA testa e devolve até aprovar (até 3 voltas).", fluxo: () => modelo("Dev com QA em loop", "O dev implementa; o QA testa e devolve até aprovar.", [
+    no("entrada", "entrada", "Tarefa", 0), no("dev", "agente", "Implementar", 1, 0, { agente: "dev" }), no("qa", "agente", "Testar", 2, 0, { agente: "qa" }),
+    no("aprovou", "condicao", "QA aprovou?", 3, 0, { config: { max_voltas: 3 } }), no("fim", "fim", "Fim", 4),
+  ], [{ de: "entrada", para: "dev" }, { de: "dev", para: "qa" }, { de: "qa", para: "aprovou" }, { de: "aprovou", para: "fim", saida: "sim" }, { de: "aprovou", para: "dev", saida: "nao" }, { de: "aprovou", para: "fim", saida: "esgotado" }]) },
+  { id: "testes", nome: "Testes até passar", dica: "O dev corrige e um comando (npm test) confere, em loop.", fluxo: () => modelo("Testes até passar", "O dev corrige até o comando de testes passar.", [
+    no("entrada", "entrada", "Tarefa", 0), no("dev", "agente", "Corrigir", 1, 0, { agente: "dev" }),
+    no("testes", "comando", "Rodar os testes", 2, 0, { config: { comando: "npm test", max_voltas: 3 } }), no("fim", "fim", "Fim", 3),
+  ], [{ de: "entrada", para: "dev" }, { de: "dev", para: "testes" }, { de: "testes", para: "fim", saida: "sim" }, { de: "testes", para: "dev", saida: "nao" }, { de: "testes", para: "fim", saida: "esgotado" }]) },
+  { id: "pr", nome: "Revisão e pull request", dica: "Dev, revisor em loop, sua aprovação e o PR no GitHub.", fluxo: () => modelo("Revisão e pull request", "Dev implementa, revisor confere, você aprova e sai o PR.", [
+    no("entrada", "entrada", "Tarefa", 0), no("dev", "agente", "Implementar", 1, 0, { agente: "dev" }), no("revisor", "agente", "Revisar", 2, 0, { agente: "revisor" }),
+    no("aprovou", "condicao", "Revisor aprovou?", 3, 0, { config: { max_voltas: 3 } }), no("ok", "aprovacao", "Abrir o PR?", 4, 0, { config: { pergunta: "Abrir o pull request?" } }),
+    no("pr", "pr", "Pull request", 5), no("fim", "fim", "Fim", 6, 1),
+  ], [{ de: "entrada", para: "dev" }, { de: "dev", para: "revisor" }, { de: "revisor", para: "aprovou" }, { de: "aprovou", para: "ok", saida: "sim" }, { de: "aprovou", para: "dev", saida: "nao" },
+    { de: "aprovou", para: "fim", saida: "esgotado" }, { de: "ok", para: "pr", saida: "sim" }, { de: "ok", para: "fim", saida: "nao" }, { de: "pr", para: "fim" }]) },
+  { id: "time", nome: "Reunião do time", dica: "Arquiteto, dev e QA discutem até o consenso; sai uma ata.", fluxo: () => modelo("Reunião do time", "Os agentes discutem a tarefa em rodadas e escrevem uma ata.", [
+    no("entrada", "entrada", "Tarefa", 0), no("time", "sala", "Discutir", 1, 0, { config: { participantes: ["arquiteto", "dev", "qa"], rodadas: 3, objetivo: "{{entrada}}" } }), no("fim", "fim", "Fim", 2),
+  ], [{ de: "entrada", para: "time" }, { de: "time", para: "fim" }]) },
+];

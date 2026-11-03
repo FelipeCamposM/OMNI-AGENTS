@@ -37,8 +37,8 @@ beforeEach(() => {
 afterEach(() => usarTransporte((path, init) => fetch(path, init)));
 
 describe("AbaDeAgente", () => {
-  it("Cursor (sem visão de conversa) fica no terminal mesmo no modo Conversa", async () => {
-    const sessoes = { s1: { id: "s1", provider: "cursor" } as unknown as TerminalSession };
+  it("Agente sem visão de conversa fica no terminal mesmo no modo Conversa", async () => {
+    const sessoes = { s1: { id: "s1", provider: "aider" } as unknown as TerminalSession };
     render(
       <SessionProvidersContext.Provider value={sessoes}>
         <AbaDeAgente agentView="conversa" sessionId="s1"><p>TERMINAL</p></AbaDeAgente>

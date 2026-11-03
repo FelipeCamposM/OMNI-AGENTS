@@ -1,0 +1,30 @@
+
+
+  Cursor Agent
+  v2026.10.22-27dcf5f
+  Tip: Hit shift+tab to enable Plan Mode for large or complex changes.
+
+                                                                                                                        
+  Responda apenas a palavra: ok                                                                                         
+                                                                                                                        
+
+  ok
+
+                                                                                                                        
+  Run exactly this shell command and nothing else: cmd /c ver                                                           
+                                                                                                                        
+
+  Vou executar exatamente o comando pedido.
+
+  $ cmd /c ver 0ms
+
+ ⠰⠰ Running  47 tokens
+    Tip: Use /debug to instrument and debug complex problems.
+
+                                                                                                                        
+  → Add a follow-up                                                                                     ctrl+c to stop  
+                                                                                                                        
+
+  1 task
+  Auto · 5.6%
+  ~\proj\sonda

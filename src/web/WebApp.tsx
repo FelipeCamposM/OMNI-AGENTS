@@ -2,17 +2,18 @@ import { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState, type Drag
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
 import { Input } from "../components/ui/Input";
-import { BlocksIcon, GearIcon, MonitorIcon, NotificationIcon, ChatIcon, ClockIcon, CloseIcon, EyeIcon, FolderIcon, GlobeIcon, ReloadIcon, TerminalIcon } from "../components/ui/PixelIcon";
+import { BlocksIcon, GearIcon, SearchIcon, MonitorIcon, NotificationIcon, ChatIcon, ClockIcon, CloseIcon, EyeIcon, FolderIcon, GlobeIcon, ReloadIcon, TerminalIcon } from "../components/ui/PixelIcon";
 import { deslizarAba, moverIndicador } from "../lib/motion";
 import { ExtensoesSettings } from "../features/extensoes/ExtensoesSettings";
 import type { ExtensoesDaConta, FonteDeExtensoes } from "../features/extensoes/extensoesService";
 import { chaveDoIcone } from "../features/extensoes/chaveDoIcone";
 import { Panorama } from "../features/panorama/Panorama";
 import type { TerminalSession } from "../features/terminal/terminalService";
+import { EtiquetaDoStatus, statusDaConversa } from "../components/ConversaStatus";
 import { TarefasNoTopo } from "../features/todo/TarefasNoTopo";
 import type { WorkspaceState } from "../types/workspace";
 import { PairingScreen } from "../mobile/Chat";
-import { ConversationDetail, ConversationList, filterConversations, haQuanto, NovaSessao, Ocultas } from "../mobile/MobileApp";
+import { ConversationDetail, ConversationList, filterConversations, haQuanto, Ocultas } from "../mobile/MobileApp";
 import { useDados } from "../mobile/useDados";
 import { usePoll } from "../mobile/usePoll";
 import { buscarIconeDeExtensao, NOME_DO_AGENTE, request, temConversa, type Conversation, type Projects } from "../mobile/api";
@@ -21,6 +22,7 @@ import { PreviasLocais } from "./PreviasLocais";
 import { AprovacoesDeFluxo } from "../mobile/AprovacoesDeFluxo";
 import { IconeDoProjeto } from "../mobile/IconeDoProjeto";
 import { AjustesDoAparelho } from "../mobile/AjustesDoAparelho";
+import { NovaConversa } from "./NovaConversa";
 import { pedirPermissao, permissao, suporte, useNotificacoes, usePrefsDeAviso } from "../mobile/notificacoes";
 import { Select } from "../components/ui/Select";
 import { LayoutPresetPicker } from "../features/workspace/LayoutPresetPicker";
@@ -239,6 +241,32 @@ export function WebApp() {
   const [layout, setLayout] = useState<LayoutPreset | null>(lerLayout);
   const [alvoDoArrasto, setAlvoDoArrasto] = useState<number | null>(null);
   const busca = useRef<HTMLInputElement>(null);
+  const [bifurcando, setBifurcando] = useState<string | null>(null);
+  /** Modal de nova conversa aberto, com o projeto já escolhido (o do "+" ou o selecionado). */
+  const [novaConversa, setNovaConversa] = useState<{ projeto: string | null } | null>(null);
+  const [erroBifurcar, setErroBifurcar] = useState<string | null>(null);
+  /** Renomear direto na lista. Conversa só do histórico da CLI entra no índice do PC ao ganhar nome. */
+  async function renomearConversa(id: string, nome: string) {
+    setErroBifurcar(null);
+    try {
+      await request(`/conversas/${encodeURIComponent(id)}/nome`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }) });
+      await refresh();
+    } catch (motivo) {
+      setErroBifurcar(motivo instanceof Error ? motivo.message : String(motivo));
+    }
+  }
+  /** Bifurcar da lateral: conversa nova com todo o histórico, aberta no centro. */
+  async function bifurcarConversa(id: string) {
+    setBifurcando(id);
+    setErroBifurcar(null);
+    try {
+      const nova = await request<{ id: string | null }>(`/conversas/${encodeURIComponent(id)}/bifurcar`, { method: "POST" });
+      await refresh();
+      if (nova.id) abrirConversa(nova.id);
+    } catch (motivo) {
+      setErroBifurcar(motivo instanceof Error ? motivo.message : String(motivo));
+    } finally { setBifurcando(null); }
+  }
   const capacidade = layout ? quantosPaineis(moldeDe(layout, 0)) : LADO_A_LADO;
   useNotificacoes(attention, carregado, urlDaConversaWeb);
   const [avisos, mudarAvisos] = usePrefsDeAviso();
@@ -297,6 +325,12 @@ export function WebApp() {
     function tecla(evento: KeyboardEvent) {
       const alvo = evento.target as HTMLElement | null;
       const digitando = alvo?.closest?.("input, textarea, [contenteditable], .xterm");
+      // N: nova conversa, de qualquer lugar da página.
+      if (evento.key.toLowerCase() === "n" && !digitando && !evento.ctrlKey && !evento.metaKey && !evento.altKey && !document.querySelector("[aria-modal='true']")) {
+        evento.preventDefault();
+        setNovaConversa({ projeto: null });
+        return;
+      }
       if ((evento.key === "/" && !digitando) || (evento.key.toLowerCase() === "k" && (evento.ctrlKey || evento.metaKey))) {
         evento.preventDefault();
         // Na aba das prévias a busca não está na tela: volta para as conversas e foca depois do render.
@@ -437,7 +471,10 @@ export function WebApp() {
   const visiveis = conversations.filter((item) => !item.hidden);
   const doProjeto = visiveis.filter((item) => item.project_id === projetoAtivo?.id);
   const daLista = filterConversations(query ? visiveis : doProjeto, query, perfis, projetos);
-  const abertasDoProjeto = doProjeto.filter((item) => item.live);
+  // Todas as sessões abertas no PC, de qualquer projeto (o cartão diz de qual): filtrar pelo projeto
+  // escolhido deixava a seção vazia com conversas rodando em outro. As do projeto escolhido vêm antes.
+  const abertasNoPc = visiveis.filter((item) => item.live)
+    .sort((a, b) => Number(b.project_id === projetoAtivo?.id) - Number(a.project_id === projetoAtivo?.id) || (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0));
   // Recentes de qualquer projeto (o cartão diz de qual); o resto mora na aba Histórico.
   const ultimas = visiveis.filter((item) => !item.live).sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0)).slice(0, ULTIMAS);
   const historico = filterConversations(visiveis.filter((item) => !projetoHistorico || item.project_id === projetoHistorico), buscaHistorico, perfis, projetos)
@@ -445,7 +482,8 @@ export function WebApp() {
   // Filtro do histórico: só projetos que têm conversa, os mais usados primeiro.
   const projetosDoHistorico = projetos.map((projeto) => ({ projeto, total: visiveis.filter((item) => item.project_id === projeto.id).length }))
     .filter(({ total }) => total > 0).sort((a, b) => b.total - a.total || a.projeto.name.localeCompare(b.projeto.name));
-  const trabalhando = conversations.filter((item) => item.state === "working");
+  const trabalhando = visiveis.filter((item) => item.state === "working" && !item.capabilities?.approve)
+    .sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0));
   const naoVistas = new Set(attention.map((item) => item.id));
   const shell = shells.find((item) => item.id === terminalId) ?? null;
   const shellsDoProjeto = shells.filter((item) => item.project_id === projetoAtivo?.id);
@@ -466,6 +504,11 @@ export function WebApp() {
         )}
         <span className="w-topo-espaco" />
         {error && <span className="w-erro" role="alert">Sem conexão com o PC: {error}</span>}
+        {catalog && catalog.agents.length > 0 && (
+          <button type="button" className="btn btn-primary w-nova-conversa" title="Nova conversa (N)" onClick={() => setNovaConversa({ projeto: null })}>
+            <ChatIcon aria-hidden className="h-4 w-4" /><span className="w-so-computador">Nova conversa</span><kbd className="w-nova-atalho" aria-hidden>N</kbd>
+          </button>
+        )}
         <UsoNoTopo profileId={conversaFocada?.profile_id ?? null} provider={conversaFocada?.provider ?? null} />
         <button type="button" className={`btn btn-ghost w-atualizar${avisos.ligadas ? " is-ativo" : ""}`} aria-pressed={avisos.ligadas}
           aria-label="Avisos do navegador" disabled={suporte() !== "ok" || permissao() === "denied"}
@@ -534,21 +577,32 @@ export function WebApp() {
                 {id === "previas" ? <PreviasLocais /> : id === "historico" ? (
                   <>
                     <div className="w-historico-filtros">
-                      <Input type="search" size="sm" value={buscaHistorico} onChange={(event) => setBuscaHistorico(event.target.value)}
-                        placeholder="Buscar no histórico" aria-label="Buscar no histórico" />
+                      <div className={`w-busca-caixa${buscaHistorico ? " is-cheia" : ""}`}>
+                        <SearchIcon aria-hidden className="w-busca-icone h-3.5 w-3.5" />
+                        <Input type="search" size="sm" value={buscaHistorico} onChange={(event) => setBuscaHistorico(event.target.value)}
+                          onKeyDown={(evento) => { if (evento.key === "Escape") setBuscaHistorico(""); }}
+                          placeholder="Buscar por título, agente ou conta" aria-label="Buscar no histórico" className="w-busca-campo" />
+                        {buscaHistorico && <button type="button" className="w-busca-limpar" aria-label="Limpar busca do histórico" onClick={() => setBuscaHistorico("")}>
+                          <CloseIcon aria-hidden className="h-3 w-3" /></button>}
+                      </div>
                       <Select size="sm" aria-label="Projeto do histórico" value={projetoHistorico} onChange={setProjetoHistorico}
-                        className="w-historico-projeto" searchable={projetos.length > 6} searchPlaceholder="Buscar projeto…"
-                        options={[{ value: "", label: "Todos os projetos", icon: <FolderIcon aria-hidden className="h-3.5 w-3.5 shrink-0" /> },
+                        className="w-historico-projeto" searchable={projetosDoHistorico.length > 5} searchPlaceholder="Buscar projeto…"
+                        options={[{ value: "", label: "Todos os projetos", hint: `${visiveis.length} ${visiveis.length === 1 ? "conversa" : "conversas"}`,
+                          icon: <span className="w-historico-todos"><FolderIcon aria-hidden className="h-3 w-3" /></span> },
                           ...projetosDoHistorico.map(({ projeto, total }) => ({ value: projeto.id, label: projeto.name,
-                            hint: `${total} ${total === 1 ? "conversa" : "conversas"}`, icon: <IconeDoProjeto projeto={projeto} className="h-3.5 w-3.5" /> }))]} />
+                            hint: `${total} ${total === 1 ? "conversa" : "conversas"}`, section: "Projetos",
+                            icon: <span className="w-historico-icone"><IconeDoProjeto projeto={projeto} className="h-3 w-3" /></span> }))]} />
+                      {(buscaHistorico || projetoHistorico) && (
+                        <p className="w-historico-resumo" aria-live="polite">{historico.length} {historico.length === 1 ? "conversa encontrada" : "conversas encontradas"}</p>
+                      )}
                     </div>
                     {historico.length === 0 && <p className="w-vazio">{carregado ? "Nada no histórico com esse filtro." : "Carregando…"}</p>}
                     {porPeriodo(historico).map(([periodo, itens]) => (
-                      <section key={periodo} className="w-secao">
+                      <section key={`${periodo}|${projetoHistorico}`} className="w-secao w-secao-periodo">
                         <h2 className="w-rotulo"><span className="w-rotulo-texto">{periodo}</span><span className="w-rotulo-conta">{itens.length}</span></h2>
                         <div className="w-conversas">
                           <ConversationList conversations={itens} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
-                            ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} vazio="" />
+                            ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} aoBifurcar={(id) => void bifurcarConversa(id)} bifurcando={bifurcando} aoRenomear={renomearConversa} vazio="" />
                         </div>
                       </section>
                     ))}
@@ -557,8 +611,16 @@ export function WebApp() {
                   </>
                 ) : (
                   <>
-                    <Input ref={busca} type="search" size="sm" value={query} onChange={event => setQuery(event.target.value)}
-                      placeholder="Pesquisar conversas  ( / )" aria-label="Pesquisar conversas" className="w-busca" />
+                    <div className={`w-busca w-busca-caixa${query ? " is-cheia" : ""}`}>
+                      <SearchIcon aria-hidden className="w-busca-icone h-3.5 w-3.5" />
+                      <Input ref={busca} type="search" size="sm" value={query} onChange={event => setQuery(event.target.value)}
+                        onKeyDown={(evento) => { if (evento.key === "Escape") { setQuery(""); evento.currentTarget.blur(); } }}
+                        placeholder="Pesquisar conversas" aria-label="Pesquisar conversas" className="w-busca-campo" />
+                      {query ? <button type="button" className="w-busca-limpar" aria-label="Limpar pesquisa" onClick={() => { setQuery(""); busca.current?.focus(); }}>
+                        <CloseIcon aria-hidden className="h-3 w-3" /></button>
+                        : <kbd className="w-busca-atalho" aria-hidden>/</kbd>}
+                    </div>
+                    {erroBifurcar && <p className="w-erro" role="alert">{erroBifurcar}</p>}
 
                     {/* Primeiro o que está parado esperando você, de qualquer projeto. */}
                     <section className={`w-secao w-pendencias${pendencias > 0 ? " is-alerta" : ""}`} aria-label="Precisa de você" hidden={Boolean(query)}>
@@ -605,6 +667,10 @@ export function WebApp() {
                                   {aguardando > 0 && <span className="m-badge m-badge-alerta">{aguardando}</span>}
                                   <span className="w-projeto-total" aria-hidden>{lista.length}</span>
                                 </button>
+                                {catalog && catalog.agents.length > 0 && (
+                                  <button type="button" className="w-projeto-nova" aria-label={`Nova conversa em ${project.name}`} title="Nova conversa neste projeto"
+                                    onClick={() => setNovaConversa({ projeto: project.id })}>+</button>
+                                )}
                               </li>
                             );
                           })}
@@ -617,29 +683,40 @@ export function WebApp() {
                         <h2 className="w-rotulo"><ChatIcon aria-hidden className="h-3 w-3" />Resultados<span className="w-rotulo-conta">{daLista.length}</span></h2>
                         <div className="w-conversas">
                           <ConversationList conversations={daLista} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
-                            ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} vazio="Nenhuma conversa encontrada." />
+                            ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} aoBifurcar={(id) => void bifurcarConversa(id)} bifurcando={bifurcando} aoRenomear={renomearConversa} vazio="Nenhuma conversa encontrada." />
                         </div>
                       </section>
                     ) : (
                       <>
-                        <section className="w-secao">
+                        <section className="w-secao" aria-label="Abertas no PC">
                           <h2 className="w-rotulo"><span className="m-dot m-dot-ativo" aria-hidden />
                             <span className="w-rotulo-texto">Abertas no PC</span>
-                            {projetoAtivo && <span className="w-rotulo-projeto" title={projetoAtivo.path}><IconeDoProjeto projeto={projetoAtivo} className="h-3 w-3" />{projetoAtivo.name}</span>}
-                            <span className="w-rotulo-conta">{abertasDoProjeto.length}</span></h2>
-                          {abertasDoProjeto.length === 0 && (
-                            <p className="w-vazio">{carregado ? "Nenhuma conversa aberta neste projeto." : "Carregando…"}</p>
+                            <span className="w-rotulo-dica">todos os projetos</span>
+                            <span className="w-rotulo-conta">{abertasNoPc.length}</span></h2>
+                          {abertasNoPc.length === 0 && (
+                            <p className="w-vazio">{carregado ? "Nenhuma conversa aberta no PC agora." : "Carregando…"}</p>
                           )}
-                          {porEstado(abertasDoProjeto).map(([grupo, tom, itens]) => (
+                          {porEstado(abertasNoPc).map(([grupo, tom, itens]) => (
                             <div key={grupo} className="w-grupo">
                               <h3 className="w-grupo-titulo"><span className={`m-dot ${tom}`} aria-hidden />{grupo}<span className="w-grupo-conta">{itens.length}</span></h3>
                               <div className="w-conversas">
-                                <ConversationList conversations={itens} perfis={perfis} projetos={projetos} abrir={abrirConversa}
-                                  ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} vazio="" abertas={abertas}
+                                <ConversationList conversations={itens} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
+                                  ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} aoBifurcar={(id) => void bifurcarConversa(id)} bifurcando={bifurcando} aoRenomear={renomearConversa} vazio="" abertas={abertas}
                                   aoLado={naDivisao.length > 0 ? (id) => abrirConversa(id, true) : undefined} />
                               </div>
                             </div>
                           ))}
+                        </section>
+                        <section className="w-secao">
+                          <h2 className="w-rotulo"><ClockIcon aria-hidden className="h-3 w-3" /><span className="w-rotulo-texto">Últimas conversas</span>
+                            <span className="w-rotulo-dica">todos os projetos</span></h2>
+                          <div className="w-conversas">
+                            <ConversationList conversations={ultimas} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
+                              ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} aoBifurcar={(id) => void bifurcarConversa(id)} bifurcando={bifurcando} aoRenomear={renomearConversa} vazio={carregado ? "Nenhuma conversa ainda." : "Carregando…"} />
+                          </div>
+                          <button type="button" className="w-ver-historico" onClick={() => trocarAbaLateral("historico")}>
+                            <ClockIcon aria-hidden className="h-3.5 w-3.5" />Ver todo o histórico<span aria-hidden>→</span>
+                          </button>
                         </section>
                         {projetoAtivo?.path && shellsDoProjeto.length > 0 && (
                           <section className="w-secao">
@@ -659,17 +736,6 @@ export function WebApp() {
                             </ul>
                           </section>
                         )}
-                        <section className="w-secao">
-                          <h2 className="w-rotulo"><ClockIcon aria-hidden className="h-3 w-3" /><span className="w-rotulo-texto">Últimas conversas</span>
-                            <span className="w-rotulo-dica">todos os projetos</span></h2>
-                          <div className="w-conversas">
-                            <ConversationList conversations={ultimas} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
-                              ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} vazio={carregado ? "Nenhuma conversa ainda." : "Carregando…"} />
-                          </div>
-                          <button type="button" className="w-ver-historico" onClick={() => trocarAbaLateral("historico")}>
-                            <ClockIcon aria-hidden className="h-3.5 w-3.5" />Ver todo o histórico<span aria-hidden>→</span>
-                          </button>
-                        </section>
                       </>
                     )}
                   </>
@@ -681,7 +747,11 @@ export function WebApp() {
           {/* Fixo embaixo, em qualquer aba: as duas ações do projeto. */}
           {projetoAtivo?.path && (
             <div className="w-rodape-lateral">
-              {catalog && <NovaSessao project={projetoAtivo} catalog={catalog} onCriada={refresh} classeBotao="w-rodape-botao" />}
+              {catalog && catalog.agents.length > 0 && (
+                <button type="button" className="btn btn-primary w-rodape-botao" onClick={() => setNovaConversa({ projeto: projetoAtivo.id })}>
+                  <ChatIcon aria-hidden className="h-4 w-4" />Nova conversa
+                </button>
+              )}
               <button type="button" className="btn btn-ghost w-rodape-botao" disabled={abrindoTerminal}
                 title="Abre um terminal sem agente na pasta do projeto (npm run dev, git…)"
                 onClick={() => void novoTerminal(projetoAtivo.id)}>
@@ -691,6 +761,11 @@ export function WebApp() {
             </div>
           )}
         </aside>
+
+        {novaConversa && catalog && (
+          <NovaConversa catalog={catalog} projetoInicial={novaConversa.projeto ?? projetoAtivo?.id ?? null} onFechar={() => setNovaConversa(null)}
+            onAberta={(id) => { setNovaConversa(null); void refresh().then(() => { if (id) abrirConversa(id); }); }} />
+        )}
 
         <main className="w-coluna w-centro" aria-label="Conversa">
           {verPanorama ? (() => {
@@ -855,8 +930,11 @@ function PainelDaConversa({ conversa, perfis, projetos, focada, varias, focar, f
 
 function ItemLateral({ conversa, ativa, abrir, projeto }: { conversa: Conversation; ativa: boolean; abrir: (id: string) => void; projeto?: string }) {
   const aprovar = Boolean(conversa.capabilities?.approve);
+  // Está em "Precisa de você" = aviso ainda não visto: pronta aparece como "finalizado", igual ao app.
+  const status = statusDaConversa({ state: (aprovar ? "approval_required" : conversa.state) as TerminalSession["state"],
+    notice: (conversa.notice ?? undefined) as TerminalSession["notice"] }, true);
   return (
-    <button type="button" className={`w-atencao-item${ativa ? " w-atencao-item-ativa" : ""}${aprovar ? " w-atencao-item-alerta" : ""}`}
+    <button type="button" data-status={status} className={`w-atencao-item${ativa ? " w-atencao-item-ativa" : ""}${aprovar ? " w-atencao-item-alerta" : ""}`}
       onClick={() => abrir(conversa.id)} title={conversa.title} draggable onDragStart={(evento) => arrastarConversa(evento, conversa.id)}>
       <span className="w-atencao-avatar">
         {conversa.provider && <AgentIcon provider={conversa.provider} size={14} />}
@@ -866,8 +944,10 @@ function ItemLateral({ conversa, ativa, abrir, projeto }: { conversa: Conversati
         <span className="w-atencao-texto">{conversa.title}</span>
         {projeto && <span className="w-atencao-projeto">{projeto}</span>}
       </span>
-      {aprovar ? <span className="m-badge m-badge-alerta">Aprovar</span>
-        : haQuanto(conversa.updated_at_ms) && <time className="w-atencao-tempo">{haQuanto(conversa.updated_at_ms)}</time>}
+      <span className="w-atencao-lado">
+        <EtiquetaDoStatus status={status} />
+        {haQuanto(conversa.updated_at_ms) && <time className="w-atencao-tempo">{haQuanto(conversa.updated_at_ms)}</time>}
+      </span>
     </button>
   );
 }

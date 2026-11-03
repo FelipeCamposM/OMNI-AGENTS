@@ -61,13 +61,14 @@ const ANSWERED_IDLE_MS: u64 = 1_500;
 /// um log de dev server ou uma pausa do agente viravam "terminou" e disparavam aviso. Outros CLIs
 /// e shells puros continuam no palpite por tempo ocioso — e nunca contam `attention_seq`.
 fn screen_tracked(provider: Option<&str>) -> bool {
-    matches!(provider, Some("claude" | "codex" | "antigravity"))
+    matches!(provider, Some("claude" | "codex" | "antigravity" | "cursor"))
 }
 
 /// Claude Code e Codex mostram "esc to interrupt" durante o turno inteiro (inclusive rodando
 /// ferramenta) e tiram quando acabam. O Antigravity (1.4.2) troca o rodapé "? for shortcuts" por
 /// "esc to cancel" enquanto trabalha — e também enquanto espera você responder uma pergunta dele.
 fn in_turn(screen_text: &str, provider: &str) -> bool {
+    if provider == "cursor" { return interaction::cursor_em_turno(screen_text); }
     let texto = interaction::area_do_turno(screen_text).to_ascii_lowercase();
     match provider {
         "antigravity" => texto.contains("esc to cancel"),
@@ -893,7 +894,7 @@ fn bifurcar(state: &Arc<EngineState>, source: TerminalSession, provider: &str) -
         source.project_id.clone(),
         titulo.clone(),
         source.cwd.clone(),
-        Some(source.shell.clone()),
+        Some(source.shell.clone()).filter(|shell| !shell.is_empty()),
         Some(comando),
         source.rows,
         source.cols,
@@ -961,6 +962,14 @@ fn comando_ao_reiniciar(meta: &TerminalSession) -> Option<String> {
             None => comando,
         });
     }
+    // Cursor reaberto sem `--resume` abre um chat novo, e a Conversa seguia lendo o anterior (a
+    // mensagem ia pelo terminal e a resposta nunca aparecia).
+    if meta.provider.as_deref() == Some("cursor") && !original.contains(" --resume ") {
+        return Some(match chat_do_cursor(meta) {
+            Some(chat) => format!("{original} --resume {chat}"),
+            None => original,
+        });
+    }
     if meta.provider.as_deref() != Some("claude") {
         return Some(original);
     }
@@ -993,6 +1002,16 @@ fn com_log_do_antigravity(comando: &str, sessao: &str) -> String {
     let (binario, resto) = comando.split_once(' ').map_or((comando, ""), |(b, r)| (b, r));
     let caminho = log.to_string_lossy().replace('\\', "/");
     format!("{binario} --log-file \"{caminho}\"{}{resto}", if resto.is_empty() { "" } else { " " })
+}
+
+/// Chat do agent que a conversa desta sessão lê. Sem mensagem ainda não há o que retomar.
+fn chat_do_cursor(meta: &TerminalSession) -> Option<String> {
+    let indice = omni_core::conversations::read_index(&engine_dir().ok()?);
+    let segmento = indice.iter().flat_map(|c| &c.segments).rev()
+        .find(|s| s.terminal_session_id.as_deref() == Some(meta.id.as_str()))?;
+    let store = segmento.transcript_path.as_deref()?;
+    if omni_core::cursor::itens(Path::new(store)).ok()?.is_empty() { return None; }
+    segmento.external_session_id.clone()
 }
 
 /// O transcript mora no config dir da conta da sessão: `CLAUDE_CONFIG_DIR` do perfil quando há, senão

@@ -1,9 +1,10 @@
-import { forwardRef, useEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import gsap from "gsap";
-import { iconForEntry, iconStyle } from "../features/files/fileIcons";
+import { iconForEntry, iconStyle, type PixelIconComponent } from "../features/files/fileIcons";
+import { CopyIcon, EditIcon, FileIcon, FolderIcon, FolderPlusIcon, TrashIcon } from "./ui/PixelIcon";
 import {
   baseName,
   copyIntoProject,
@@ -191,6 +192,18 @@ export function FileTree({ projectPath, onOpenFile, onFileRenamed, onPathDeleted
     setMenu({ path, isDirectory, x: event.clientX, y: event.clientY });
   }
 
+  /** F2 renomeia e Delete exclui o item em foco (o mesmo que o menu do botão direito). */
+  function handleKeyDown(event: React.KeyboardEvent) {
+    if (event.key !== "F2" && event.key !== "Delete") return;
+    if (event.target instanceof HTMLInputElement) return;
+    const node = (event.target as Element).closest(`[${TREE_NODE_PATH_ATTR}]`);
+    const path = node?.getAttribute(TREE_NODE_PATH_ATTR);
+    if (!path) return;
+    event.preventDefault();
+    if (event.key === "F2") setRenamingPath(path);
+    else void handleDelete(path, node!.getAttribute(TREE_NODE_DIR_ATTR) === "true");
+  }
+
   function startCreate(dirPath: string, isDirectory: boolean) {
     setMenu(null);
     // Criar dentro de pasta fechada abre a pasta: a linha de nome aparece onde o item vai nascer.
@@ -323,11 +336,14 @@ export function FileTree({ projectPath, onOpenFile, onFileRenamed, onPathDeleted
       {...{ [TREE_ROOT_ATTR]: "true" }}
       tabIndex={-1}
       className={[
-        "space-y-0.5 min-h-8 outline-none transition-colors duration-150",
+        // `flex-1`: a árvore ocupa a aba até o fim, então menu do botão direito e soltar arquivo
+        // valem no espaço vazio abaixo da lista (cai na raiz do projeto).
+        "flex-1 space-y-0.5 min-h-8 outline-none transition-colors duration-150",
         dragOverPath === projectPath ? "drop-target-active" : "",
       ].join(" ")}
       onContextMenu={(event) => openMenu(event, projectPath!, true)}
       onPaste={(event) => void handlePaste(event)}
+      onKeyDown={handleKeyDown}
     >
       {error && (
         <p role="alert" className="text-danger text-[11px] px-3 py-1">
@@ -653,30 +669,53 @@ function FileTreeContextMenu({
     };
   }, [onClose]);
 
+  // Abre onde clicou, mas sem vazar da janela (clique perto da borda de baixo abre para cima).
+  useLayoutEffect(() => {
+    const caixa = ref.current;
+    if (!caixa) return;
+    const { width, height } = caixa.getBoundingClientRect();
+    caixa.style.left = `${Math.max(8, Math.min(menu.x, window.innerWidth - width - 8))}px`;
+    caixa.style.top = `${Math.max(8, menu.y + height > window.innerHeight - 8 ? menu.y - height : menu.y)}px`;
+    caixa.querySelector<HTMLElement>("[role=menuitem]")?.focus();
+  }, [menu]);
+
+  // Setas andam pelos itens, como num menu nativo.
+  function navegar(event: React.KeyboardEvent) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const itens = [...(ref.current?.querySelectorAll<HTMLElement>("[role=menuitem]") ?? [])];
+    const atual = itens.indexOf(document.activeElement as HTMLElement);
+    itens[(atual + (event.key === "ArrowDown" ? 1 : -1) + itens.length) % itens.length]?.focus();
+  }
+
+  const nome = baseName(menu.path);
+  const Icone = iconForEntry(nome, menu.isDirectory);
   return (
-    <div ref={ref} role="menu" style={{ position: "fixed", top: menu.y, left: menu.x }} className="popover z-50 p-1 min-w-40">
-      <MenuItem label="Abrir local do arquivo" onClick={onRevealInFolder} />
-      <MenuItem label="Copiar caminho" onClick={onCopyPath} />
-      <MenuItem label="Novo arquivo" onClick={onNewFile} />
-      <MenuItem label="Nova pasta" onClick={onNewFolder} />
-      {onRename && <MenuItem label="Renomear" onClick={onRename} />}
-      {onDelete && <MenuItem label="Excluir" onClick={onDelete} danger />}
+    <div ref={ref} role="menu" aria-label={`Ações de ${nome}`} onKeyDown={navegar}
+      style={{ position: "fixed", top: menu.y, left: menu.x }} className="popover arvore-menu z-50">
+      <div className="arvore-menu-cabeca">
+        <Icone className="h-3.5 w-3.5 shrink-0" style={iconStyle(nome, menu.isDirectory)} aria-hidden />
+        <span className="truncate">{nome}</span>
+        {menu.isDirectory && !onDelete && <span className="arvore-menu-selo">raiz</span>}
+      </div>
+      <MenuItem icon={FileIcon} label="Novo arquivo" onClick={onNewFile} />
+      <MenuItem icon={FolderPlusIcon} label="Nova pasta" onClick={onNewFolder} />
+      <hr role="separator" className="arvore-menu-linha" />
+      <MenuItem icon={FolderIcon} label="Abrir local do arquivo" onClick={onRevealInFolder} />
+      <MenuItem icon={CopyIcon} label="Copiar caminho" onClick={onCopyPath} />
+      {(onRename || onDelete) && <hr role="separator" className="arvore-menu-linha" />}
+      {onRename && <MenuItem icon={EditIcon} label="Renomear" atalho="F2" onClick={onRename} />}
+      {onDelete && <MenuItem icon={TrashIcon} label="Excluir" atalho="Del" onClick={onDelete} danger />}
     </div>
   );
 }
 
-function MenuItem({ label, onClick, danger }: { label: string; onClick: () => void; danger?: boolean }) {
+function MenuItem({ icon: Icone, label, atalho, onClick, danger }: { icon: PixelIconComponent; label: string; atalho?: string; onClick: () => void; danger?: boolean }) {
   return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      className={[
-        "w-full text-left px-2.5 py-1.5 text-xs rounded-none",
-        danger ? "text-danger hover:bg-danger/10" : "text-text-secondary hover:text-text-primary hover:bg-overlay/[0.07]",
-      ].join(" ")}
-    >
-      {label}
+    <button type="button" role="menuitem" onClick={onClick} aria-keyshortcuts={atalho === "Del" ? "Delete" : atalho} className={`arvore-menu-item${danger ? " is-perigo" : ""}`}>
+      <span className="arvore-menu-icone"><Icone className="h-3.5 w-3.5" aria-hidden /></span>
+      <span className="flex-1 truncate">{label}</span>
+      {atalho && <kbd aria-hidden className="arvore-menu-atalho">{atalho}</kbd>}
     </button>
   );
 }

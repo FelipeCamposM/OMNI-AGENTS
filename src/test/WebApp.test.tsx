@@ -94,10 +94,10 @@ it("troca de projeto com conversa aberta, pesquisa globalmente e oferece voltar"
 
   const lateral = screen.getByRole("complementary", { name: "Projetos e conversas" });
   await act(async () => { await userEvent.click(within(lateral).getByRole("button", { name: "Outro" })); });
-  expect(within(lateral).getByRole("button", { name: /Abrir conversa Auditar pagamentos/ })).toBeInTheDocument();
-  expect(within(lateral).queryByRole("button", { name: /Abrir conversa Corrigir o login/ })).not.toBeInTheDocument();
-  // O título da seção diz de qual projeto são as abertas.
-  expect(within(lateral).getByRole("heading", { name: /Abertas no PC.*Outro/ })).toBeInTheDocument();
+  // Abertas no PC mostra as de todos os projetos; as do projeto escolhido vêm primeiro.
+  const abertasNoPc = within(lateral).getByRole("region", { name: "Abertas no PC" });
+  const ordem = within(abertasNoPc).getAllByRole("button", { name: /^Abrir conversa/ }).map((b) => b.getAttribute("aria-label"));
+  expect(ordem).toEqual(["Abrir conversa Auditar pagamentos", "Abrir conversa Corrigir o login"]);
 
   await act(async () => { await userEvent.type(within(lateral).getByLabelText("Pesquisar conversas"), "login"); });
   expect(within(lateral).getByRole("button", { name: /Abrir conversa Corrigir o login/ })).toBeInTheDocument();
@@ -361,7 +361,7 @@ it("aba Histórico separada: agrupa por período, filtra por projeto e mostra o 
   await act(async () => { await userEvent.click(within(painel).getByRole("combobox", { name: "Projeto do histórico" })); });
   await act(async () => { await userEvent.click(screen.getByRole("option", { name: (nome) => nome.startsWith("Outro") })); });
   expect(within(painel).queryByRole("button", { name: /Corrigir o login/ })).not.toBeInTheDocument();
-  expect(within(within(painel).getByRole("button", { name: /Auditar pagamentos/ })).getByText("Outro")).toBeInTheDocument();
+  expect(within(within(painel).getByRole("button", { name: /Abrir conversa Auditar pagamentos/ })).getByText("Outro")).toBeInTheDocument();
 });
 
 
@@ -374,4 +374,50 @@ it("configurações da web: avisos, layout e conexão numa página, pelo engrena
   expect(screen.getByRole("heading", { name: "Notificações" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "Tela" })).toBeInTheDocument();
   expect(screen.getByRole("link", { name: /versão de celular/ })).toHaveAttribute("href", "/");
+});
+
+it("Abertas no PC lista as sessões abertas de todos os projetos", async () => {
+  vi.stubGlobal("fetch", servidor([
+    conversa({ id: "a", title: "Do projeto escolhido", live: true }),
+    conversa({ id: "b", title: "Rodando no outro", project_id: "p2", state: "working", live: true }),
+  ]));
+  render(<WebApp />);
+  const secao = await screen.findByRole("region", { name: "Abertas no PC" });
+  expect(await within(secao).findByText("Rodando no outro")).toBeInTheDocument();
+  expect(within(secao).getByText("Do projeto escolhido")).toBeInTheDocument();
+});
+
+it("renomeia a conversa direto na lista e manda o nome para o PC", async () => {
+  const enviados: { url: string; body: unknown }[] = [];
+  vi.stubGlobal("fetch", servidor([conversa({ live: true })], enviados));
+  render(<WebApp />);
+  await screen.findByRole("button", { name: /Abrir conversa/ });
+  await act(async () => { await userEvent.click(await screen.findByRole("button", { name: "Renomear conversa Corrigir o login" })); });
+  const campo = screen.getByRole("textbox", { name: "Novo nome de Corrigir o login" });
+  await act(async () => { await userEvent.clear(campo); await userEvent.type(campo, "Login novo{Enter}"); });
+  await waitFor(() => expect(enviados).toContainEqual({ url: "/conversas/c/nome", body: { nome: "Login novo" } }));
+});
+
+it("nova conversa: escolhe projeto e agente no modal, manda para o PC e abre a conversa nova", async () => {
+  const lista: Conversation[] = [conversa({ live: true })];
+  const criadas: unknown[] = [];
+  const catalogo = { ...PROJETOS, agents: [{ id: "claude", label: "Claude", command: "claude", resume: null }, { id: "codex", label: "Codex", command: "codex", resume: null }] };
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (url === "/sessoes" && init?.method === "POST") {
+      criadas.push(JSON.parse(String(init.body)));
+      lista.push(conversa({ id: "nova", title: "Conversa nova", project_id: "p2", provider: "codex", live: true }));
+      return new Response(JSON.stringify({ id: "a" }), { status: 202 });
+    }
+    const corpo = url.includes("timeline") ? TIMELINE : url === "/projetos" ? catalogo : url === "/conversas" ? lista : [];
+    return new Response(JSON.stringify(corpo));
+  }));
+  render(<WebApp />);
+  await screen.findByRole("button", { name: /Abrir conversa Corrigir o login/ });
+  await act(async () => { await userEvent.click(screen.getByRole("button", { name: "Nova conversa em Outro" })); });
+  const modal = screen.getByRole("dialog", { name: "Nova conversa" });
+  await act(async () => { await userEvent.click(within(modal).getByRole("button", { name: "Codex" })); });
+  await act(async () => { await userEvent.click(within(modal).getByRole("button", { name: "Abrir conversa" })); });
+  await waitFor(() => expect(criadas).toEqual([{ project_id: "p2", provider: "codex", profile_id: null, titulo: null }]));
+  await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument(), { timeout: 4000 });
+  await waitFor(() => expect(location.hash).toContain("nova"));
 });
