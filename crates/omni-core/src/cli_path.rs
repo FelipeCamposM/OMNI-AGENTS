@@ -121,7 +121,9 @@ pub fn locais_conhecidos() -> Vec<PathBuf> {
             }
             locais.push(home.join("scoop").join("shims"));
             if let Some(program_files) = env::var_os("ProgramFiles") {
-                locais.push(PathBuf::from(program_files).join("nodejs"));
+                locais.push(PathBuf::from(&program_files).join("nodejs"));
+                // `gh` instalado com o app aberto: o PATH do processo é o de quando ele abriu.
+                locais.push(PathBuf::from(program_files).join("GitHub CLI"));
             }
         }
         #[cfg(not(windows))]

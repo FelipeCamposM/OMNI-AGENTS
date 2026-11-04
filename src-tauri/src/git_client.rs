@@ -293,6 +293,7 @@ pub fn git_conta(project_path: String) -> GitConta {
     let email_configurado = ler("user.email").is_some();
     // O `gh` é o do Windows: em projeto remoto (WSL/SSH) quem faz push é o de lá, que não dá para ler daqui.
     let remoto = git_invocation(&project_path, &[]).0 != "git";
+    omni_core::cli_path::ampliar_path();
     let gh = (!remoto).then(|| hidden(&mut Command::new("gh"))
         .args(["auth", "status", "--hostname", "github.com"])
         .env("GH_PROMPT_DISABLED", "1")

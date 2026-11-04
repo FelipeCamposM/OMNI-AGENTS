@@ -163,6 +163,8 @@ fn escolha_numerada(text: &str) -> Option<Escolha> {
         (linha.contains("esc to cancel") && linha.contains("enter"))
             // Antigravity: "↑/↓ Navigate · enter Select · esc Skip".
             || (linha.contains("enter select") && linha.contains("navigate"))
+            // Codex: "confiar nesta pasta?" (0.154.0) e afins terminam em "Press enter to continue".
+            || linha == "press enter to continue"
     }).or_else(|| {
         // Revisão no fim de várias perguntas ("Submit answers / Cancel") vem sem rodapé: a caixa vai
         // até a última opção depois de "Ready to submit your answers?".
@@ -213,7 +215,7 @@ fn escolha_numerada(text: &str) -> Option<Escolha> {
     }).filter(|e: &Vec<Etapa>| e.len() > 1).unwrap_or_default();
     let mut textos = caixa[..primeira].iter().filter(|l| !aba(l)).map(|l| l.trim()).filter(|l| !l.is_empty());
     // Antigravity numera as perguntas ("Question 1/1: O que…"): a numeração não é texto da pergunta.
-    let pergunta = textos.next()?;
+    let pergunta = textos.next()?.trim_start_matches("> ");
     let pergunta = pergunta.strip_prefix("Question ").and_then(|resto| resto.split_once(": "))
         .filter(|(n, _)| n.contains('/') && n.chars().all(|c| c.is_ascii_digit() || c == '/'))
         .map_or(pergunta, |(_, texto)| texto).to_owned();
@@ -353,7 +355,14 @@ pub(crate) fn composer_vazio(screen: &vt100::Screen) -> bool {
     matches!(antes.trim(), "❯" | "›" | ">")
         // Espaço em branco conta como vazio: a 2.1.302 apaga cada palavra do exemplo em separado e deixa
         // os espaços entre elas sem `dim` — `Try "fix lint errors"` virava "rascunho" e travava a conversa.
-        && (col..cols).all(|c| screen.cell(row,c).is_none_or(|cell| !cell.has_contents() || cell.dim() || cell.contents().trim().is_empty()))
+        && (col..cols).all(|c| screen.cell(row,c).is_none_or(|cell| !cell.has_contents() || cell.dim() || cinza(cell) || cell.contents().trim().is_empty()))
+}
+
+/// Texto apagado sem `dim`: o Claude atual pinta dica e sugestão de próximo prompt em cinza RGB
+/// (153,153,153). A sugestão depois da resposta ("pode subir uma nova versao") contava como
+/// rascunho e travava a conversa em "não reconhecida" até alguém mexer no terminal do PC.
+fn cinza(cell: &vt100::Cell) -> bool {
+    matches!(cell.fgcolor(), vt100::Color::Rgb(r, g, b) if r == g && g == b) || matches!(cell.fgcolor(), vt100::Color::Idx(8 | 232..=250))
 }
 
 /// Quanto esperar a colagem aparecer no campo antes de mandar o Enter assim mesmo.
@@ -1255,6 +1264,11 @@ Ready to submit your answers?
         let mut rascunho = Interaction::new(5,60);
         rascunho.parser.process("\x1b[?2004h\u{276f}\u{a0}fix lint\x1b[1;3H".as_bytes());
         assert!(!ready(rascunho.parser.screen(),"claude"));
+
+        // Sugestão de próximo prompt em cinza RGB, sem `dim`.
+        let mut sugestao = Interaction::new(5,60);
+        sugestao.parser.process("\x1b[?2004h\u{276f}\u{a0}\x1b[38;2;153;153;153mpode subir uma nova versao\x1b[39m\x1b[1;3H".as_bytes());
+        assert!(ready(sugestao.parser.screen(),"claude"));
     }
 
     /// Parado antes de a CLI ler o prompt: o texto volta ao campo e o "parar" precisa apagá-lo.
@@ -1468,7 +1482,15 @@ mod sonda {
             respondidos = agora;
             let tela = parser.lock().unwrap().screen().contents();
             // Pasta nova: aceita a confiança uma vez (só leitura de `ver`).
-            if !confiou && (tela.contains("trust") && (tela.contains("1. Yes") || tela.contains("Yes, I trust"))) { let _ = escritor.write_all(b"\r"); confiou = true; continue; }
+            if !confiou && (tela.contains("trust") && (tela.contains("1. Yes") || tela.contains("Yes, I trust"))) {
+                // `OMNI_SONDA_CONFIANCA`: devolve a própria tela de confiança (para o acervo).
+                if std::env::var("OMNI_SONDA_CONFIANCA").is_ok() { std::thread::sleep(Duration::from_secs(1)); break parser.lock().unwrap().screen().contents(); }
+                let _ = escritor.write_all(b"\r"); confiou = true; continue;
+            }
+            // `OMNI_SONDA_SEGUNDOS`: só espera e devolve a tela (ex.: a sugestão do Claude depois da resposta).
+            if let Some(s) = std::env::var("OMNI_SONDA_SEGUNDOS").ok().and_then(|s| s.parse::<u64>().ok()) {
+                if Instant::now() + Duration::from_secs(120 - s) > limite { break tela; } else { continue; }
+            }
             if tela.contains("Do you want") || tela.contains("Would you like") || Instant::now() > limite { break tela; }
             // Troca para o auto do Codex com a mesma função do engine e reabre o menu para conferir.
             if std::env::var("OMNI_SONDA_AUTO").is_ok() && (pedido.is_empty() || tela.lines().any(|l| l.trim() == "• ok")) && super::ready(parser.lock().unwrap().screen(), &cli) {
@@ -1517,6 +1539,12 @@ mod sonda {
         println!("bytes={}", total.load(std::sync::atomic::Ordering::SeqCst));
         println!("=== TELA ({cli}) ===\n{tela}\n=== approval: {:?}", super::approval(&tela, &cli).map(|a| (a.0, a.1)));
         { let p = parser.lock().unwrap(); println!("=== ready: {} · modo: {:?}", super::ready(p.screen(), &cli), super::modo_com_provider(p.screen(), &cli)); }
+        {   // Linha do cursor célula a célula: o que o `composer_vazio` enxerga.
+            let p = parser.lock().unwrap(); let s = p.screen(); let (row, col) = s.cursor_position();
+            println!("=== cursor ({row},{col}) bracketed={} vazio={}", s.bracketed_paste(), super::composer_vazio(s));
+            for c in 0..40 { if let Some(cell) = s.cell(row, c) { if cell.has_contents() { print!("[{c}:{:?} dim={} inv={} fg={:?}]", cell.contents(), cell.dim(), cell.inverse(), cell.fgcolor()); } } }
+            println!();
+        }
         // `OMNI_SONDA_SALVAR=aprovacao.comando-2.1.310` grava a tela no acervo do `telas_do_acervo`.
         if let Ok(nome) = std::env::var("OMNI_SONDA_SALVAR") {
             let destino = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests-fixtures/telas/{cli}.{nome}.txt"));

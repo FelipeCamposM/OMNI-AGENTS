@@ -12,14 +12,21 @@ const CONTA_RITMO_MS = 120_000;
  *  verde quando está tudo certo para commitar e dar push — amarelo com o motivo quando não. */
 export function GitContaStatus({ projectPath }: { projectPath: string | null }) {
   const [conta, setConta] = useState<GitConta | null>(null);
+  const [lendo, setLendo] = useState(false);
+  // Clique relê na hora: login feito no terminal (`gh auth login`) sem esperar o ciclo nem reabrir o app.
+  const [pedido, setPedido] = useState(0);
   useEffect(() => {
     if (!projectPath) { setConta(null); return; }
     let vivo = true;
-    const ler = () => gitConta(projectPath).then((lida) => { if (vivo) setConta(lida); }).catch(() => { if (vivo) setConta(null); });
+    const ler = () => {
+      setLendo(true);
+      gitConta(projectPath).then((lida) => { if (vivo) setConta(lida); }).catch(() => { if (vivo) setConta(null); })
+        .finally(() => { if (vivo) setLendo(false); });
+    };
     ler();
     const timer = window.setInterval(ler, CONTA_RITMO_MS);
     return () => { vivo = false; window.clearInterval(timer); };
-  }, [projectPath]);
+  }, [projectPath, pedido]);
 
   if (!conta) return null;
   const quem = conta.github ?? conta.nome ?? "sem conta";
@@ -29,16 +36,18 @@ export function GitContaStatus({ projectPath }: { projectPath: string | null }) 
     conta.email_configurado ? "E-mail do git configurado" : "E-mail do git não configurado",
     conta.gh_instalado ? (conta.github ? `GitHub: ${conta.github}` : "GitHub CLI sem login") : "GitHub CLI não instalado",
     conta.problema ?? "Tudo certo para commitar e dar push",
+    "Clique para verificar de novo",
   ].join("\n");
   return (
-    <span className="rodape-conta" title={detalhes}>
+    <button type="button" className={`rodape-conta ${lendo ? "opacity-60" : ""}`} title={detalhes} aria-busy={lendo}
+      onClick={() => setPedido((n) => n + 1)}>
       <Avatar login={conta.github} inicial={inicial} problema={Boolean(conta.problema)} />
       <span className="sr-only">{conta.problema ? `Git com problema: ${conta.problema}.` : "Git ok."}</span>
       <span className={`min-w-0 truncate ${conta.problema ? "text-warning" : "text-text-primary"}`}>{quem}</span>
       {conta.github
         ? <GithubIcon aria-hidden className={`h-3 w-3 shrink-0 ${conta.problema ? "text-warning" : "text-success"}`} />
         : <GitBranchIcon aria-hidden className={`h-3 w-3 shrink-0 ${conta.problema ? "text-warning" : "text-success"}`} />}
-    </span>
+    </button>
   );
 }
 

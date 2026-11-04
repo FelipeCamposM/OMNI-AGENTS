@@ -244,9 +244,13 @@ pub fn resolve_transcript(
         if value["type"] != "session_meta" { return false; }
         let meta = &value["payload"];
         if let Some(id) = &segment.external_session_id { return meta["id"].as_str() == Some(id.as_str()); }
+        // O modo Auto abre um subagente revisor ("guardian") com rollout próprio na mesma pasta,
+        // segundos depois: eram dois candidatos e a conversa ficava sem histórico.
+        if meta["source"].get("subagent").is_some() { return false; }
         let same_cwd = meta["cwd"].as_str().is_some_and(|cwd| cwd.replace('\\',"/").eq_ignore_ascii_case(&conversation.cwd.replace('\\',"/")));
         same_cwd && timestamp(&meta["timestamp"]).or_else(|| timestamp(&value["timestamp"]))
-            .is_some_and(|t| t.abs_diff(segment.started_at_ms) <= 30_000)
+            // Máquina lenta leva mais de 30 s para o Codex abrir a sessão (visto: 35 s).
+            .is_some_and(|t| t.abs_diff(segment.started_at_ms) <= 90_000)
     }).collect();
     (candidates.len() == 1).then(|| candidates[0].clone())
 }
@@ -638,9 +642,11 @@ segunda linha"}}),
         let distante = sessions.join("rollout-distante.jsonl");
         let correto = sessions.join("rollout-correto.jsonl");
         std::fs::write(&distante, [
-            json!({"type":"session_meta","payload":{"id":"distante","cwd":"C:/projeto","timestamp":"1970-01-01T00:00:50Z"}}),
+            json!({"type":"session_meta","payload":{"id":"distante","cwd":"C:/projeto","timestamp":"1970-01-01T00:02:00Z"}}),
             json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Prompt errado"}]}}),
         ].iter().map(Value::to_string).collect::<Vec<_>>().join("\n")).unwrap();
+        std::fs::write(sessions.join("rollout-guardian.jsonl"),
+            json!({"type":"session_meta","payload":{"id":"guardian","cwd":"C:/projeto","timestamp":"1970-01-01T00:00:12Z","source":{"subagent":{"other":"guardian"}}}}).to_string()).unwrap();
         std::fs::write(&correto, [
             json!({"type":"session_meta","payload":{"id":"codex-1","cwd":"C:\\projeto","timestamp":"1970-01-01T00:00:10Z"}}),
             json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>injetado</environment_context>"}]}}),

@@ -24,7 +24,7 @@ export function NotificationBell({
 }: {
   onOpenSettings: (secao: SettingsSection) => void;
 }) {
-  const itens = useNotifications();
+  const { itens, procurando, procurar } = useNotifications();
   const [aberto, setAberto] = useState(false);
   const caixaRef = useRef<HTMLDivElement>(null);
   const listaRef = useRef<HTMLDivElement>(null);
@@ -136,6 +136,13 @@ export function NotificationBell({
               </button>
             ))
           )}
+          <button
+            onClick={procurar}
+            disabled={procurando}
+            className="glass-hover w-full px-2.5 py-1.5 rounded-none text-[11px] text-text-secondary disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+          >
+            {procurando ? "Procurando versão nova…" : "Procurar versão nova"}
+          </button>
         </div>,
         document.body
       )}

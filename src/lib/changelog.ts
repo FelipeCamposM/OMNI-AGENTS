@@ -14,6 +14,17 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.11",
+    date: "2026-11-04",
+    changes: [
+      "Corrigido: conversas do Codex com o modo Auto ficavam sem histórico (\"nenhum transcript foi associado\"). Também em computadores mais lentos.",
+      "Corrigido: o aviso \"confiar nesta pasta?\" do Codex aparece na conversa como escolha, em vez de \"entrada não reconhecida\".",
+      "Corrigido: a conversa no navegador travava em \"entrada não reconhecida\" quando o Claude sugeria o próximo pedido no campo.",
+      "Clique na conta do git, no rodapé, para conferir de novo na hora, sem reabrir o app.",
+      "Notificações: botão \"Procurar versão nova\", e o app passa a procurar sozinho a cada hora.",
+    ],
+  },
+  {
     version: "0.7.10",
     date: "2026-11-03",
     changes: [

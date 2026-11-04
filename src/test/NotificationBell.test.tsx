@@ -24,6 +24,17 @@ describe("NotificationBell", () => {
     expect(screen.getByText(/nada pendente/i)).toBeInTheDocument();
   });
 
+  it("procurar de novo acha versão que saiu com o app aberto", async () => {
+    render(<NotificationBell onOpenSettings={vi.fn()} />);
+    await screen.findByRole("button", { name: /nenhuma pendência/i });
+    check.mockResolvedValue({ version: "0.9.0", body: "" });
+
+    await userEvent.click(screen.getByRole("button", { name: /nenhuma pendência/i }));
+    await userEvent.click(await screen.findByRole("button", { name: "Procurar versão nova" }));
+
+    expect(await screen.findByText(/versão 0.9.0 disponível/i)).toBeInTheDocument();
+  });
+
   it("atualização aponta para a seção Sobre", async () => {
     check.mockResolvedValue({ version: "0.9.0", body: "" });
     const abrir = vi.fn();
