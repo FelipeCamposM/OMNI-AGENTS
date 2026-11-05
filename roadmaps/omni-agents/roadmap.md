@@ -38,7 +38,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
-### Fundo animado gastando ~20% de CPU (2026-11-05, sem release)
+### Fundo animado gastando ~20% de CPU (2026-11-05, v0.7.12)
 
 - [x] WebView do OMNI medida em ~19% de CPU + 6% de GPU (engine 3%). Causa: o fundo WebGL redesenhava a tela cheia a
   60 fps sempre — fora de foco e até com movimento desligado (só congelava a imagem). `FaultyTerminal.tsx` (o fundo em
@@ -52,7 +52,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
   não medido no app.
 - Outros fundos (`FloatingLines` etc.) seguem a 60 fps: aplicar o mesmo se alguém usar.
 
-### Codex, início com o Windows, conta nos fluxos e arrasto da janela (2026-11-05, sem release)
+### Codex, início com o Windows, conta nos fluxos e arrasto da janela (2026-11-05, v0.7.12)
 
 - [x] Codex `.jsonl.zst`: `omni_core::abrir` descompacta (ruzstd, puro Rust: o `zstd` em C mudava as features do `cc`
   e forçava recompilar o whisper, que pede cmake) para `%TEMP%/omni-agents-zst/<tamanho>-<nome>.jsonl` e devolve `File`;
