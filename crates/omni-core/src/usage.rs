@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{fs::File, io::{Read, Seek, SeekFrom}, path::Path};
+use std::{io::{Read, Seek, SeekFrom}, path::Path};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UsageWindow {
@@ -58,7 +58,7 @@ pub fn codex_event(event: &Value, profile_id: &str, now_ms: u64) -> AccountUsage
 
 /// Reverse blocks: bounded memory even for large transcripts; ignore only an incomplete tail.
 fn last_token_count(path: &Path) -> Option<Value> {
-    let mut file = File::open(path).ok()?;
+    let mut file = crate::abrir(path).ok()?;
     let mut pos = file.metadata().ok()?.len();
     let mut incomplete_tail = if pos > 0 {
         file.seek(SeekFrom::End(-1)).ok()?;

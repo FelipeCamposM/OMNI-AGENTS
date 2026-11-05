@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, Background, GlassLevel, MotionLevel, Theme } from "../types/settings";
 import { UpdateCard } from "./UpdateCard";
 import { acenderNaTela, SettingsSearch, type Achado } from "./SettingsSearch";
@@ -407,10 +408,39 @@ function GeralSection({ settings, onChange }: SectionProps) {
         <TesteDeAviso />
       </Card>
 
+      <InicioComWindowsCard />
       <VozCard />
       <VocabularioCard />
 
     </div>
+  );
+}
+
+/** Sobe só o engine no login do Windows: celular e navegador funcionando sem abrir o app. */
+function InicioComWindowsCard() {
+  const [ligado, setLigado] = useState<boolean | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  useEffect(() => { invoke<boolean | null>("inicio_com_windows").then(setLigado).catch(() => setLigado(null)); }, []);
+  if (ligado === null) return null;
+  return (
+    <Card title="Iniciar com o Windows">
+      <Segmented
+        label="Abrir o OMNI Engine ao entrar no Windows"
+        description="Liga em segundo plano, sem janela: o acesso pelo celular e pelo navegador funciona sem abrir o app."
+        options={[
+          { value: "nao", label: "Desligado" },
+          { value: "sim", label: "Ligado" },
+        ]}
+        value={ligado ? "sim" : "nao"}
+        onChange={(v) => {
+          setErro(null);
+          invoke("definir_inicio_com_windows", { ligar: v === "sim" })
+            .then(() => setLigado(v === "sim"))
+            .catch((motivo) => setErro(String(motivo)));
+        }}
+      />
+      {erro && <p className="text-xs text-danger">{erro}</p>}
+    </Card>
   );
 }
 

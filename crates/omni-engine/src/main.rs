@@ -970,6 +970,13 @@ fn comando_ao_reiniciar(meta: &TerminalSession) -> Option<String> {
             None => original,
         });
     }
+    // Codex idem: sem `resume <id>` abria uma conversa nova. O id vem do rollout que o índice achou.
+    if meta.provider.as_deref() == Some("codex") && !original.contains(" resume ") {
+        return Some(match sessao_do_codex(meta) {
+            Some(id) => format!("{original} resume {id}"),
+            None => original,
+        });
+    }
     if meta.provider.as_deref() != Some("claude") {
         return Some(original);
     }
@@ -1011,6 +1018,18 @@ fn chat_do_cursor(meta: &TerminalSession) -> Option<String> {
         .find(|s| s.terminal_session_id.as_deref() == Some(meta.id.as_str()))?;
     let store = segmento.transcript_path.as_deref()?;
     if omni_core::cursor::itens(Path::new(store)).ok()?.is_empty() { return None; }
+    segmento.external_session_id.clone()
+}
+
+/// Sessão do Codex que já gravou rollout (sem rollout, `codex resume` falharia).
+fn sessao_do_codex(meta: &TerminalSession) -> Option<String> {
+    sessao_com_rollout(&omni_core::conversations::read_index(&engine_dir().ok()?), &meta.id)
+}
+
+fn sessao_com_rollout(indice: &[omni_core::conversations::Conversation], terminal: &str) -> Option<String> {
+    let segmento = indice.iter().flat_map(|c| &c.segments).rev()
+        .find(|s| s.terminal_session_id.as_deref() == Some(terminal))?;
+    segmento.transcript_path.as_ref()?;
     segmento.external_session_id.clone()
 }
 
@@ -1798,6 +1817,15 @@ mod tests {
         trocar.initial_command = Some("agy --model gemini-4-argon --effort high --conversation c1".into());
         let reaberto = comando_ao_reiniciar(&trocar).unwrap();
         assert!(reaberto.starts_with("agy --log-file \"") && reaberto.ends_with(" --model gemini-4-argon --effort high --conversation c1"), "{reaberto}");
+
+        // Codex só retoma depois que o rollout existe (o índice tem caminho e id).
+        let mut conversa: omni_core::conversations::Conversation = serde_json::from_value(serde_json::json!({
+            "id": "c", "project_id": "p", "title": "x", "cwd": "C:/projeto", "created_at_ms": 0, "segments": [{"provider": "codex",
+            "profile_id": null, "transcript_path": null, "ended_at_ms": null, "started_at_ms": 0,
+            "terminal_session_id": "t", "external_session_id": "019e-abc"}]})).unwrap();
+        assert_eq!(sessao_com_rollout(std::slice::from_ref(&conversa), "t"), None);
+        conversa.segments[0].transcript_path = Some("rollout.jsonl".into());
+        assert_eq!(sessao_com_rollout(std::slice::from_ref(&conversa), "t").as_deref(), Some("019e-abc"));
 
         // Terminal puro: sem comando inicial, nada é injetado.
         let mut shell = sessao_claude(dir.path(), "x");

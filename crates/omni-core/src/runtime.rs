@@ -15,7 +15,6 @@ use crate::conversations::claude_transcript_path;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
-    fs::File,
     io::{Read, Seek, SeekFrom},
     path::Path,
 };
@@ -61,7 +60,7 @@ impl AgentRuntime {
 /// Últimos bytes do arquivo como texto. A primeira linha pode vir cortada ao meio — quem consome
 /// descarta o que não for JSON válido, então não há tratamento especial aqui.
 fn cauda(path: &Path, limite: u64) -> Option<String> {
-    let mut arquivo = File::open(path).ok()?;
+    let mut arquivo = crate::abrir(path).ok()?;
     let tamanho = arquivo.metadata().ok()?.len();
     let inicio = tamanho.saturating_sub(limite);
     arquivo.seek(SeekFrom::Start(inicio)).ok()?;

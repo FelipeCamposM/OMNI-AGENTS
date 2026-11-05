@@ -9,14 +9,18 @@ import { GlifoFechar, GlifoMaximizar, GlifoMinimizar, GlifoRestaurar } from "./u
 /*
  * Barra superior própria (a janela nasce sem a moldura do Windows: `decorations: false`).
  *
- * Arrastar: o Tauri só arrasta pelo elemento que tem `data-tauri-drag-region` — não pelos filhos.
- * Por isso o atributo vai na barra e em cada pedaço de texto; botões ficam sem ele e continuam
- * clicáveis. Duplo clique numa região de arrasto maximiza/restaura, como na barra nativa.
+ * Arrastar: só pelo elemento com `data-arrastar` — não pelos filhos. Por isso o atributo vai na barra
+ * e em cada pedaço de texto; botões ficam sem ele e continuam clicáveis. Duplo clique maximiza/restaura.
+ *
+ * Não é o `data-arrastar`: ele pede o arrasto já no clique. Com a janela fora de foco, o
+ * pedido chega ao Windows depois do botão solto, e a janela grudava no ponteiro até o próximo clique.
+ * Aqui o arrasto só começa quando o mouse anda com o botão ainda apertado.
  */
 
 type Janela = {
   minimize: () => Promise<void>;
   toggleMaximize: () => Promise<void>;
+  startDragging: () => Promise<void>;
   close: () => Promise<void>;
   isMaximized: () => Promise<boolean>;
   onResized: (cb: () => void) => Promise<() => void>;
@@ -89,27 +93,41 @@ export function TitleBar({
   const agir = (acao: (janela: Janela) => Promise<void>) => () => {
     void janelaAtual().then((janela) => (janela ? acao(janela) : undefined)).catch(() => undefined);
   };
+  const arrastar = (evento: React.MouseEvent) => {
+    if (evento.button !== 0 || !(evento.target as HTMLElement).hasAttribute("data-arrastar")) return;
+    if (evento.detail === 2) { agir((janela) => janela.toggleMaximize())(); return; }
+    const { clientX: x, clientY: y } = evento;
+    const parar = () => { window.removeEventListener("mousemove", mover); window.removeEventListener("mouseup", parar); };
+    function mover(m: MouseEvent) {
+      if (m.buttons !== 1) { parar(); return; }
+      if (Math.abs(m.clientX - x) + Math.abs(m.clientY - y) < 3) return;
+      parar();
+      agir((janela) => janela.startDragging())();
+    }
+    window.addEventListener("mousemove", mover);
+    window.addEventListener("mouseup", parar);
+  };
 
   return (
-    <header data-tauri-drag-region className={`titlebar${emFoco ? "" : " titlebar-sem-foco"}`}>
+    <header data-arrastar onMouseDown={arrastar} className={`titlebar${emFoco ? "" : " titlebar-sem-foco"}`}>
       <button type="button" onClick={onHome} className="titlebar-marca" aria-label="OMNI AGENTS — início">
         <OmniLogo className="neon-glow h-[18px] w-[18px] shrink-0" />
         <span className="pixel-text">OMNI AGENTS</span>
       </button>
 
       {trilha.length > 0 && (
-        <span data-tauri-drag-region className="titlebar-trilha">
+        <span data-arrastar className="titlebar-trilha">
           {trilha.map((parte, indice) => (
-            <span data-tauri-drag-region key={indice} className={indice === trilha.length - 1 ? "titlebar-trilha-atual" : undefined}
+            <span data-arrastar key={indice} className={indice === trilha.length - 1 ? "titlebar-trilha-atual" : undefined}
               title={indice === trilha.length - 1 ? dica : undefined}>
-              {indice > 0 && <span data-tauri-drag-region className="titlebar-sep" aria-hidden>›</span>}
+              {indice > 0 && <span data-arrastar className="titlebar-sep" aria-hidden>›</span>}
               {parte}
             </span>
           ))}
         </span>
       )}
 
-      <span data-tauri-drag-region className="flex-1 self-stretch" />
+      <span data-arrastar className="flex-1 self-stretch" />
 
       {acoes}
 

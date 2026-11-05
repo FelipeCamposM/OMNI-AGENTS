@@ -446,10 +446,40 @@ pub fn provider_running(pid: Option<u32>, provider: &str) -> bool {
             valid = Process32NextW(handle,&mut entry) != 0;
         }
         CloseHandle(handle);
-        candidates.into_iter().any(|mut child| { for _ in 0..32 {
+        let descende = |mut child: u32| { for _ in 0..32 {
             if child == pid { return true; }
             let Some(parent) = processes.get(&child) else { break }; if *parent == child { break; } child = *parent;
-        } false })
+        } false };
+        // Corrente quebrada: no Git Bash, o Codex do npm é um script `sh`, e o bash intermediário que
+        // o executa fecha (`codex.exe ← node.exe ← sh.exe ← ?`). O console é o mesmo da PTY.
+        let console = std::cell::OnceCell::new();
+        candidates.into_iter().any(|child| descende(child)
+            || console.get_or_init(|| console_host(pid)).is_some_and(|c| console_host(child) == Some(c)))
+    }
+}
+
+/// Processo que hospeda o console (`conhost`/`OpenConsole` da ConPTY) a que `pid` está ligado:
+/// todos os processos de uma mesma PTY dão o mesmo, mesmo com pai intermediário já fechado.
+/// `ProcessConsoleHostProcess` (49): não documentado, mas é o que o Process Explorer usa.
+#[cfg(windows)]
+fn console_host(pid: u32) -> Option<usize> {
+    use std::ffi::c_void;
+    #[link(name = "kernel32")] extern "system" {
+        fn OpenProcess(acesso: u32, herdar: i32, pid: u32) -> *mut c_void;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+    }
+    #[link(name = "ntdll")] extern "system" {
+        fn NtQueryInformationProcess(handle: *mut c_void, classe: u32, info: *mut c_void, tamanho: u32, devolvido: *mut u32) -> i32;
+    }
+    const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() { return None; }
+        let mut host: usize = 0;
+        let status = NtQueryInformationProcess(handle, 49, (&mut host as *mut usize).cast(), std::mem::size_of::<usize>() as u32, std::ptr::null_mut());
+        CloseHandle(handle);
+        // Os 2 bits de baixo são marcas, não parte do pid.
+        (status >= 0 && host & !3 != 0).then_some(host & !3)
     }
 }
 /// O shell tem um processo filho rodando (`npm run dev`, `node`…): silêncio aí não é "parado".
@@ -1041,6 +1071,37 @@ fn run_usage_command(state: &Arc<EngineState>, session: &Arc<LiveSession>, profi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Codex do npm no Git Bash: `codex` é um script `sh`, e a corrente de pais quebra entre a PTY e
+    /// o `codex.exe`. Reproduz com um script que roda o `ping` (programa de console comum).
+    #[cfg(windows)]
+    #[test] fn agente_atras_de_script_sh_no_git_bash_conta_como_rodando() {
+        let bash = std::path::Path::new(&std::env::var("ProgramFiles").unwrap_or_default()).join("Git").join("bin").join("bash.exe");
+        if !bash.is_file() { return; }
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("agente"), "#!/bin/sh\nping -n 20 127.0.0.1 >/dev/null\n").unwrap();
+        let pty = native_pty_system().openpty(PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 }).unwrap();
+        let mut comando = CommandBuilder::new(&bash);
+        // `; true` obriga o bash a fazer fork antes do script, como no terminal interativo.
+        for a in ["-c", "./agente; true"] { comando.arg(a); }
+        comando.cwd(dir.path());
+        let mut filho = pty.slave.spawn_command(comando).unwrap();
+        let pid = filho.process_id();
+        let mut leitor = pty.master.try_clone_reader().unwrap();
+        // A ConPTY pergunta a posição do cursor (ESC[6n) e espera a resposta, como o xterm daria.
+        let mut escritor = pty.master.take_writer().unwrap();
+        std::thread::spawn(move || { let mut buf = [0u8; 4096]; while let Ok(n) = leitor.read(&mut buf) {
+            if n == 0 { break }
+            if buf[..n].windows(4).any(|w| w == b"\x1b[6n") { let _ = escritor.write_all(b"\x1b[1;1R"); }
+        } });
+        let limite = Instant::now() + Duration::from_secs(10);
+        while !provider_running(pid, "ping") && Instant::now() < limite { std::thread::sleep(Duration::from_millis(200)); }
+        let rodando = provider_running(pid, "ping");
+        let _ = filho.kill();
+        assert!(rodando, "ping atrás do script sh não foi visto como filho da PTY");
+        assert!(!provider_running(Some(std::process::id()), "ping"), "processo de fora da PTY contou");
+    }
+
     /// Pergunta do Antigravity 1.4.2 (`ask_question`), copiada da tela real.
     #[test] fn escolha_do_antigravity() {
         let tela = "> me pergunte alguma coisa pra eu escolher alguma opcao\n\n? O que você gostaria de fazer agora?\n\nQuestion\n────────────────────────────────────────\n\nQuestion 1/1: O que você gostaria de fazer agora?\n\n> 1. (Recommended) Criar um novo projeto do zero\n  2. Corrigir um bug ou melhorar um código existente\n  3. Aprender sobre uma tecnologia ou ferramenta nova\n  4. Automatizar alguma tarefa repetitiva\n  5. Write-in...\n\n  ↑/↓ Navigate · enter Select · esc Skip\nesc to cancel                                   Gemini 4 Argon · medium\n";

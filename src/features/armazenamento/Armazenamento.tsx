@@ -313,7 +313,7 @@ function LimpezaCard({ aoLimpar }: { aoLimpar: () => void }) {
       <p className="text-[11px] text-text-muted">
         Conversa sem nenhuma mensagem nova há mais tempo que o escolhido, em todas as contas onde ela está. Sai a conversa
         inteira (subagentes e histórico de edições juntos) e ela some da lista do OMNI. Conversa aberta num terminal nunca
-        sai. Apagar é de vez: não vai para a lixeira.
+        sai. No Windows vai para a Lixeira (dá para restaurar).
       </p>
       {!estado && !erro && <p className="text-xs text-text-muted">Procurando conversas paradas…</p>}
       {sugestoes.map((s) => (
@@ -327,7 +327,7 @@ function LimpezaCard({ aoLimpar }: { aoLimpar: () => void }) {
           </span>
           {s.conversas > 0 && (confirmando === s.dias ? (
             <span className="flex items-center gap-2">
-              <span className="text-xs text-danger">Apagar {s.conversas} de vez?</span>
+              <span className="text-xs text-danger">Mandar {s.conversas} para a Lixeira?</span>
               <Button size="sm" variant="danger" onClick={() => void limpar(s.dias)} disabled={limpando}>{limpando ? "Apagando…" : "Apagar"}</Button>
               <Button size="sm" variant="ghost" onClick={() => setConfirmando(null)} disabled={limpando}>Cancelar</Button>
             </span>

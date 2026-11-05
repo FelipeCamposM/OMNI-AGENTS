@@ -10,23 +10,19 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 ## Pendências conhecidas
 
 ### Bugs achados, não corrigidos
-- [ ] `provider_running` (`crates/omni-engine/src/interaction.rs`) procura `cursor.exe`; nunca casa com
-  `cursor-agent.exe`/`agent.exe` (só afeta a checagem de sessão ociosa do Cursor).
-- [ ] Codex: reiniciar abre conversa nova (o id da sessão não é conhecido na criação).
 - [ ] Duas sessões do Codex (ou do Antigravity no mesmo minuto) na mesma pasta podem trocar de conversa
   (`crates/omni-core/src/runtime.rs`, `antigravity.rs`).
 - [ ] Uso do Antigravity mostra só o grupo Gemini, mesmo usando Claude/GPT dentro dele (`usage.rs`).
-- [ ] Apagar conversa do Codex é definitivo e o índice dele (`thread_history_*.sqlite`) continua citando o rollout.
+- [ ] Limpeza de conversas antigas: o índice do Codex (`thread_history_*.sqlite`) continua citando o rollout que foi
+  para a Lixeira (o `codex resume` pode listar e não abrir).
 - [ ] Projeto WSL: transcript fica no `~/.claude` da distro; o índice do app não enxerga.
-- [ ] Codex 0.15x compacta rollouts antigos em `.jsonl.zst`: o `.jsonl` guardado no segmento some e o histórico
-  dessas conversas aparece vazio (`rollouts()` e o leitor só abrem `.jsonl`; precisaria de zstd).
 
 ### Detecção de estado
 - [ ] Aprovação de edição de arquivo do Claude/Codex ("make the following edits?") e acesso de rede do Codex não
   são reconhecidos.
 
 ### Fluxos (`roadmaps/orquestracao/roadmap.md`)
-- [ ] Escolher conta com uso disponível.
+- [ ] Troca de conta no limite recomeça a etapa do zero na conta nova (não leva o transcript, como o terminal faz).
 - [ ] Tela de fluxos (editor) na web/celular.
 
 ### Plataforma e release
@@ -39,9 +35,30 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 ### Adiadas de propósito
 - [ ] Persistência em SQLite pelo engine (hoje localStorage + JSON em AppData).
 - [ ] Command palette.
-- [ ] Autostart do engine no login do Windows.
 
 ## Entregas
+
+### Codex, início com o Windows, conta nos fluxos e arrasto da janela (2026-11-05, sem release)
+
+- [x] Codex `.jsonl.zst`: `omni_core::abrir` descompacta (ruzstd, puro Rust: o `zstd` em C mudava as features do `cc`
+  e forçava recompilar o whisper, que pede cmake) para `%TEMP%/omni-agents-zst/<tamanho>-<nome>.jsonl` e devolve `File`;
+  todos os leitores de transcript passam por ele. `rollouts()` lista o `.zst` só sem o `.jsonl` irmão;
+  `resolve_transcript`/`validated` aceitam o ponteiro `.jsonl` que virou `.zst`; a troca de conta copia descompactado.
+  Teste `rollout_compactado_e_lido_e_listado_no_lugar_do_jsonl`; sonda `sonda_rollout_zst_real` (ignorada) abriu um real.
+- [x] Reiniciar conversa Codex retoma: `comando_ao_reiniciar` acrescenta `resume <id>` quando o índice já tem rollout
+  (`sessao_com_rollout`, testado). Cursor já era detectado (`executavel` → `node`) desde a 0.7.10: item velho tirado.
+- [x] Limpeza de conversas antigas manda para a Lixeira no Windows (`armazenamento::descartar` → `mestra::para_lixeira`;
+  em teste e fora do Windows apaga). Textos da tela atualizados.
+- [x] "Iniciar com o Windows" (Configurações → Geral, desligado por padrão): `src-tauri/src/inicio_com_windows.rs` grava
+  `HKCU\...\Run` "OMNI AGENTS Engine" = `"<app>" --so-engine`; com a flag o app só roda `ensure_engine` e sai (o engine
+  é binário de console: direto no Run abriria janela). Quoting do `reg add` conferido numa chave de teste.
+- [x] Fluxos: campo **Conta** na etapa de agente (`config.conta`, por cima da do modelo de agente). `escolher_conta`
+  pula conta sem login ou em 100% (`automatico::esgotada`, uso gravado); erro de limite (`eh_limite`) marca a conta e
+  recomeça a etapa na próxima com uso, com aviso na atividade. Teste `conta_da_etapa_pula_esgotada_e_troca_no_limite`.
+- [x] Janela grudando no ponteiro ao clicar na barra superior com o app fora de foco: o `data-tauri-drag-region` pedia o
+  arrasto no clique e o pedido chegava ao Windows com o botão já solto. `TitleBar` agora só chama `startDragging`
+  quando o mouse anda ≥3 px com o botão apertado (`data-arrastar`). Teste em `TitleBar.test.tsx`. Não visto no app real.
+- Testes: core 100, engine 130, front 502 (+1 de ritmo do `TerminalPane` que só falha na suíte cheia, passa sozinho).
 
 ### Criar fluxo a partir de uma conversa (2026-10-25, v0.7.8)
 
@@ -300,6 +317,8 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 - "Confiar nesta pasta?" do Codex virava "entrada não reconhecida" (2026-11-04, v0.7.11): o menu termina em "Press enter to continue", rodapé que o `escolha_numerada` não aceitava. Agora vira cartão de escolha (1 confia, 2 sai). Tela real no acervo (`codex.escolha.confiar-pasta-0.154.0.txt`); a sonda ganhou `OMNI_SONDA_CONFIANCA` para capturar essa tela.
 - "Entrada do CLI não reconhecida" no navegador com o campo do Claude vazio (2026-11-04, v0.7.11): a sugestão de próximo prompt vem em cinza RGB (153,153,153), sem `dim`, e o `composer_vazio` a lia como rascunho; abrir no PC redesenhava a tela e destravava. Cinza (RGB igual nos três canais ou índices 8/232–250) agora conta como dica. Teste em `exemplo_com_palavras_apagadas_em_separado_continua_vazio`; a sonda ganhou `OMNI_SONDA_SEGUNDOS` e imprime a linha do cursor célula a célula.
 - Reler sem reabrir o app (2026-11-04, v0.7.11): clicar na conta do git do rodapé relê na hora (antes só a cada 2 min, e `gh` instalado com o app aberto nunca era achado: `ampliar_path` antes do `gh` + `Program Files\GitHub CLI` nos locais conhecidos). O sino tem "Procurar versão nova" e também relê sozinho a cada hora (antes só ao abrir).
+- Codex do npm travava em "entrada não reconhecida"/"Sem sessão ativa" (2026-11-04, sem release): no Git Bash o `codex` do npm é um script `sh`, e o bash intermediário fecha depois do exec (`codex.exe ← node.exe ← sh.exe ← ?`), então `provider_running` não chegava ao pid da PTY e dava o agente como parado. Fallback: mesmo processo hospedeiro do console (`NtQueryInformationProcess` classe 49, o `conhost`/`OpenConsole` da ConPTY) que o shell da PTY. Teste `agente_atras_de_script_sh_no_git_bash_conta_como_rodando` (falha sem o fallback). O Codex nativo (instalador) não passava pelo script, por isso aqui funcionava.
+- Codex sem rollout ainda (parado no "confiar nesta pasta?") mostrava "histórico indisponível" (2026-11-04, sem release): sem nenhum candidato na pasta/instante agora é conversa vazia (`codex_sem_rollout`); só ambíguo continua indisponível.
 - Conversas abertas sumiam da web: "Abertas no PC" só mostrava o projeto escolhido (vazia com conversas rodando em outro projeto, e o "Trabalhando agora" saiu na v0.7.8). Agora lista as sessões abertas de todos os projetos, com o projeto no cartão e as do projeto escolhido primeiro (teste em `WebApp.test.tsx`).
 
 ### Lateral premium: linhas de projetos, chats, terminais e recentes (2026-10-29, v0.7.9)

@@ -269,6 +269,12 @@ pub struct Limpeza {
     pub erros: Vec<String>,
 }
 
+/// Windows: Lixeira (dá para restaurar). Teste e outros sistemas, que não têm lixeira padrão: apaga.
+fn descartar(caminho: &Path, pasta: bool) -> std::io::Result<()> {
+    #[cfg(all(windows, not(test)))] { let _ = pasta; crate::mestra::para_lixeira(caminho) }
+    #[cfg(not(all(windows, not(test))))] { if pasta { fs::remove_dir_all(caminho) } else { fs::remove_file(caminho) } }
+}
+
 /// Apaga as conversas que `antigas` devolve **agora** — a lista é refeita aqui, nunca recebida de
 /// fora, então ninguém apaga um caminho qualquer por esta função. Depois tira do índice do OMNI as
 /// conversas que ficaram sem nenhum arquivo.
@@ -279,7 +285,7 @@ pub fn limpar(dir: &Path, dias: u64, agora_ms: u64, protegidas: &HashSet<String>
         let mut ok = true;
         for caminho in &antiga.caminhos {
             let Ok(meta) = fs::symlink_metadata(caminho) else { continue };
-            let apagou = if meta.is_dir() { fs::remove_dir_all(caminho) } else { fs::remove_file(caminho) };
+            let apagou = descartar(caminho, meta.is_dir());
             if let Err(erro) = apagou { ok = false; resultado.erros.push(format!("{}: {erro}", caminho.display())); }
         }
         if ok {

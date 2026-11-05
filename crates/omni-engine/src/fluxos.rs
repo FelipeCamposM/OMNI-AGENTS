@@ -245,7 +245,7 @@ fn processar(state: &Arc<EngineState>, v: &Viva, passo: &Passo) -> Result<()> {
         TipoDeNo::Agente => {
             let retomar = v.lock().ok().and_then(|e| e.nos.get(&no.id).filter(|n| n.status == "rodando" && n.session_id.is_some() && n.saida.is_empty()).and_then(|n| n.session_id.clone()));
             let prompt = fluxos::montar_prompt(&no, &ctx);
-            let ajuste = Ajuste { modelo: texto_de(&no.config, "modelo"), esforco: texto_de(&no.config, "esforco") };
+            let ajuste = Ajuste { modelo: texto_de(&no.config, "modelo"), esforco: texto_de(&no.config, "esforco"), conta: texto_de(&no.config, "conta") };
             let r = rodar_agente(state, v, &no.id, &no.agente, &prompt, retomar.as_deref(), &pasta, &projeto, &ajuste)?;
             definir_saida(state, v, &no.id, r);
             String::new()
@@ -312,9 +312,25 @@ fn seguir(state: &EngineState, v: &Viva, no: &str, saida: &str) {
     });
 }
 
-/// Modelo/esforço escolhidos no nó, por cima dos do modelo de agente.
+/// Modelo/esforço/conta escolhidos no nó, por cima dos do modelo de agente.
 #[derive(Default)]
-struct Ajuste { modelo: Option<String>, esforco: Option<String> }
+struct Ajuste { modelo: Option<String>, esforco: Option<String>, conta: Option<String> }
+
+/// Conta da etapa: a escolhida (nó, senão modelo de agente), depois a principal da CLI, depois as
+/// outras — pulando conta com login caído ou esgotada pelo uso gravado. `so_com_uso`: na troca por
+/// limite, só serve conta com uso; sem nenhuma assim, a primeira da ordem (a CLI diz o motivo).
+fn escolher_conta<'a>(perfis: &'a [omni_core::Profile], cli: &str, preferida: &str, fora: &[String], so_com_uso: bool,
+    esgotada: impl Fn(&omni_core::Profile) -> bool) -> Option<&'a omni_core::Profile> {
+    let da_cli = || perfis.iter().filter(move |p| p.provider == cli && !fora.contains(&p.id));
+    let ordem = || da_cli().filter(|p| p.id == preferida).chain(da_cli().filter(|p| p.id != preferida && p.builtin)).chain(da_cli().filter(|p| p.id != preferida && !p.builtin));
+    ordem().find(|p| p.authenticated && !esgotada(p)).or_else(|| (!so_com_uso).then(|| ordem().next()).flatten())
+}
+
+/// Erro da CLI que é limite de uso da conta (mesmos textos que a tela do terminal mostra).
+fn eh_limite(erro: &str) -> bool {
+    notice_counts(erro).0 > 0
+        || { let e = erro.to_ascii_lowercase(); e.contains("usage limit") || e.contains("session limit") || e.contains("weekly limit") }
+}
 
 fn texto_de(config: &Value, chave: &str) -> Option<String> {
     config[chave].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned)
@@ -358,19 +374,37 @@ pub(crate) fn comando_da_cli(exe: &Path) -> Command {
 /// Roda um agente sem tela, guardando cada evento no histórico do nó. Pausar/cancelar mata o processo
 /// (e aqui vira `PAUSADO`). Devolve o texto final.
 #[allow(clippy::too_many_arguments)]
-fn rodar_agente(state: &EngineState, v: &Viva, no: &str, agente: &str, prompt: &str, retomar: Option<&str>, pasta: &str, projeto: &str, ajuste: &Ajuste) -> Result<String> {
+fn rodar_agente(state: &Arc<EngineState>, v: &Viva, no: &str, agente: &str, prompt: &str, retomar: Option<&str>, pasta: &str, projeto: &str, ajuste: &Ajuste) -> Result<String> {
     let mut modelo = modelo_do_agente(agente, projeto)?;
     if let Some(m) = &ajuste.modelo { modelo.modelo = m.clone(); }
     if let Some(e) = &ajuste.esforco { modelo.esforco = e.clone(); }
+    if let Some(c) = &ajuste.conta { modelo.conta = c.clone(); }
     if !modelo.modelo.is_empty() && !argumento_seguro(&modelo.modelo) { return Err(anyhow!("Modelo inválido: {}", modelo.modelo)); }
     if !modelo.esforco.is_empty() && !argumento_seguro(&modelo.esforco) { return Err(anyhow!("Esforço inválido: {}", modelo.esforco)); }
     let dir = state.state_file.parent().ok_or_else(|| anyhow!("engine"))?;
     let perfis = omni_core::profiles(dir);
-    let perfil = perfis.iter().filter(|p| p.provider == modelo.cli)
-        .find(|p| !modelo.conta.is_empty() && p.id == modelo.conta)
-        .or_else(|| perfis.iter().find(|p| p.provider == modelo.cli && p.builtin))
-        .or_else(|| perfis.iter().find(|p| p.provider == modelo.cli))
-        .cloned();
+    let mut fora: Vec<String> = Vec::new();
+    loop {
+        let perfil = escolher_conta(&perfis, &modelo.cli, &modelo.conta, &fora, !fora.is_empty(), |p| automatico::esgotada(state, p)).cloned();
+        // ponytail: a conta nova recomeça a etapa do zero (o worktree guarda o que já foi feito); levar
+        // o transcript junto, como a troca do terminal, se recomeçar custar caro.
+        let retomar = if fora.is_empty() { retomar } else { None };
+        match rodar_na_conta(state, v, no, &modelo, prompt, retomar, pasta, perfil.as_ref()) {
+            Err(erro) if eh_limite(&erro.to_string()) => {
+                let Some(p) = perfil else { return Err(erro) };
+                fora.push(p.id.clone());
+                let Some(proxima) = escolher_conta(&perfis, &modelo.cli, &modelo.conta, &fora, true, |p| automatico::esgotada(state, p)) else {
+                    return Err(anyhow!("Limite de uso em {} e nenhuma outra conta de {} com uso disponível. {erro}", p.name, modelo.cli));
+                };
+                mexer(state, v, |e| if let Some(n) = e.nos.get_mut(no) { n.atividade = format!("Limite em {}: trocando para {}…", p.name, proxima.name); });
+            }
+            outro => return outro,
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rodar_na_conta(state: &EngineState, v: &Viva, no: &str, modelo: &omni_core::agentes::ModeloDeAgente, prompt: &str, retomar: Option<&str>, pasta: &str, perfil: Option<&omni_core::Profile>) -> Result<String> {
     let exe = executavel(&modelo.cli).ok_or_else(|| anyhow!("CLI “{}” não encontrada neste PC", modelo.cli))?;
     let mut c = comando_da_cli(&exe);
     match modelo.cli.as_str() {
@@ -391,14 +425,14 @@ fn rodar_agente(state: &EngineState, v: &Viva, no: &str, agente: &str, prompt: &
         }
         outra => return Err(anyhow!("A CLI “{outra}” ainda não roda sem tela nos fluxos")),
     }
-    if let Some(p) = &perfil { c.envs(omni_core::env_for(p)); }
+    if let Some(p) = perfil { c.envs(omni_core::env_for(p)); }
     c.current_dir(pasta).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     sem_janela(&mut c);
     let mut filho = c.spawn().with_context(|| format!("não consegui abrir {}", modelo.cli))?;
     let run_id = v.lock().map_err(|_| anyhow!("execucao"))?.id.clone();
     processos().lock().expect("processos").insert(format!("{run_id}/{no}"), filho.id());
     mexer(state, v, |e| if let Some(n) = e.nos.get_mut(no) {
-        n.cli = Some(modelo.cli.clone()); n.conta = perfil.as_ref().map(|p| p.id.clone());
+        n.cli = Some(modelo.cli.clone()); n.conta = perfil.map(|p| p.id.clone());
         n.modelo = (!modelo.modelo.is_empty()).then(|| modelo.modelo.clone()); n.esforco = (!modelo.esforco.is_empty()).then(|| modelo.esforco.clone());
         n.atividade = format!("Abrindo {}…", modelo.cli);
     });
@@ -497,7 +531,7 @@ fn rodar_comando(state: &EngineState, v: &Viva, no: &str, comando: &str, pasta: 
 
 /// Time conversando: cada participante fala na sua vez, rodada após rodada, até todos concordarem
 /// numa rodada ou acabar o limite. O primeiro participante escreve a ata.
-fn rodar_sala(state: &EngineState, v: &Viva, no: &fluxos::No, ctx: &Contexto, pasta: &str, projeto: &str) -> Result<String> {
+fn rodar_sala(state: &Arc<EngineState>, v: &Viva, no: &fluxos::No, ctx: &Contexto, pasta: &str, projeto: &str) -> Result<String> {
     let participantes = fluxos::participantes(no);
     let rodadas = no.config["rodadas"].as_u64().unwrap_or(3).clamp(1, 10) as u32;
     let objetivo = no.config["objetivo"].as_str().unwrap_or("{{entrada}}").replace("{{entrada}}", &ctx.entrada).replace("{{anterior}}", &ctx.anterior);
@@ -656,6 +690,24 @@ mod tests {
         serde_json::from_value(json!({"id": "t", "nome": "T", "nos": [
             {"id": "e", "tipo": "entrada"}, {"id": "a", "tipo": "aprovacao"}, {"id": "f", "tipo": "fim"}],
             "conexoes": [{"de": "e", "para": "a"}, {"de": "a", "para": "f", "saida": "sim"}]})).unwrap()
+    }
+
+    /// Conta da etapa: a escolhida se tem uso; esgotada ou sem login → a próxima; na troca por limite
+    /// só serve conta com uso (sem nenhuma, a etapa falha em vez de girar).
+    #[test]
+    fn conta_da_etapa_pula_esgotada_e_troca_no_limite() {
+        let p = |id: &str, builtin: bool, authenticated: bool| omni_core::Profile { id: id.into(), provider: "claude".into(), name: id.into(),
+            config_dir: String::new(), builtin, created_at_ms: 0, last_used_at_ms: None, authenticated, ..serde_json::from_value(json!({
+                "id": "", "provider": "", "name": "", "config_dir": "", "created_at_ms": 0})).unwrap() };
+        let perfis = [p("principal", true, true), p("b", false, true), p("sem-login", false, false)];
+        let nenhuma = |_: &omni_core::Profile| false;
+        assert_eq!(escolher_conta(&perfis, "claude", "b", &[], false, nenhuma).unwrap().id, "b");
+        assert_eq!(escolher_conta(&perfis, "claude", "", &[], false, nenhuma).unwrap().id, "principal");
+        assert_eq!(escolher_conta(&perfis, "claude", "b", &[], false, |c| c.id == "b").unwrap().id, "principal");
+        assert_eq!(escolher_conta(&perfis, "claude", "b", &["b".into()], true, nenhuma).unwrap().id, "principal");
+        assert!(escolher_conta(&perfis, "claude", "b", &["b".into(), "principal".into()], true, nenhuma).is_none());
+        assert!(eh_limite("Claude AI usage limit reached|1760000000") && eh_limite("You've hit your session limit · resets 8pm"));
+        assert!(!eh_limite("claude saiu com erro: ENOENT"));
     }
 
     /// Comando de verdade no shell do sistema: passou → segue por `sim` com a saída gravada; falhou

@@ -13,6 +13,7 @@ import {
   type AgenteSalvo, type CliDoAgente, type ModeloDaCli,
 } from "../agentes/agentesService";
 import { SeletorDeModelo } from "../agentes/ModelosDeAgentes";
+import { listProfiles, type Profile } from "../terminal/terminalService";
 import { ManualDeAgentes } from "../agentes/ManualDeAgentes";
 import { Microfone } from "../../mobile/Composer";
 import "../../mobile/mobile.css";
@@ -560,6 +561,9 @@ function PainelDoNo({ no, agentes, modelos, projectPath, onMudar, onAgenteCriado
   const [pedido, setPedido] = useState("");
   const [cli, setCli] = useState<CliDoAgente>("claude");
   const [ocupado, setOcupado] = useState(false);
+  const [perfis, setPerfis] = useState<Profile[]>([]);
+  useEffect(() => { listProfiles().then(setPerfis).catch(() => undefined); }, []);
+  const contas = agente ? perfis.filter((p) => p.provider === agente.cli) : [];
 
   async function criarAgente() {
     setOcupado(true);
@@ -605,6 +609,13 @@ function PainelDoNo({ no, agentes, modelos, projectPath, onMudar, onAgenteCriado
                 modelo={String(no.config.modelo ?? "")} esforco={String(no.config.esforco ?? "")}
                 onMudar={(parte) => cfg(parte)} />
             </div>
+          )}
+          {agente && contas.length > 0 && (
+            <Field label="Conta" htmlFor="fx-conta" description="Se a conta bater no limite de uso, a etapa recomeça sozinha noutra conta da mesma IA com uso disponível.">
+              <Select id="fx-conta" size="sm" value={String(no.config.conta ?? "")} onChange={(v) => cfg({ conta: v })}
+                options={[{ value: "", label: `Do agente (${contas.find((p) => p.id === agente.conta)?.name ?? "qualquer com uso"})` },
+                  ...contas.map((p) => ({ value: p.id, label: p.authenticated ? p.name : `${p.name} (sem login)` }))]} />
+            </Field>
           )}
           <Field label="Prompt desta etapa" htmlFor="fx-prompt" description="Vazio = a tarefa + o que veio da etapa anterior. Marcadores: {{entrada}}, {{anterior}}, {{no:id}}.">
             <Textarea id="fx-prompt" rows={9} className="font-mono text-xs" value={String(no.config.prompt ?? "")} onChange={(e) => cfg({ prompt: e.target.value })} />

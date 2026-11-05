@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{collections::HashSet, fs::File, io::{BufRead, BufReader}, path::{Path, PathBuf}};
+use std::{collections::HashSet, io::{BufRead, BufReader}, path::{Path, PathBuf}};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Segment {
@@ -52,7 +52,7 @@ const PALAVRA_MAX: usize = 24;
 pub fn primeiro_prompt(conversation: &Conversation) -> Option<String> {
     for segment in &conversation.segments {
         let Some(path) = segment.transcript_path.as_deref() else { continue };
-        let Ok(file) = File::open(path) else { continue };
+        let Ok(file) = crate::abrir(Path::new(path)) else { continue };
         for line in BufReader::new(file).lines().map_while(Result::ok) {
             let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
             let Some((role, text)) = text_message(&value, &segment.provider) else { continue };
@@ -224,9 +224,12 @@ pub fn resolve_transcript(
         }
     }
     if let Some(path) = &segment.transcript_path {
-        let path = Path::new(path).canonicalize().ok()?;
+        let path = Path::new(path);
         let extensao = if matches!(segment.provider.as_str(), "antigravity" | "cursor") { "db" } else { "jsonl" };
-        return (path.starts_with(&root) && path.extension().is_some_and(|e| e == extensao)).then_some(path);
+        // O Codex compacta rollout velho: o `.jsonl` guardado vira `.jsonl.zst` (lido por `crate::abrir`).
+        let real = path.canonicalize().or_else(|_| crate::compactado(path).canonicalize()).ok()?;
+        let ok = real.starts_with(&root) && path.extension().is_some_and(|e| e == extensao);
+        return ok.then(|| if real.extension().is_some_and(|e| e == "zst") { real.with_extension("") } else { real });
     }
     // O agy não aceita id escolhido no spawn: a conversa é achada pela pasta + instante no índice dele.
     if segment.provider == "antigravity" {
@@ -237,8 +240,22 @@ pub fn resolve_transcript(
         return crate::cursor::descobrir(&root, &conversation.cwd, segment.started_at_ms).map(|(_, path)| path);
     }
     if segment.provider != "codex" { return None; }
-    let candidates: Vec<_> = crate::rollouts(&root.join("sessions")).into_iter().filter(|path| {
-        let Ok(file) = File::open(path) else { return false };
+    let candidates = codex_candidatos(&root, segment, conversation);
+    (candidates.len() == 1).then(|| candidates[0].clone())
+}
+
+/// Codex que ainda não gravou rollout nenhum (parado no "confiar nesta pasta?", sem prompt): a
+/// conversa está vazia, não com histórico perdido.
+fn codex_sem_rollout(segment: &Segment, conversation: &Conversation, profiles: &[crate::Profile]) -> bool {
+    segment.provider == "codex" && segment.transcript_path.is_none()
+        && profiles.iter().find(|p| Some(&p.id) == segment.profile_id.as_ref() && p.provider == "codex")
+            .and_then(|p| Path::new(&p.config_dir).canonicalize().ok())
+            .is_some_and(|root| codex_candidatos(&root, segment, conversation).is_empty())
+}
+
+fn codex_candidatos(root: &Path, segment: &Segment, conversation: &Conversation) -> Vec<PathBuf> {
+    crate::rollouts(&root.join("sessions")).into_iter().filter(|path| {
+        let Ok(file) = crate::abrir(path) else { return false };
         let Some(Ok(line)) = BufReader::new(file).lines().next() else { return false };
         let Ok(value) = serde_json::from_str::<Value>(&line) else { return false };
         if value["type"] != "session_meta" { return false; }
@@ -251,12 +268,11 @@ pub fn resolve_transcript(
         same_cwd && timestamp(&meta["timestamp"]).or_else(|| timestamp(&value["timestamp"]))
             // Máquina lenta leva mais de 30 s para o Codex abrir a sessão (visto: 35 s).
             .is_some_and(|t| t.abs_diff(segment.started_at_ms) <= 90_000)
-    }).collect();
-    (candidates.len() == 1).then(|| candidates[0].clone())
+    }).collect()
 }
 
 fn codex_session_id(path: &Path) -> Option<String> {
-    let first = BufReader::new(File::open(path).ok()?).lines().next()?.ok()?;
+    let first = BufReader::new(crate::abrir(path).ok()?).lines().next()?.ok()?;
     let value: Value = serde_json::from_str(&first).ok()?;
     (value["type"] == "session_meta")
         .then(|| value["payload"]["id"].as_str())
@@ -409,7 +425,10 @@ pub fn itens_cached(
         // Antes caía no aviso de histórico perdido logo na primeira abertura. Nada é lido aqui, então
         // pular não abre brecha na checagem de caminho feita em `resolve_transcript`.
         if segment.transcript_path.as_deref().is_some_and(|path| !Path::new(path).exists()) { continue }
-        let Some(path) = resolve_transcript(segment, conversation, profiles) else { unavailable.push(segment_index); continue };
+        let Some(path) = resolve_transcript(segment, conversation, profiles) else {
+            if !codex_sem_rollout(segment, conversation, profiles) { unavailable.push(segment_index); }
+            continue
+        };
         // ponytail: o SQLite do agy é relido inteiro a cada consulta (conversa pequena, leitura local);
         // cache por mtime se uma conversa longa pesar.
         let lidos;
@@ -660,6 +679,11 @@ segunda linha"}}),
             title:"Projeto · novo agente".into(),title_source:TitleSource::Auto,created_at_ms:9_000,
             segments:vec![Segment { provider:"codex".into(),profile_id:Some("codex-p".into()),external_session_id:None,
                 transcript_path:None,terminal_session_id:Some("t".into()),started_at_ms:9_000,ended_at_ms:None,historico_ate_ms:None }] }];
+
+        // Pasta sem rollout ainda (Codex parado no "confiar nesta pasta?"): vazia, não indisponível.
+        let mut sem_rollout = conversations[0].clone();
+        sem_rollout.cwd = "C:/outra".into();
+        assert!(timeline(&sem_rollout, &[profile.clone()], None, 10).unavailable_segments.is_empty());
 
         assert!(discover_codex_transcripts(&mut conversations, &[profile]));
         assert_eq!(conversations[0].segments[0].external_session_id.as_deref(), Some("codex-1"));

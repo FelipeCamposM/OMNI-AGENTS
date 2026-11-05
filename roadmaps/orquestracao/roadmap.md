@@ -65,7 +65,7 @@ Instruções do agente (system prompt)...
       `POST .../{pausar|retomar|cancelar}`, `GET .../nos/{no}/historico`, `POST .../nos/{no}/aprovar`, `POST .../nos/{no}/conversa`.
 - [x] Ramos paralelos (2026-10-25): a fila roda em lotes, cada passo numa thread (`executar`, `crates/omni-engine/src/fluxos.rs`), e o nó **Juntar** espera todos os ramos. Ainda no mesmo worktree (ver `ponytail:` no executor).
 - [x] Aprovação de fluxo na fila "Precisa de você" da web/celular (2026-10-25, `src/mobile/AprovacoesDeFluxo.tsx`).
-- [ ] Escolher conta com uso disponível (hoje: conta do modelo, senão a principal da CLI).
+- [x] Escolher conta com uso disponível: campo Conta na etapa; pula conta esgotada e troca sozinho no limite (2026-11-05, ver roadmap do OMNI).
 
 ### Etapa 3 — Editor visual estilo n8n (feita, 2026-10-17)
 - [x] `src/features/fluxos/` (`FluxosView.tsx`, `NoDoFluxo.tsx`, `fluxosService.ts`) com `@xyflow/react`: lateral

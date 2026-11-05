@@ -593,7 +593,7 @@ impl FeedCache {
             *feed = Feed { entries: itens, usado_em: agora, ..Feed::default() };
             return Ok(&self.feeds[path].entries);
         }
-        let mut file = File::open(path)?;
+        let mut file = crate::abrir(path)?;
         let tamanho = file.metadata()?.len();
         if !self.feeds.contains_key(path) && self.feeds.len() >= CACHE_MAX {
             if let Some(velho) = self.feeds.iter().min_by_key(|(_, feed)| feed.usado_em).map(|(p, _)| p.clone()) {

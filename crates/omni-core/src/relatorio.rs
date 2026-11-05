@@ -8,7 +8,6 @@ use crate::Profile;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
@@ -106,7 +105,7 @@ fn prompt_de_verdade(mensagem: &Value) -> bool {
 /// Linhas que entraram no arquivo desde `arquivo.lido_ate`, avançando a marca. A última linha sem
 /// `\n` só conta se já for um JSON inteiro — senão a CLI ainda está escrevendo e fica para a próxima.
 fn linhas_novas(caminho: &Path, arquivo: &mut Arquivo) -> Vec<String> {
-    let Ok(mut file) = File::open(caminho) else { return Vec::new() };
+    let Ok(mut file) = crate::abrir(caminho) else { return Vec::new() };
     if file.seek(SeekFrom::Start(arquivo.lido_ate)).is_err() { return Vec::new(); }
     let mut leitor = BufReader::new(file);
     let mut linhas = Vec::new();

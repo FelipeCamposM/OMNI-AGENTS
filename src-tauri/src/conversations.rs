@@ -334,7 +334,9 @@ fn copy_codex_transcript(
     target_config_dir: &Path,
 ) -> Result<(PathBuf, String), String> {
     let source_root = source_config_dir.canonicalize().map_err(|error| error.to_string())?;
-    let source = source.canonicalize().map_err(|error| error.to_string())?;
+    // Rollout velho compactado pelo Codex (`.jsonl.zst`): copiado descompactado, como `.jsonl`.
+    let source = source.canonicalize().or_else(|_| omni_core::compactado(source).canonicalize()).map_err(|error| error.to_string())?;
+    let source = if source.extension().is_some_and(|ext| ext == "zst") { source.with_extension("") } else { source };
     let relative = source
         .strip_prefix(&source_root)
         .map_err(|_| "Rollout do Codex fora da conta de origem".to_string())?;
@@ -342,7 +344,7 @@ fn copy_codex_transcript(
         return Err("Rollout do Codex inválido".into());
     }
 
-    let first = BufReader::new(fs::File::open(&source).map_err(|error| error.to_string())?)
+    let first = BufReader::new(omni_core::abrir(&source).map_err(|error| error.to_string())?)
         .lines()
         .next()
         .transpose()
@@ -360,7 +362,8 @@ fn copy_codex_transcript(
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    fs::copy(&source, &destination).map_err(|error| error.to_string())?;
+    std::io::copy(&mut omni_core::abrir(&source).map_err(|error| error.to_string())?, &mut fs::File::create(&destination).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
     Ok((destination, session_id))
 }
 

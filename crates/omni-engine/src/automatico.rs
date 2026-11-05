@@ -213,6 +213,11 @@ fn mais_usada(uso: &AccountUsage) -> Option<&UsageWindow> {
     janelas(uso).filter(|j| j.used_percent < 100.0).max_by(|a, b| a.used_percent.total_cmp(&b.used_percent))
 }
 
+/// Conta em 100% pelo uso que a CLI gravou (nunca abre terminal). Os fluxos pulam essa conta.
+pub(crate) fn esgotada(state: &Arc<EngineState>, perfil: &omni_core::Profile) -> bool {
+    esgotada_ate(uso(state, perfil).as_ref(), now_ms()).is_some()
+}
+
 /// Quando uma conta comprovadamente esgotada volta. Com mais de uma janela em 100%, vale o reset mais
 /// distante: liberar no de 5 h com a semanal estourada só faria outra troca na hora.
 fn esgotada_ate(uso: Option<&AccountUsage>, agora: u64) -> Option<u64> {

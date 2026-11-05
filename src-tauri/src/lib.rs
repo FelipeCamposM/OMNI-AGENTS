@@ -17,12 +17,18 @@ mod relatorio;
 mod agentes;
 mod fluxos;
 mod microfone;
+mod inicio_com_windows;
 
 pub fn run() {
     #[cfg(unix)]
     engine_client::import_login_shell_path();
     // Antes de qualquer detecção ou spawn: o engine e os terminais herdam este PATH.
     omni_core::cli_path::ampliar_path();
+    // Login do Windows com "Iniciar com o Windows" ligado: só garante o engine, sem janela.
+    if std::env::args().any(|arg| arg == inicio_com_windows::FLAG) {
+        engine_client::ensure_engine();
+        return;
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -48,6 +54,8 @@ pub fn run() {
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
+            inicio_com_windows::inicio_com_windows,
+            inicio_com_windows::definir_inicio_com_windows,
             engine_client::engine_status,
             account_usage::account_usage,
             extensoes::listar_extensoes,

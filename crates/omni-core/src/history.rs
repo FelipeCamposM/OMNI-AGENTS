@@ -90,7 +90,7 @@ fn blank(provider: &str, profile: &Profile, session_id: String, path: &Path) -> 
 /// `<config>/projects/<slug>/<uuid>.jsonl`. Título = último `ai-title` (o Claude reescreve conforme a
 /// conversa anda). Sessão sem nenhum prompt digitado (só hook de inicialização) fica de fora.
 pub fn claude_entry(path: &Path, profile: &Profile) -> Option<HistoryEntry> {
-    let file = File::open(path).ok()?;
+    let file = crate::abrir(path).ok()?;
     let mut entry = blank("claude", profile, path.file_stem()?.to_string_lossy().into_owned(), path);
     let mut summary = None;
     for line in BufReader::new(file).lines().map_while(Result::ok) {
@@ -116,7 +116,7 @@ pub fn claude_entry(path: &Path, profile: &Profile) -> Option<HistoryEntry> {
 /// `<config>/sessions/AAAA/MM/DD/rollout-*.jsonl`. A primeira linha é o `session_meta`; o título vem
 /// do `session_index.jsonl` da conta.
 pub fn codex_entry(path: &Path, profile: &Profile, titles: &HashMap<String, String>) -> Option<HistoryEntry> {
-    let mut lines = BufReader::new(File::open(path).ok()?).lines().map_while(Result::ok);
+    let mut lines = BufReader::new(crate::abrir(path).ok()?).lines().map_while(Result::ok);
     let first: Value = serde_json::from_str(&lines.next()?).ok()?;
     if first["type"] != "session_meta" { return None; }
     let meta = &first["payload"];
@@ -221,9 +221,12 @@ pub fn scan(provider: &str, profiles: &[Profile], cache: &mut ScanCache) -> Vec<
 /// O caminho canônico do transcript, só se ele é um `.jsonl` (o `store.db`, no Cursor) dentro da
 /// pasta de uma conta do provider. Quem lê transcript a partir de um caminho que veio de fora passa por aqui.
 pub fn validated(path: &Path, provider: &str, profiles: &[Profile]) -> Option<PathBuf> {
-    let path = path.canonicalize().ok()?;
     let esperado = if provider == "cursor" { "db" } else { "jsonl" };
+    // Rollout compactado pelo Codex: aceita o `.jsonl.zst` e devolve o nome `.jsonl` (lido por `crate::abrir`).
+    let path = match path.to_string_lossy().strip_suffix(".zst") { Some(sem) if provider == "codex" => PathBuf::from(sem), _ => path.to_path_buf() };
     if path.extension().is_none_or(|extension| extension != esperado) { return None; }
+    let real = path.canonicalize().or_else(|_| crate::compactado(&path).canonicalize()).ok()?;
+    let path = if real.extension().is_some_and(|e| e == "zst") { real.with_extension("") } else { real };
     profiles
         .iter()
         .filter(|profile| profile.provider == provider)
@@ -246,7 +249,7 @@ pub fn transcript(path: &Path, provider: &str, profiles: &[Profile]) -> Option<H
     }
     let mut messages = VecDeque::new();
     let mut total = 0;
-    for line in BufReader::new(File::open(&path).ok()?).lines().map_while(Result::ok) {
+    for line in BufReader::new(crate::abrir(&path).ok()?).lines().map_while(Result::ok) {
         if !line.contains("\"role\":") { continue; }
         let Ok(value) = serde_json::from_str::<Value>(&line) else { continue };
         let Some(message) = message(&value, provider) else { continue };
