@@ -577,7 +577,7 @@
   /* Contador: halo pulsando. `box-shadow` em vez de `scale` para o número não
      ficar tremendo e ilegível. */
   .badge-pulse {
-    animation: badge-pulse 2s ease-out infinite;
+    animation: badge-pulse 2s steps(10) infinite;
   }
 
   @keyframes badge-pulse {
@@ -636,13 +636,13 @@
      repouso em vez de no pico. */
   .neon {
     color: rgb(var(--c-selected));
-    animation: neon-pulse 2.4s ease-in-out infinite;
+    animation: neon-pulse 2.4s steps(10) infinite;
   }
 
   /* Só o halo, sem tingir: para <img> (o ícone do app), onde `color` é inerte
      e a arte já tem cor própria. O drop-shadow segue a silhueta do alpha. */
   .neon-glow {
-    animation: neon-pulse 2.4s ease-in-out infinite;
+    animation: neon-pulse 2.4s steps(10) infinite;
   }
 
   @keyframes neon-pulse {
@@ -665,13 +665,13 @@
   }
   .group:hover > .neon-idle,
   .group:focus-visible > .neon-idle {
-    animation: neon-pulse 2.4s ease-in-out infinite;
+    animation: neon-pulse 2.4s steps(10) infinite;
   }
 
   /* Barra de acento da nav ativa — mesma pulsação, no eixo do brilho. */
   .neon-bar {
     background-color: rgb(var(--c-selected));
-    animation: neon-bar-pulse 2.4s ease-in-out infinite;
+    animation: neon-bar-pulse 2.4s steps(10) infinite;
   }
 
   @keyframes neon-bar-pulse {
@@ -1733,7 +1733,7 @@ body.redimensionando-lateral .xterm, body.redimensionando-lateral iframe { point
 .lateral-item:hover { background-color: rgb(var(--c-overlay) / .07); }
 .lateral-item-ativo { background-image: linear-gradient(90deg, rgb(var(--c-accent) / .16), rgb(var(--c-accent) / .04)); }
 .lateral-avatar { background: linear-gradient(135deg, rgb(var(--c-accent) / .18), rgb(var(--c-bg-primary) / .8) 70%); }
-.lateral-avatar-vivo { animation: lateral-vivo 1.6s ease-in-out infinite; }
+.lateral-avatar-vivo { animation: lateral-vivo 1.6s steps(8) infinite; }
 @keyframes lateral-vivo { 0%, 100% { box-shadow: 0 0 0 0 rgb(var(--c-success) / .55); } 50% { box-shadow: 0 0 0 3px rgb(var(--c-success) / 0); } }
 :root[data-motion="desligadas"] .lateral-avatar-vivo { animation: none; }
 @media (prefers-reduced-motion: reduce) { .lateral-avatar-vivo { animation: none; } }
@@ -1994,13 +1994,13 @@ body.redimensionando-lateral .xterm, body.redimensionando-lateral iframe { point
 .fx-porta.is-esgotado.react-flow__handle { border-color: rgb(var(--c-warning)); }
 .fx-porta.react-flow__handle:hover { background: rgb(var(--c-accent)); }
 .fx-no.st-pendente { opacity: .55; }
-.fx-no.st-rodando { border-color: rgb(var(--c-success)); animation: fx-rodando 1.4s ease-in-out infinite; }
+.fx-no.st-rodando { border-color: rgb(var(--c-success)); animation: fx-rodando 1.4s steps(7) infinite; }
 @keyframes fx-rodando { 50% { box-shadow: 4px 4px 0 rgb(var(--c-outline)), 0 0 0 5px rgb(var(--c-success) / .25); } }
 .fx-no.st-rodando .fx-no-status { color: rgb(var(--c-success)); border-color: rgb(var(--c-success)); }
 .fx-no.st-concluido .fx-no-status { color: rgb(var(--c-accent)); border-color: rgb(var(--c-accent) / .6); }
 .fx-no.st-falhou { border-color: rgb(var(--c-danger)); }
 .fx-no.st-falhou .fx-no-status { color: rgb(var(--c-danger)); border-color: rgb(var(--c-danger)); }
-.fx-no.st-aguardando { border-color: rgb(var(--c-warning)); animation: fx-rodando 1.8s ease-in-out infinite; }
+.fx-no.st-aguardando { border-color: rgb(var(--c-warning)); animation: fx-rodando 1.8s steps(9) infinite; }
 .fx-no.st-aguardando .fx-no-status { color: rgb(var(--c-warning)); border-color: rgb(var(--c-warning)); }
 .fx-painel-corpo { display: flex; flex-direction: column; gap: .75rem; }
 .fx-painel-vazio p { font-size: .75rem; color: rgb(var(--c-text-muted)); }
@@ -2326,7 +2326,7 @@ body.ordenando-lista, body.ordenando-lista * { cursor: grabbing !important; user
 }
 .lateral-aba-vivo {
   position: absolute; bottom: 5px; right: calc(50% - .85rem); width: 6px; height: 6px; border-radius: 50%;
-  background: rgb(var(--c-success)); animation: lateral-vivo 1.6s ease-in-out infinite;
+  background: rgb(var(--c-success)); animation: lateral-vivo 1.6s steps(8) infinite;
 }
 :root[data-motion="desligadas"] .lateral-aba-vivo { animation: none; }
 @media (prefers-reduced-motion: reduce) { .lateral-aba-vivo { animation: none; } }
@@ -2603,7 +2603,7 @@ button.remoto-link:hover { background: rgb(var(--c-accent) / .15); border-style:
 .lateral-recente .lateral-avatar { opacity: .85; }
 .lateral-recente:hover .lateral-avatar { opacity: 1; }
 .lateral-recente.is-retomando { border-left-style: solid; border-left-color: rgb(var(--c-accent)); background-image: linear-gradient(90deg, rgb(var(--c-accent) / .14), transparent); }
-.lateral-recente.is-retomando .lateral-avatar { animation: lateral-vivo 1.2s ease-in-out infinite; }
+.lateral-recente.is-retomando .lateral-avatar { animation: lateral-vivo 1.2s steps(6) infinite; }
 .lateral-recente-todas {
   display: block; margin: .125rem .25rem 0 auto; padding: .125rem .5rem; font-size: .625rem; color: rgb(var(--c-text-muted));
   transition: color 140ms ease;
@@ -2682,7 +2682,7 @@ button.remoto-link:hover { background: rgb(var(--c-accent) / .15); border-style:
   background: conic-gradient(from var(--lateral-giro), transparent 0 55%, rgb(var(--c-success) / .25) 70%, rgb(var(--c-success)) 100%);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
-  animation: lateral-giro 1.4s linear infinite;
+  animation: lateral-giro 1.4s steps(14) infinite;
 }
 @keyframes lateral-giro { to { --lateral-giro: 360deg; } }
 
@@ -2766,3 +2766,7 @@ aside .space-y-1 > .lateral-item + .lateral-item, aside .space-y-1 > * + .latera
 }
 .arvore-menu-linha { margin: .25rem .35rem; border: 0; border-top: 1px dashed rgb(var(--c-border-subtle)); }
 .arvore-menu-atalho { padding: 0 .3rem; font: inherit; font-size: .5625rem; font-weight: 700; color: rgb(var(--c-text-muted)); border: 1px solid rgb(var(--c-border-subtle)); background: rgb(var(--c-overlay) / .04); }
+
+/* Fora de foco ninguém está olhando: tudo pausa (main.tsx marca `data-foco`). Dentro do foco, as
+   animações decorativas andam em `steps()` — poucos quadros por segundo em vez de 60 repinturas. */
+:root[data-foco="fora"] *, :root[data-foco="fora"] *::before, :root[data-foco="fora"] *::after { animation-play-state: paused !important; }

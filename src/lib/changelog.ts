@@ -14,6 +14,17 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.12",
+    date: "2026-11-05",
+    changes: [
+      "O app gasta bem menos processador: o fundo animado e os brilhos andam mais leves e param quando a janela está fora de foco.",
+      "Novo: opção \"Iniciar com o Windows\" em Configurações, desligada por padrão. Os agentes ficam prontos assim que você liga o computador.",
+      "Fluxos: escolha a conta de IA de cada etapa. Se o limite da conta acabar, o fluxo troca sozinho para outra.",
+      "Codex: conversas antigas guardadas compactadas voltam a aparecer no Histórico, e reiniciar o app retoma a mesma conversa.",
+      "Corrigido: em alguns casos a janela grudava no mouse depois de clicar na barra de cima.",
+    ],
+  },
+  {
     version: "0.7.11",
     date: "2026-11-04",
     changes: [

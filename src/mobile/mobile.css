@@ -208,7 +208,7 @@
   background: linear-gradient(90deg, rgb(var(--c-accent)) 0%, rgb(var(--c-accent)) 40%, rgb(var(--c-text-primary)) 50%, rgb(var(--c-accent)) 60%, rgb(var(--c-accent)) 100%);
   background-size: 250% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent;
-  animation: working-brilho 2.4s linear infinite;
+  animation: working-brilho 2.4s steps(20) infinite;
 }
 .working-time { font-size: .75rem; color: rgb(var(--c-text-muted)); }
 @keyframes working-brilho { from { background-position: 100% 0; } to { background-position: -150% 0; } }
@@ -1196,8 +1196,8 @@ li[data-estado="agora"] > .abrindo-agente-marca { color: rgb(var(--c-accent)); b
   box-shadow: 0 0 3px rgb(var(--c-accent)), 0 0 9px rgb(var(--c-accent) / .85), 0 0 20px rgb(var(--c-accent) / .45);
   animation: cursor-soco 280ms cubic-bezier(.22, 1, .36, 1);
 }
-.cursor-neon:not(.is-digitando) .cursor-neon-luz { animation: cursor-respira 1.3s ease-in-out infinite; }
-.cursor-neon:not(.is-digitando)::before { animation: cursor-respira 1.3s ease-in-out infinite; }
+.cursor-neon:not(.is-digitando) .cursor-neon-luz { animation: cursor-respira 1.3s steps(6) infinite; }
+.cursor-neon:not(.is-digitando)::before { animation: cursor-respira 1.3s steps(6) infinite; }
 @keyframes cursor-soco { from { transform: scale(1.8, 1.3); filter: brightness(1.9); } }
 @keyframes cursor-respira { 50% { opacity: .2; } }
 @media (prefers-reduced-motion: reduce) {
@@ -1257,7 +1257,7 @@ li[data-estado="agora"] > .abrindo-agente-marca { color: rgb(var(--c-accent)); b
   border: 1px solid rgb(var(--m-anel) / .55);
   box-shadow: 0 0 0 3px rgb(var(--m-anel) / .1), 0 0 16px rgb(var(--m-anel) / .25);
 }
-.m-topo-marca[data-estado="working"] { --m-anel: var(--c-success); animation: m-anel 1.8s ease-in-out infinite; }
+.m-topo-marca[data-estado="working"] { --m-anel: var(--c-success); animation: m-anel 1.8s steps(9) infinite; }
 .m-topo-marca[data-estado="aprovacao"] { --m-anel: var(--c-warning); }
 .m-topo-marca[data-estado="crashed"] { --m-anel: var(--c-danger); }
 .m-topo-marca[data-estado="stopped"], .m-topo-marca[data-estado="orphan"], .m-topo-marca[data-estado="parado"] { --m-anel: var(--c-text-muted); }

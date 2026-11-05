@@ -357,8 +357,15 @@ export default function FaultyTerminal({
     resizeObserver.observe(ctn);
     resize();
 
+    // OMNI: 30 fps, parado com a janela fora de foco (o canvas guarda o último quadro) e um quadro só
+    // quando pausado. Antes eram 60 fps sempre, mesmo com movimento desligado — ~20% de CPU parado.
+    let ultimo = 0;
     const update = (t: number) => {
-      rafRef.current = requestAnimationFrame(update);
+      rafRef.current = 0;
+      const emFoco = typeof document.hasFocus !== 'function' || document.hasFocus();
+      if (ultimo && !emFoco) return;
+      if (ultimo && t - ultimo < 33) { rafRef.current = requestAnimationFrame(update); return; }
+      ultimo = t;
 
       if (pageLoadAnimation && loadAnimationStartRef.current === 0) {
         loadAnimationStartRef.current = t;
@@ -392,7 +399,11 @@ export default function FaultyTerminal({
       }
 
       renderer.render({ scene: mesh });
+      const carregando = pageLoadAnimation && program.uniforms.uPageLoadProgress.value < 1;
+      if (!pause || carregando) rafRef.current = requestAnimationFrame(update);
     };
+    const retomar = () => { if (rafRef.current === 0) rafRef.current = requestAnimationFrame(update); };
+    window.addEventListener('focus', retomar);
     rafRef.current = requestAnimationFrame(update);
     ctn.appendChild(gl.canvas);
 
@@ -400,6 +411,7 @@ export default function FaultyTerminal({
 
     return () => {
       cancelAnimationFrame(rafRef.current);
+      window.removeEventListener('focus', retomar);
       resizeObserver.disconnect();
       if (mouseReact) ctn.removeEventListener('mousemove', handleMouseMove);
       if (gl.canvas.parentElement === ctn) ctn.removeChild(gl.canvas);

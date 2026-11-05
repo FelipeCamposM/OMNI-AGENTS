@@ -606,7 +606,7 @@
   background: conic-gradient(from var(--lateral-giro), transparent 0 55%, rgb(var(--c-success) / .25) 70%, rgb(var(--c-success)) 100%);
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
   mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
-  animation: lateral-giro 1.4s linear infinite;
+  animation: lateral-giro 1.4s steps(14) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

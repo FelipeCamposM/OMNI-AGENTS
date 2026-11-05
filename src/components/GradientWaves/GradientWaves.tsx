@@ -155,6 +155,7 @@ type GradientWavesCtx = {
   renderer: InstanceType<typeof Renderer>;
   program: InstanceType<typeof Program>;
   mesh: InstanceType<typeof Mesh>;
+  kick?: () => void;
 };
 const ctxMap = new WeakMap<HTMLDivElement, GradientWavesCtx>();
 
@@ -193,7 +194,8 @@ const GradientWaves: React.FC<GradientWavesProps> = ({
       alpha: true,
       premultipliedAlpha: true,
       antialias: false,
-      dpr: Math.min(window.devicePixelRatio || 1, 2)
+      // OMNI: fundo desfocado atrás da UI — 2x quadruplicava os pixels do shader sem diferença visível.
+      dpr: 1
     });
 
     const gl = renderer.gl;
@@ -271,10 +273,20 @@ const GradientWaves: React.FC<GradientWavesProps> = ({
     let raf = 0;
     let isVisible = true;
     let isPageVisible = !document.hidden;
-    const t0 = performance.now();
+    // OMNI: relógio próprio que só anda enquanto desenha (pausar e voltar não pula a onda), 30 fps,
+    // parado com a janela fora de foco (o canvas guarda o último quadro) e com velocidade 0
+    // (movimento desligado: um quadro e para). Antes eram 60 fps sempre — ~20% de CPU parado.
+    let tempo = 0;
+    let ultimo = 0;
+    const emFoco = () => typeof document.hasFocus !== 'function' || document.hasFocus();
 
     const loop = (t: number) => {
-      (program.uniforms.iTime as { value: number }).value = (t - t0) * 0.001;
+      raf = 0;
+      if (!emFoco()) { ultimo = 0; return; }
+      if (ultimo && t - ultimo < 33) { raf = requestAnimationFrame(loop); return; }
+      if (ultimo) tempo += Math.min(t - ultimo, 100);
+      ultimo = t;
+      (program.uniforms.iTime as { value: number }).value = tempo * 0.001;
       const tx = enableMouseRef.current ? targetMouse[0] : 0.5;
       const ty = enableMouseRef.current ? targetMouse[1] : 0.5;
       currentMouse[0] += 0.05 * (tx - currentMouse[0]);
@@ -283,6 +295,7 @@ const GradientWaves: React.FC<GradientWavesProps> = ({
       m[0] = currentMouse[0];
       m[1] = currentMouse[1];
       renderer.render({ scene: mesh });
+      if ((program.uniforms.uSpeed as { value: number }).value === 0) { ultimo = 0; return; }
       raf = requestAnimationFrame(loop);
     };
 
@@ -294,7 +307,9 @@ const GradientWaves: React.FC<GradientWavesProps> = ({
         cancelAnimationFrame(raf);
         raf = 0;
       }
+      ultimo = 0;
     };
+    (ctxMap.get(container) as GradientWavesCtx).kick = tryStart;
 
     const io = new IntersectionObserver(
       ([entry]) => {
@@ -310,6 +325,7 @@ const GradientWaves: React.FC<GradientWavesProps> = ({
       isPageVisible ? tryStart() : tryStop();
     };
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', tryStart);
 
     tryStart();
 
@@ -318,6 +334,7 @@ const GradientWaves: React.FC<GradientWavesProps> = ({
       ro.disconnect();
       io.disconnect();
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', tryStart);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerleave', onPointerLeave);
       ctxMap.delete(container);
@@ -339,6 +356,7 @@ const GradientWaves: React.FC<GradientWavesProps> = ({
     enableMouseRef.current = mouseInteraction;
 
     u.uSpeed.value = speed;
+    ctx.kick?.();
     u.uAmplitude.value = amplitude;
     u.uWaveScale.value = waveScale;
     u.uWaveRatio.value = waveRatio;

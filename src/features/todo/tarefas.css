@@ -11,7 +11,7 @@
 .tarefas-botao:focus-visible { outline: 2px solid rgb(var(--c-accent)); outline-offset: -2px; }
 .tarefas-botao-aberto { color: rgb(var(--c-text-primary)); border-color: rgb(var(--c-accent) / .55); background: rgb(var(--c-accent) / .1); }
 /* Com pendência: um halo que respira devagar. Sem balançar: lembrete, não alarme. */
-.tarefas-botao-pendente { color: rgb(var(--c-accent)); animation: tarefas-respira 3.6s ease-in-out infinite; }
+.tarefas-botao-pendente { color: rgb(var(--c-accent)); animation: tarefas-respira 3.6s steps(12) infinite; }
 .tarefas-botao-pendente.tarefas-botao-aberto { animation: none; }
 @keyframes tarefas-respira {
   0%, 100% { box-shadow: 0 0 0 0 rgb(var(--c-accent) / 0); background-color: transparent; }

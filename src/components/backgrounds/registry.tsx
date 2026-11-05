@@ -24,6 +24,8 @@ import type { CoresEfeito } from "../../lib/palettes";
  *   `TS2540: Cannot assign to 'current'`. Os dois refs viraram
  *   `useRef<X | null>(null)`. Se um `shadcn add` reverter isso, o
  *   `npm run typecheck` reprova na hora — é só refazer.
+ *   Outra: `GradientWaves.tsx` e `FaultyTerminal.tsx` ganharam 30 fps, dpr 1, pausa fora de foco e um quadro só com
+ *   velocidade 0/pausa (marcado `OMNI:`). Sem isso o fundo gastava ~20% de CPU parado.
  * - O componente ocupa 100% do container e não recebe ponteiro (o
  *   AppBackground já cuida de posição, veil e pointer-events).
  * - `lazy` é obrigatório: cada efeito arrasta WebGL (ogl ~50 kB) e só deve

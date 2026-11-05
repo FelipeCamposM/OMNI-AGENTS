@@ -19,6 +19,13 @@ usarAbrirArquivo((caminho) => new Promise<void>((ok, falha) => {
 // Ícone da ferramenta chamada na conversa: o PC busca na rede e salva para a web/celular também.
 usarBuscadorDeIcone(async (chave) => (await invoke<string | null>("icone_da_ferramenta", { chave })) ?? null);
 
+// Janela fora de foco: as animações pausam (`index.css`, `data-foco`). Animação de sombra/brilho
+// repinta a cada quadro, e embaixo da lateral de vidro isso recalcula o desfoque — era ~14% de CPU.
+const marcarFoco = () => { document.documentElement.dataset.foco = document.hasFocus() ? "dentro" : "fora"; };
+window.addEventListener("focus", marcarFoco);
+window.addEventListener("blur", marcarFoco);
+marcarFoco();
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />

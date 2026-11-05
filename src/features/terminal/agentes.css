@@ -73,7 +73,7 @@
 /* Estado da IA: pontinho + texto, como o "vivo" da lateral. */
 .ag-selo { display: inline-flex; align-items: center; gap: .375rem; font-size: .6875rem; font-weight: 600; color: rgb(var(--ag-ponto)); }
 .ag-selo::before { content: ""; width: 7px; height: 7px; background: rgb(var(--ag-ponto)); }
-.ag-selo[data-estado="connected"]::before { animation: ag-vivo 1.8s ease-in-out infinite; }
+.ag-selo[data-estado="connected"]::before { animation: ag-vivo 1.8s steps(9) infinite; }
 .ag-contagem {
   flex-shrink: 0; padding: .125rem .5rem; font-size: .6875rem; font-variant-numeric: tabular-nums;
   color: rgb(var(--c-text-secondary)); background: rgb(var(--c-overlay) / .06);
@@ -112,7 +112,7 @@
   content: ""; position: absolute; right: -3px; bottom: -3px; width: 8px; height: 8px;
   background: rgb(var(--ag-ponto)); outline: 2px solid rgb(var(--c-bg-surface));
 }
-.ag-avatar[data-ok]::after { animation: ag-vivo 1.8s ease-in-out infinite; }
+.ag-avatar[data-ok]::after { animation: ag-vivo 1.8s steps(9) infinite; }
 .ag-conta-id { display: flex; flex-direction: column; gap: .1875rem; flex: 1; min-width: 0; }
 .ag-conta-nome { display: flex; align-items: center; gap: .4375rem; min-width: 0; font-size: .8125rem; font-weight: 700; color: rgb(var(--c-text-primary)); }
 .ag-mestra-rotulo {

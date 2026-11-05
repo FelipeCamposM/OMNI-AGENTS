@@ -38,6 +38,20 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
+### Fundo animado gastando ~20% de CPU (2026-11-05, sem release)
+
+- [x] WebView do OMNI medida em ~19% de CPU + 6% de GPU (engine 3%). Causa: o fundo WebGL redesenhava a tela cheia a
+  60 fps sempre — fora de foco e até com movimento desligado (só congelava a imagem). `FaultyTerminal.tsx` (o fundo em
+  uso nesta máquina) e `GradientWaves.tsx` (o padrão): 30 fps, param fora de foco (último quadro fica; voltam no
+  `focus`), um quadro só pausado/velocidade 0; GradientWaves também dpr 1 e relógio que não pula ao voltar. Marcado
+  `OMNI:` e anotado no `registry.tsx`. Não medido no app depois (precisa de `npm run dev` ou release).
+- [x] Fundo estático + agente trabalhando ainda dava ~21% (renderer 10%, GPU 7%); com animações desligadas, 7%. Causa:
+  animações CSS infinitas de `box-shadow`/`drop-shadow`/`conic-gradient` repintam todo quadro (e refazem o desfoque da
+  lateral de vidro). Decorativas passaram a `steps(N)` (index/fluxos/web/mobile/agentes/tarefas .css) e tudo pausa com
+  a janela fora de foco (`main.tsx` marca `data-foco`; regra no fim do `index.css`). Typecheck + testes focados ok;
+  não medido no app.
+- Outros fundos (`FloatingLines` etc.) seguem a 60 fps: aplicar o mesmo se alguém usar.
+
 ### Codex, início com o Windows, conta nos fluxos e arrasto da janela (2026-11-05, sem release)
 
 - [x] Codex `.jsonl.zst`: `omni_core::abrir` descompacta (ruzstd, puro Rust: o `zstd` em C mudava as features do `cc`
