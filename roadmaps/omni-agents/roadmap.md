@@ -38,7 +38,13 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
-### Enter logo depois do turno dava "O contexto mudou" (2026-11-08, sem release)
+### Release v0.7.13 (2026-11-08)
+
+- Publicada e liberada (`latest.json` responde 0.7.13). Leva tudo abaixo marcado "sem release" de
+  2026-11-05 a 2026-11-08: Codex vazio, Nova conversa na web, Retomar do Histórico, fork do Eduardo
+  (Conhecimento/omni-rag, parada confiável), subagentes, terminal ao vivo, imagens e "O contexto mudou".
+
+### Enter logo depois do turno dava "O contexto mudou" (2026-11-08, v0.7.13)
 
 - Desde o item 5 do fork, `settle` declara a conversa parada assim que o spinner some, com a CLI ainda
   redesenhando (resposta final, gancho de fim). O `If-Match` do prompt chegava com a versão velha: 412.
