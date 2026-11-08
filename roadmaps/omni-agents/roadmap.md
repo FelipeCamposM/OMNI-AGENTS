@@ -38,7 +38,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
-### Correções pós-0.7.13 (2026-11-08, sem release)
+### Correções pós-0.7.13 (2026-11-08, v0.7.14 — publicada e liberada)
 
 - Texto `// selectable: no desktop…` aparecia em toda bolha: comentário JS virou filho do JSX quando a
   bolha ganhou o `ImagensDaBolha.Provider`. Virou `{/* */}`; `ImagemCitada.test.tsx` trava.
