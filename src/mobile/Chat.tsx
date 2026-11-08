@@ -88,41 +88,74 @@ function CartoesDeAnexo({ anexos }: { anexos: AnexoVisivel[] }) {
   );
 }
 
-/** Imagem colada numa mensagem: o conteúdo mora no transcript e vem do engine uma vez por sessão. */
-const imagensLidas = new Map<string, Promise<string>>();
-function lerImagem(caminho: string): Promise<string> {
-  let lida = imagensLidas.get(caminho);
+/** Imagem de uma mensagem: o conteúdo vem do engine uma vez por sessão, com o caminho no disco
+ *  quando ela é um arquivo (citada pelo agente ou anexada) — colada no terminal não tem. */
+interface ImagemLida { src: string; caminho: string | null }
+const imagensLidas = new Map<string, Promise<ImagemLida>>();
+function lerImagem(rota: string): Promise<ImagemLida> {
+  let lida = imagensLidas.get(rota);
   if (!lida) {
-    lida = request<{ tipo: string; dados: string }>(caminho).then(({ tipo, dados }) => `data:${tipo};base64,${dados}`);
-    lida.catch(() => imagensLidas.delete(caminho));
-    imagensLidas.set(caminho, lida);
+    lida = request<{ tipo: string; dados: string; caminho?: string | null }>(rota)
+      .then(({ tipo, dados, caminho }) => ({ src: `data:${tipo};base64,${dados}`, caminho: caminho ?? null }));
+    lida.catch(() => imagensLidas.delete(rota));
+    imagensLidas.set(rota, lida);
   }
   return lida;
 }
 
-function ImagemDaMensagem({ caminho, numero }: { caminho: string; numero: number }) {
-  const [src, setSrc] = useState<string | null>(null);
+/** Mesma grafia para o caminho que o engine devolve e o que o agente escreveu no texto. */
+const chaveDoCaminho = (caminho: string) => caminho.trim().replace(/\\/g, "/").toLowerCase();
+
+/** O caminho de uma imagem citado no texto abre a mesma imagem ampliada (o painel de arquivo recusa
+ *  o que fica fora do projeto, como um print na pasta temporária). */
+const ImagensDaBolha = createContext<((caminho: string) => (() => void) | null) | null>(null);
+
+function ImagemDaMensagem({ rota, numero, aberta, onAbrir, onFechar, onCaminho }: {
+  rota: string; numero: number; aberta: boolean; onAbrir: () => void; onFechar: () => void; onCaminho: (caminho: string) => void;
+}) {
+  const [lida, setLida] = useState<ImagemLida | null>(null);
   const [falhou, setFalhou] = useState(false);
-  const [aberta, setAberta] = useState(false);
+  const avisar = useRef(onCaminho);
+  avisar.current = onCaminho;
   useEffect(() => {
     let vivo = true;
-    lerImagem(caminho).then((url) => { if (vivo) setSrc(url); }, () => { if (vivo) setFalhou(true); });
+    lerImagem(rota).then((imagem) => {
+      if (!vivo) return;
+      setLida(imagem);
+      if (imagem.caminho) avisar.current(imagem.caminho);
+    }, () => { if (vivo) setFalhou(true); });
     return () => { vivo = false; };
-  }, [caminho]);
-  if (falhou) return <li className="bubble-imagem bubble-imagem-falhou">Imagem {numero} indisponível</li>;
+  }, [rota]);
+  const nome = lida?.caminho ? nomeDoCaminho(lida.caminho) : `imagem ${numero}`;
+  const topo = (dica: string) => (
+    <span className="bubble-imagem-topo" aria-hidden>
+      <span className="bubble-imagem-nome" title={lida?.caminho ?? undefined}>{nome}</span><span>{dica}</span>
+    </span>
+  );
+  if (falhou) return (
+    <li className="bubble-imagem bubble-imagem-falhou">
+      {topo("")}
+      <span className="bubble-imagem-aviso">Imagem {numero} indisponível</span>
+    </li>
+  );
   return (
     <li className="bubble-imagem">
-      {src
-        ? <button type="button" className="bubble-imagem-botao" aria-label={`Ampliar imagem ${numero}`} onClick={() => setAberta(true)}>
-            <img src={src} alt={`Imagem ${numero}`} />
+      {lida
+        ? <button type="button" className="bubble-imagem-botao" aria-label={`Ampliar imagem ${numero}`} title={lida.caminho ?? undefined} onClick={onAbrir}>
+            {topo("ampliar ⤢")}
+            <img src={lida.src} alt={nome} />
           </button>
-        : <span className="bubble-imagem-carregando" role="status" aria-label={`Carregando imagem ${numero}`} />}
+        : <span className="bubble-imagem-botao">
+            {topo("carregando…")}
+            <span className="bubble-imagem-carregando" role="status" aria-label={`Carregando imagem ${numero}`} />
+          </span>}
       {/* No `body`: dentro do painel, um ancestral com transform prendia o `fixed` na área do chat. */}
-      {aberta && src && createPortal(
-        <div className="imagem-ampliada" role="dialog" aria-label={`Imagem ${numero}`} onClick={() => setAberta(false)}
-          onKeyDown={(evento) => { if (evento.key === "Escape") setAberta(false); }}>
-          <img src={src} alt={`Imagem ${numero}`} />
-          <button type="button" className="imagem-ampliada-fechar" autoFocus onClick={() => setAberta(false)}>Fechar</button>
+      {aberta && lida && createPortal(
+        <div className="imagem-ampliada" role="dialog" aria-label={nome} onClick={onFechar}
+          onKeyDown={(evento) => { if (evento.key === "Escape") onFechar(); }}>
+          <img src={lida.src} alt={nome} />
+          {lida.caminho && <span className="imagem-ampliada-nome">{lida.caminho}</span>}
+          <button type="button" className="imagem-ampliada-fechar" autoFocus onClick={onFechar}>Fechar</button>
         </div>,
         document.body,
       )}
@@ -170,7 +203,14 @@ export const MessageBubble = memo(function MessageBubble({ lado, provider, texto
   // Só o texto com que o balão nasceu é "digitado": se o mesmo balão crescer depois, não recomeça.
   const textoInicial = useRef(corpo);
   const digita = entra && !doUsuario && corpo === textoInicial.current;
+  const [ampliada, setAmpliada] = useState<number | null>(null);
+  const [caminhos, setCaminhos] = useState<Record<string, number>>({});
+  const imagemCitada = (caminho: string) => {
+    const k = caminhos[chaveDoCaminho(caminho)];
+    return k === undefined ? null : () => setAmpliada(k);
+  };
   return (
+    <ImagensDaBolha.Provider value={imagemCitada}>
     // `selectable`: no desktop o body barra a seleção (app nativo); o texto da conversa tem de copiar.
     <article className={`bubble selectable ${doUsuario ? "bubble-user" : "bubble-agent"}${pendente ? " bubble-pending" : ""}${continua ? " bubble-continua" : ""}${entra || pendente ? " entra" : ""}`}>
       {/* Avatar só na primeira fala do turno; as seguintes alinham com ele. */}
@@ -189,14 +229,17 @@ export const MessageBubble = memo(function MessageBubble({ lado, provider, texto
       {imagens && imagens.total > 0 && (
         <ul className="bubble-imagens" aria-label="Imagens da mensagem">
           {Array.from({ length: imagens.total }, (_, k) => (
-            <ImagemDaMensagem key={k} numero={k + 1}
-              caminho={`/conversas/${encodeURIComponent(imagens.conversa)}/imagens/${imagens.n}/${k}`} />
+            <ImagemDaMensagem key={k} numero={k + 1} aberta={ampliada === k}
+              onAbrir={() => setAmpliada(k)} onFechar={() => setAmpliada(null)}
+              onCaminho={(caminho) => setCaminhos((atual) => ({ ...atual, [chaveDoCaminho(caminho)]: k }))}
+              rota={`/conversas/${encodeURIComponent(imagens.conversa)}/imagens/${imagens.n}/${k}`} />
           ))}
         </ul>
       )}
       <CartoesDeAnexo anexos={cartoes} />
       {!doUsuario && corpo && <BotaoCopiar texto={corpo} rotulo="Copiar resposta" className="bubble-copiar" />}
     </article>
+    </ImagensDaBolha.Provider>
   );
 });
 
@@ -293,8 +336,11 @@ const DentroDeBloco = createContext(false);
 /** `código` solto no texto: se parece arquivo (`src/App.tsx:42`), abre ao clicar. */
 function CodigoNoTexto({ children, className }: { children?: ReactNode; className?: string }) {
   const emBloco = useContext(DentroDeBloco);
+  const imagemCitada = useContext(ImagensDaBolha);
   const codigo = <code className={className}>{children}</code>;
   const texto = typeof children === "string" ? children : null;
+  const ampliar = !emBloco && texto ? imagemCitada?.(texto) : null;
+  if (ampliar) return <button type="button" className="bubble-arquivo" title="Ver a imagem" onClick={ampliar}>{codigo}</button>;
   if (emBloco || !texto || !pareceArquivo(texto)) return codigo;
   return <Arquivo caminho={texto}>{codigo}</Arquivo>;
 }
@@ -302,12 +348,20 @@ function CodigoNoTexto({ children, className }: { children?: ReactNode; classNam
 /** Link `[App.tsx](src/App.tsx#L42)`, como o Claude cita arquivo. Sem esquema é arquivo: abrir o
  *  link levaria a janela do app para fora da tela. */
 function LinkNoTexto({ href, children }: { href?: string; children?: ReactNode }) {
+  const imagemCitada = useContext(ImagensDaBolha);
   const caminho = href && !/^[a-z][\w+.-]+:/i.test(href) && !href.startsWith("#") ? decodeURI(href) : null;
+  const ampliar = caminho ? imagemCitada?.(caminho) : null;
+  if (ampliar) return <button type="button" className="bubble-arquivo" title="Ver a imagem" onClick={ampliar}>{children}</button>;
   if (caminho && abridorDeArquivo()) return <Arquivo caminho={caminho}>{children}</Arquivo>;
   return <a href={href}>{children}</a>;
 }
 
-const COMPONENTES_DO_MARKDOWN = { pre: BlocoDeCodigo, code: CodigoNoTexto, a: LinkNoTexto };
+// `![x](C:\…\print.png)`: o navegador não abre caminho local e sobrava um ícone quebrado no meio do
+// texto. A imagem aparece no cartão logo abaixo (o engine a serve); da web, segue normal.
+const ImagemNoTexto = ({ src, alt }: { src?: string; alt?: string }) =>
+  src && /^(https?:|data:image\/)/i.test(src) ? <img src={src} alt={alt ?? ""} /> : null;
+
+const COMPONENTES_DO_MARKDOWN = { pre: BlocoDeCodigo, code: CodigoNoTexto, a: LinkNoTexto, img: ImagemNoTexto };
 
 /** Bloco de código do markdown com a linguagem no topo e um "Copiar", como num editor. */
 function BlocoDeCodigo({ children }: { children?: ReactNode }) {

@@ -119,6 +119,8 @@ interface SidebarProps {
   showHistory: boolean;
   /** Tela de fluxos de agentes (editor estilo n8n e execuções). */
   showFluxos?: boolean;
+  showConhecimento?: boolean;
+  onOpenConhecimento?: () => void;
   onOpenFluxos?: () => void;
   onOpenHistory: () => void;
   /** Retoma uma conversa do Histórico (a seção Recentes da lateral). */
@@ -169,6 +171,8 @@ export function Sidebar({
   showSettings,
   showHistory,
   showFluxos = false,
+  showConhecimento = false,
+  onOpenConhecimento,
   onOpenFluxos,
   onOpenHistory,
   onResumeHistory,
@@ -527,6 +531,14 @@ Arraste para mudar a ordem`}
             onClick={onOpenFluxos}
             icon={<CircuitIcon className="w-4 h-4" aria-hidden="true" />}
             label="Fluxos de agentes"
+          />
+        )}
+        {onOpenConhecimento && (
+          <NavItem
+            active={showConhecimento}
+            onClick={onOpenConhecimento}
+            icon={<BookIcon className="w-4 h-4" aria-hidden="true" />}
+            label="Conhecimento"
           />
         )}
         <NavItem

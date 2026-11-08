@@ -208,6 +208,46 @@ it("com o agente trabalhando, a mensagem vai para a fila e o Parar continua à m
   expect(screen.getByRole("button", { name: "Parar" })).toBeInTheDocument();
 });
 
+/** Turno recém-acabado: a CLI ainda redesenha com a conversa já parada e o Enter levava "O contexto
+ *  mudou". Relê a versão e manda de novo, se a CLI ainda aceita prompt; com pergunta na tela, recusa. */
+it.each([
+  { aceita: true, pedidos: 2 },
+  { aceita: false, pedidos: 1 },
+])("prompt com a tela redesenhada relê a versão e repete (aceita=$aceita)", async ({ aceita, pedidos: esperados }) => {
+  const pedidos: (string | null)[] = [];
+  const base = servidor([conversa({ live: true })]);
+  let recusou = false;
+  vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST" && url.endsWith("/prompt")) {
+      const ifMatch = new Headers(init.headers).get("If-Match");
+      pedidos.push(ifMatch);
+      return ifMatch === "r2"
+        ? new Response(JSON.stringify({ id: "a" }), { status: 202 })
+        : (recusou = true, new Response(JSON.stringify({ error: "O contexto mudou; atualize antes de responder" }), { status: 412 }));
+    }
+    if (url.includes("timeline") && recusou) {
+      const nova = conversa({ live: true });
+      return new Response(JSON.stringify({ ...TIMELINE, conversation: { ...nova, capabilities: { ...nova.capabilities!, prompt: aceita, revision: "r2" } } }));
+    }
+    return base(url, init);
+  }));
+  render(<WebApp />);
+  await screen.findByRole("button", { name: "Projeto" });
+  await act(async () => {
+    await userEvent.click(await screen.findByRole("button", { name: /Abrir conversa/ }));
+  });
+  await act(async () => {
+    await userEvent.type(document.getElementById("reply")!, "oi");
+  });
+  await act(async () => {
+    await userEvent.click(screen.getByRole("button", { name: "Enviar resposta" }));
+  });
+  await waitFor(() => expect(recusou).toBe(true));
+  await new Promise((r) => setTimeout(r, 50));
+  expect(pedidos).toHaveLength(esperados);
+  if (aceita) expect(pedidos[1]).toBe("r2");
+});
+
 it("renomear a conversa manda o nome novo para o PC", async () => {
   const enviados: { url: string; body: unknown }[] = [];
   vi.stubGlobal("fetch", servidor([conversa()], enviados));

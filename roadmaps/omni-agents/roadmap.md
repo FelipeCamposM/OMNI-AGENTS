@@ -38,6 +38,83 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
+### Enter logo depois do turno dava "O contexto mudou" (2026-11-08, sem release)
+
+- Desde o item 5 do fork, `settle` declara a conversa parada assim que o spinner some, com a CLI ainda
+  redesenhando (resposta final, gancho de fim). O `If-Match` do prompt chegava com a versão velha: 412.
+- Correção (`MobileApp.tsx`, `post`): no 412 do prompt, relê a timeline e repete uma vez se a CLI
+  ainda aceita prompt; com pergunta/aprovação na tela continua recusando. Teste em `WebApp.test.tsx`.
+
+### Imagem citada pelo agente não aparecia em conversa que trocou de conta (2026-11-08, sem release)
+
+- Sintoma: o agente citou `![…](C:\…\previa-conversa.png)`, a timeline marcava `imagens: 1`, mas a
+  rota `/conversas/{id}/imagens/{n}/{k}` dava 404 e a bolha mostrava "Imagem indisponível".
+- Causa: `n` é a posição na timeline (ordenada por hora, com os avisos "Conta trocada"), e
+  `feed::imagem` contava as linhas do `.jsonl`. Toda conversa que trocou de conta perdia as imagens,
+  inclusive as coladas pelo usuário.
+- Correção: a rota pega o item `n` de `itens_cached` (a mesma montagem da timeline), e `feed::imagem`
+  acha esse item no transcript pelo conteúdo. Teste: `aviso_de_troca_entra_pela_hora_e_nao_fica_preso_no_fim`.
+- Visual (`Chat.tsx`, `mobile.css`): cartão no desenho do bloco de código, com o nome do arquivo na barra
+  (a rota devolve `caminho`) e "ampliar". `![x](C:\…)` não vira mais ícone quebrado no texto. Clicar no
+  caminho da imagem citado no texto abre a mesma imagem ampliada (o painel de arquivo recusa o que fica
+  fora do projeto). `pareceArquivo` aceita caminho absoluto com espaço. Teste: `ImagemCitada.test.tsx`.
+
+### Do fork do Eduardo (2, 3, 5, 7) + subagentes e terminal na conversa (2026-11-08, sem release)
+
+Fork `eduardorarruda/OMNI-AGENTS`, branch `feat/conversas-por-projeto` (base `df2a609`), trazido por partes; feito
+em Mac, foi portado para Windows. Ficaram de fora: 1, 4 (tarefas externas), 6 (conta do gh), 8, 9 e a retomada
+do Histórico dele (a nossa reusa a conversa existente).
+- [x] **5 Parar confiável** (`interaction.rs`/`mobile.rs` dele): `turno_na_tela`, `campo_parado`,
+  `turno_visto_em_ms`; o Parar manda Esc e, no Claude com agente em segundo plano, um Ctrl+C só; responde
+  `parou` e o chat avisa se o agente seguiu. Telas dos testes são sintéticas (2.1.318 segundo ele), não do acervo.
+- [x] **2/3/7 crate `omni-rag`** (base FTS5, memória com ganchos, MCP com base/histórico/memória/fluxos), sem
+  `tarefas`. Porte Windows: em vez de `claude mcp add` global via `$SHELL` e ganchos só fora do Windows, o engine
+  (`extras_do_claude`) põe `--settings` (ganchos) e `--mcp-config` (servidor `omni`) só no `claude` interativo
+  que o OMNI abre — toda conta, sem mexer em `.claude.json`. Interruptores = arquivos-marca ao lado do
+  `base.db` (`memoria.desligada`, `mcp.desligado`). Binário vai ao lado do engine (`build-engine.mjs`,
+  `externalBin`). Tela Conhecimento na lateral. 49 testes do crate passam no Windows.
+- [ ] Não testado de ponta a ponta numa sessão real (ganchos e MCP rodando no Claude). Conferir no `npm run dev`.
+- Limites: a passada da memória chama `claude` pelo PATH (instalação nativa `claude.exe`; a do npm, `.cmd`, não
+  acha). O MCP fala com o engine instalado (porta 47321) mesmo no dev. O processo da passada pode segurar o
+  gancho `Stop` até o timeout de 5 s no Windows (herança de handle).
+- [x] **Subagentes na conversa** (`omni_core::subagentes`, rotas `/conversas/{id}/subagentes[/{agente}]`,
+  `TrabalhoAoVivo.tsx`): lista com estado (rodando/concluído/parado), última ação e o histórico de cada um.
+- [x] **Parar um subagente** (`POST /conversas/{id}/subagentes/{agente}/parar`, `parar_subagente_na_tela`): pelo
+  painel abaixo do campo — ↓ até a linha selecionada (`❯ ◯ <tipo>  <rótulo>`) conter a descrição, `x`, Esc.
+  Comprovado em sessão real (2.1.319, haiku, 2 subagentes com `ping -n 150`): `x` na linha do B parou só o B
+  (meta `stoppedByUser`, "Waiting for 1 background agent"), o A seguiu. Quantos ↓ varia (shells em segundo plano
+  ganham um item antes do `main`), por isso lê a tela a cada passo. O rótulo muda com o trabalho ("Running
+  150-packet…"): sem achar, a página cai no pedido ao agente (`TaskStop` com o id). Telas no acervo
+  (`claude.nada.painel-subagentes-*`). Achado: `sleep` longo o Claude joga para segundo plano, e o subagente
+  "termina" o turno esperando — `x` nessa linha só dispensa a linha.
+- Captura: o PTY próprio não funciona no sandbox do Claude Code (ConPTY só devolve o `ESC[6n`); a sonda
+  dirigiu um terminal temporário pelo engine instalado (`spawn_terminal`/`snapshot`/`write_terminal`).
+- [x] **Terminal ao vivo na conversa**: botão "Ver terminal ao vivo" (reusa `TerminalEspelho`).
+
+### Retomar do Histórico deixava a aba Conversa em erro (2026-11-08, sem release)
+
+- [x] Caso real (ROBLOX, `claude --resume b344ba24…`): sessão `terminal-…-78` com `conversation_id: null`, embora a
+  conversa `conv-30c483a4…` com o mesmo id externo existisse; a aba Conversa dizia "ainda não tem conversa
+  registrada" e "Tentar de novo" nunca resolvia. `resumeHistory` (`App.tsx`) não ligava conversa. Agora reusa a
+  conversa do índice com o mesmo `external_session_id`, ou `beginConversation` com o comando de retomada, e
+  `attachTerminal`. `resumed_session_id` aceita `codex resume <id>` (o Codex retomado grava o id e acha o rollout).
+  Timeline do transcript lida sem erro (4,8 KB). A aba já aberta segue quebrada: reabrir pelo Histórico.
+
+### Web: Nova conversa perdia o foco do Nome e voltava a conta para Automática (2026-11-07, sem release)
+
+- [x] `NovaConversa.tsx`: o efeito que foca o agente dependia de `onFechar`; a lista atrás atualiza, `onFechar` novo,
+  foco ia para o botão do agente e o espaço digitado o "clicava" (`setConta("")`). Foco agora só ao abrir.
+  Teste `src/test/NovaConversa.test.tsx`.
+
+### Conversa do Codex vazia, sem ações nem histórico (2026-11-05, sem release)
+
+- [x] Print do usuário (outro PC, `gpt-5.6-sol`): terminal com "Ran …" e resposta, Conversa em "Nenhuma mensagem
+  ainda" = zero rollouts casados. Causa provável (não vi o rollout de lá): o casamento exigia `session_meta` a ≤90 s da
+  abertura do agente; primeiro prompt minutos depois ficava de fora. `codex_candidatos` agora aceita qualquer rollout
+  da pasta depois da abertura (−90 s) e antes do fim do segmento (sem fim gravado: 12 h, para segmento esquecido
+  não roubar conversa de dias depois), e o mais cedo vence. Teste em
+  `codex_descobre_o_rollout…`. Se continuar vazio, pedir o `session_meta` (1ª linha) do rollout daquele PC.
+
 ### Fundo animado gastando ~20% de CPU (2026-11-05, v0.7.12)
 
 - [x] WebView do OMNI medida em ~19% de CPU + 6% de GPU (engine 3%). Causa: o fundo WebGL redesenhava a tela cheia a

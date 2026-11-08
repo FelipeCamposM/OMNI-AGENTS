@@ -176,7 +176,10 @@ const EXTENSOES = /\.(tsx?|jsx?|mjs|cjs|json|mdx?|css|scss|html?|rs|toml|ya?ml|p
 /** O texto parece um arquivo (`src/App.tsx:42`, `Cargo.toml`, `D:\proj\a.rs`) e não uma URL. */
 export function pareceArquivo(texto: string): boolean {
   const caminho = semLocal(texto.trim());
-  if (!caminho || /\s/.test(caminho) || caminho.includes("://") || !/^[\w@~.\\/:+-]+$/.test(caminho)) return false;
+  // Absoluto pode ter espaço (`C:\Users\Fulano de Tal\…`); relativo com espaço é frase, não arquivo.
+  const absoluto = /^([A-Za-z]:)?[\\/]/.test(caminho);
+  if (!caminho || (!absoluto && /\s/.test(caminho)) || /[\t\n]/.test(caminho) || caminho.includes("://")
+    || !/^[\w@~.\\/:+ -]+$/.test(caminho)) return false;
   return /[\\/]/.test(caminho) ? /\.[A-Za-z]\w{0,9}$/.test(caminho) : EXTENSOES.test(caminho);
 }
 

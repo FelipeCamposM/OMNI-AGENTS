@@ -330,26 +330,19 @@ pub fn ate(item: &Item, limite: Option<u64>) -> bool {
         .is_none_or(|hora| hora.timestamp_millis() <= limite as i64)
 }
 
-pub fn imagem(fontes: &[(PathBuf, String, Option<u64>)], n: usize, k: usize, cache: &mut FeedCache) -> Option<(String, String)> {
-    let mut vistos = std::collections::HashSet::new();
-    let mut indice = 0;
-    for (caminho, provider, limite) in fontes {
+/// Imagem `k` do item `alvo` da timeline. Acha o item pelo conteúdo, não pela posição: a timeline
+/// ordena por hora e põe os avisos de troca de conta, então a posição dela não é a do `.jsonl`.
+pub fn imagem(fontes: &[(PathBuf, String, Option<u64>)], alvo: &Item, k: usize, cache: &mut FeedCache) -> Option<(String, String, Option<PathBuf>)> {
+    for (caminho, provider, _) in fontes {
         let Ok(entradas) = cache.read(caminho, provider) else { continue };
-        let mut alvo = None;
-        for entrada in entradas {
-            if !ate(&entrada.item, *limite) { continue; }
-            if !vistos.insert(entrada.identity.clone()) { continue; }
-            if indice == n { alvo = Some(entrada.clone()); break; }
-            indice += 1;
-        }
-        let Some(entrada) = alvo else { continue };
+        let Some(entrada) = entradas.iter().find(|e| e.item == *alvo).cloned() else { continue };
         if entrada.item.imagens <= k { return None; }
         if entrada.item.role == "assistant" {
             use base64::Engine as _;
             let caminho = caminhos_de_imagem(&entrada.item.text).into_iter().nth(k)?;
             let nome = caminho.to_string_lossy().to_ascii_lowercase();
             let tipo = EXTENSOES_DE_IMAGEM.iter().find(|(ext, _)| nome.ends_with(ext))?.1;
-            return Some((tipo.to_owned(), base64::engine::general_purpose::STANDARD.encode(std::fs::read(&caminho).ok()?)));
+            return Some((tipo.to_owned(), base64::engine::general_purpose::STANDARD.encode(std::fs::read(&caminho).ok()?), Some(caminho)));
         }
         let uuid = entrada.identity.split_once(':')?.1.rsplit_once('#')?.0.to_owned();
         let arquivo = std::io::BufReader::new(File::open(caminho).ok()?);
@@ -363,11 +356,11 @@ pub fn imagem(fontes: &[(PathBuf, String, Option<u64>)], n: usize, k: usize, cac
             let caminho = anexos_de_imagem(&entrada.item.text).into_iter().nth(k - blocos)?;
             let nome = caminho.to_string_lossy().to_ascii_lowercase();
             let tipo = EXTENSOES_DE_IMAGEM.iter().find(|(ext, _)| nome.ends_with(ext))?.1;
-            return Some((tipo.to_owned(), base64::engine::general_purpose::STANDARD.encode(std::fs::read(&caminho).ok()?)));
+            return Some((tipo.to_owned(), base64::engine::general_purpose::STANDARD.encode(std::fs::read(&caminho).ok()?), Some(caminho)));
         }
         let bloco = blocos_de_imagem(&valor["message"]).nth(k)?;
         let tipo = bloco["source"]["media_type"].as_str().filter(|t| t.starts_with("image/"))?.to_owned();
-        return Some((tipo, bloco["source"]["data"].as_str()?.to_owned()));
+        return Some((tipo, bloco["source"]["data"].as_str()?.to_owned(), None));
     }
     None
 }
@@ -746,9 +739,9 @@ mod tests {
         let itens = cache.read(&caminho, "claude").unwrap().to_vec();
         assert_eq!((itens[1].item.imagens, itens[1].item.text.as_str()), (1, "[Image #1] olha isso"));
         let fontes = [(caminho, "claude".to_owned(), None)];
-        assert_eq!(imagem(&fontes, 1, 0, &mut cache), Some(("image/png".into(), "iVBORw0K".into())));
-        assert_eq!(imagem(&fontes, 1, 1, &mut cache), None);
-        assert_eq!(imagem(&fontes, 0, 0, &mut cache), None);
+        assert_eq!(imagem(&fontes, &itens[1].item, 0, &mut cache), Some(("image/png".into(), "iVBORw0K".into(), None)));
+        assert_eq!(imagem(&fontes, &itens[1].item, 1, &mut cache), None);
+        assert_eq!(imagem(&fontes, &itens[0].item, 0, &mut cache), None);
         assert_eq!(sem_marcas_de_imagem("[Image #1]bom dia [Image #12] veja"), "bom dia  veja");
         assert_eq!(sem_marcas_de_imagem("[Image #x] fica"), "[Image #x] fica");
     }
@@ -768,11 +761,12 @@ mod tests {
             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "/9j"}}]}});
         std::fs::write(&caminho, format!("{linha}\n")).unwrap();
         let mut cache = FeedCache::default();
-        assert_eq!(cache.read(&caminho, "claude").unwrap()[0].item.imagens, 2);
+        let item = cache.read(&caminho, "claude").unwrap()[0].item.clone();
+        assert_eq!(item.imagens, 2);
         let fontes = [(caminho, "claude".to_owned(), None)];
-        assert_eq!(imagem(&fontes, 0, 0, &mut cache), Some(("image/jpeg".into(), "/9j".into())));
-        assert_eq!(imagem(&fontes, 0, 1, &mut cache), Some(("image/png".into(), "cG5n".into())));
-        assert_eq!(imagem(&fontes, 0, 2, &mut cache), None);
+        assert_eq!(imagem(&fontes, &item, 0, &mut cache), Some(("image/jpeg".into(), "/9j".into(), None)));
+        assert_eq!(imagem(&fontes, &item, 1, &mut cache), Some(("image/png".into(), "cG5n".into(), Some(png.clone()))));
+        assert_eq!(imagem(&fontes, &item, 2, &mut cache), None);
         assert!(anexos_de_imagem(&format!("veja {}", png.display())).is_empty());
     }
 

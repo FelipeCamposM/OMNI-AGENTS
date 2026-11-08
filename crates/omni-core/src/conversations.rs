@@ -240,8 +240,7 @@ pub fn resolve_transcript(
         return crate::cursor::descobrir(&root, &conversation.cwd, segment.started_at_ms).map(|(_, path)| path);
     }
     if segment.provider != "codex" { return None; }
-    let candidates = codex_candidatos(&root, segment, conversation);
-    (candidates.len() == 1).then(|| candidates[0].clone())
+    codex_candidatos(&root, segment, conversation).into_iter().min().map(|(_, path)| path)
 }
 
 /// Codex que ainda não gravou rollout nenhum (parado no "confiar nesta pasta?", sem prompt): a
@@ -253,21 +252,27 @@ fn codex_sem_rollout(segment: &Segment, conversation: &Conversation, profiles: &
             .is_some_and(|root| codex_candidatos(&root, segment, conversation).is_empty())
 }
 
-fn codex_candidatos(root: &Path, segment: &Segment, conversation: &Conversation) -> Vec<PathBuf> {
-    crate::rollouts(&root.join("sessions")).into_iter().filter(|path| {
-        let Ok(file) = crate::abrir(path) else { return false };
-        let Some(Ok(line)) = BufReader::new(file).lines().next() else { return false };
-        let Ok(value) = serde_json::from_str::<Value>(&line) else { return false };
-        if value["type"] != "session_meta" { return false; }
+/// Rollouts que podem ser desta sessão, com o instante em que nasceram (o mais cedo é o dela).
+fn codex_candidatos(root: &Path, segment: &Segment, conversation: &Conversation) -> Vec<(u64, PathBuf)> {
+    crate::rollouts(&root.join("sessions")).into_iter().filter_map(|path| {
+        let line = BufReader::new(crate::abrir(&path).ok()?).lines().next()?.ok()?;
+        let value = serde_json::from_str::<Value>(&line).ok()?;
+        if value["type"] != "session_meta" { return None; }
         let meta = &value["payload"];
-        if let Some(id) = &segment.external_session_id { return meta["id"].as_str() == Some(id.as_str()); }
+        if let Some(id) = &segment.external_session_id { return (meta["id"].as_str() == Some(id.as_str())).then_some((0, path)); }
         // O modo Auto abre um subagente revisor ("guardian") com rollout próprio na mesma pasta,
         // segundos depois: eram dois candidatos e a conversa ficava sem histórico.
-        if meta["source"].get("subagent").is_some() { return false; }
+        if meta["source"].get("subagent").is_some() { return None; }
         let same_cwd = meta["cwd"].as_str().is_some_and(|cwd| cwd.replace('\\',"/").eq_ignore_ascii_case(&conversation.cwd.replace('\\',"/")));
-        same_cwd && timestamp(&meta["timestamp"]).or_else(|| timestamp(&value["timestamp"]))
-            // Máquina lenta leva mais de 30 s para o Codex abrir a sessão (visto: 35 s).
-            .is_some_and(|t| t.abs_diff(segment.started_at_ms) <= 90_000)
+        let t = timestamp(&meta["timestamp"]).or_else(|| timestamp(&value["timestamp"]))?;
+        // O rollout pode nascer só no primeiro prompt: quem abre o agente e digita minutos depois
+        // ficava sem histórico (a janela era 90 s). Vale qualquer rollout da pasta depois da abertura
+        // (90 s de folga: máquina lenta) e antes de a sessão fechar. Sem fim gravado (app caiu), até 12 h:
+        // senão um segmento velho sem prompt pegava a conversa de qualquer Codex aberto ali dias depois.
+        // ponytail: dois Codex abertos na mesma pasta, o mais velho sem prompt, pega o rollout do outro.
+        let fim = segment.ended_at_ms.unwrap_or(segment.started_at_ms + 12 * 3_600_000);
+        let na_sessao = t + 90_000 >= segment.started_at_ms && t <= fim;
+        (same_cwd && na_sessao).then_some((t, path))
     }).collect()
 }
 
@@ -596,10 +601,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let msg = |uuid: &str, papel: &str, hora: &str, texto: &str| json!({"type":papel,"uuid":uuid,"timestamp":hora,
             "message":{"role":papel,"content":[{"type":"text","text":texto}]}});
+        let png = dir.path().join("print da tela.png");
+        std::fs::write(&png, b"png").unwrap();
+        let citada = format!("![prévia]({})", png.display());
         let mut conversa = conversa_com_transcript(dir.path(), &[
             msg("u1","user","2026-10-12T10:00:00Z","primeira"),
             msg("u2","user","2026-10-15T10:00:00Z","segunda"),
             msg("u3","user","2026-10-17T10:00:00Z","de hoje"),
+            msg("a1","assistant","2026-10-17T10:01:00Z",&citada),
         ]);
         let caminho = conversa.segments[0].transcript_path.clone();
         let ms = |t: &str| chrono::DateTime::parse_from_rfc3339(t).unwrap().timestamp_millis() as u64;
@@ -615,7 +624,12 @@ mod tests {
             {"id":"p","provider":"claude","name":"Padrão","config_dir":pasta,"created_at_ms":0},
             {"id":"q","provider":"claude","name":"EmailUber","config_dir":pasta,"created_at_ms":0}])).unwrap();
         let textos: Vec<String> = timeline(&conversa, &perfis, None, 50).messages.into_iter().map(|m| m.text).collect();
-        assert_eq!(textos, ["primeira", "Conta trocada: Padrão → EmailUber", "segunda", "Conta trocada: EmailUber → Padrão", "de hoje"]);
+        assert_eq!(textos, ["primeira", "Conta trocada: Padrão → EmailUber", "segunda", "Conta trocada: EmailUber → Padrão", "de hoje", citada.as_str()]);
+        // A imagem citada é pedida pela posição na timeline (5), que os avisos deslocam do `.jsonl` (3).
+        let mut cache = crate::feed::FeedCache::default();
+        let alvo = itens_cached(&conversa, &perfis, &mut cache).0.swap_remove(5).1;
+        assert_eq!(alvo.imagens, 1);
+        assert_eq!(crate::feed::imagem(&fontes(&conversa, &perfis), &alvo, 0, &mut cache), Some(("image/png".into(), "cG5n".into(), Some(png.clone()))));
     }
 
     /// O nome da aba sai do **primeiro prompt**: é o que diz de que conversa se trata, e é o que o
@@ -684,6 +698,20 @@ segunda linha"}}),
         let mut sem_rollout = conversations[0].clone();
         sem_rollout.cwd = "C:/outra".into();
         assert!(timeline(&sem_rollout, &[profile.clone()], None, 10).unavailable_segments.is_empty());
+
+        // Primeiro prompt minutos depois de abrir o agente: o rollout nasce tarde e ainda é desta conversa.
+        let tarde = sessions.join("rollout-tarde.jsonl");
+        std::fs::write(&tarde, json!({"type":"session_meta","payload":{"id":"tarde","cwd":"C:/tarde","timestamp":"1970-01-01T00:05:00Z"}}).to_string()).unwrap();
+        let mut digitou_depois = vec![conversations[0].clone()];
+        digitou_depois[0].cwd = "C:/tarde".into();
+        assert!(discover_codex_transcripts(&mut digitou_depois, &[profile.clone()]));
+        assert_eq!(digitou_depois[0].segments[0].external_session_id.as_deref(), Some("tarde"));
+        // Segmento esquecido aberto (sem fim) não pega rollout de mais de 12 h depois.
+        let mut esquecido = vec![conversations[0].clone()];
+        esquecido[0].cwd = "C:/tarde".into();
+        esquecido[0].segments[0].started_at_ms = 0;
+        std::fs::write(&tarde, json!({"type":"session_meta","payload":{"id":"tarde","cwd":"C:/tarde","timestamp":"1970-01-02T00:00:00Z"}}).to_string()).unwrap();
+        assert!(!discover_codex_transcripts(&mut esquecido, &[profile.clone()]));
 
         assert!(discover_codex_transcripts(&mut conversations, &[profile]));
         assert_eq!(conversations[0].segments[0].external_session_id.as_deref(), Some("codex-1"));

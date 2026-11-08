@@ -14,6 +14,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 omni-core = { path = "../omni-core" }
+omni-rag = { path = "../omni-rag" }
 axum = "0.8"
 # `oneshot`: o desktop chama as rotas da API por dentro do protocolo do engine (`mobile::local`).
 tower = { version = "0.5", features = ["util"] }

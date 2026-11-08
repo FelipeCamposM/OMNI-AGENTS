@@ -108,7 +108,8 @@ pub fn list_conversations(project_id: Option<String>) -> Vec<Conversation> {
 
 fn resumed_session_id(command: &str) -> Option<String> {
     let mut parts = command.split_whitespace();
-    parts.find(|part| *part == "--resume")?;
+    // `claude --resume <id>` ou `codex resume <id>`.
+    parts.find(|part| *part == "--resume" || *part == "resume")?;
     parts.next().filter(|id| !id.starts_with('-')).map(str::to_owned)
 }
 
@@ -142,8 +143,9 @@ pub fn begin_conversation(
         (Some(session_id), transcript, command)
     } else {
         // Codex não deixa escolher o id da sessão; o trecho nasce sem transcript e só
-        // resolve depois, se alguém precisar.
-        (None, None, command)
+        // resolve depois, se alguém precisar. Retomada (`codex resume <id>`) já sabe o id: é por ele
+        // que a descoberta acha o rollout, que é antigo e fica fora da janela de pasta + instante.
+        (resumed_session_id(&command), None, command)
     };
 
     let conversation = Conversation {
@@ -545,6 +547,7 @@ mod tests {
         assert_eq!(resumed_session_id("claude"), None);
         assert_eq!(resumed_session_id("claude --continue"), None);
         assert_eq!(resumed_session_id("claude --resume --verbose"), None);
+        assert_eq!(resumed_session_id("codex resume 01a1-rollout").as_deref(), Some("01a1-rollout"));
     }
 
     #[test]

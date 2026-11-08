@@ -26,10 +26,14 @@ import {
   duplicateTerminal,
   ensureAgentTrust,
   ensureEngine,
+  attachTerminal,
+  beginConversation,
   listAgentClis,
+  listConversations,
   restartTerminal,
   spawnTerminal,
 } from "./features/terminal/terminalService";
+import { ConhecimentoView } from "./features/conhecimento/ConhecimentoView";
 import { HistoryView } from "./features/history/HistoryView";
 import { FluxosView } from "./features/fluxos/FluxosView";
 import { Panorama } from "./features/panorama/Panorama";
@@ -41,7 +45,7 @@ import type { SettingsSection } from "./hooks/useNotifications";
 import { useSettings } from "./hooks/useSettings";
 import { matchesShortcut } from "./lib/shortcuts";
 
-type View = "workspace" | "settings" | "history" | "fluxos" | "panorama";
+type View = "workspace" | "settings" | "history" | "fluxos" | "panorama" | "conhecimento";
 
 export function App() {
   const [view, setView] = useState<View>("workspace");
@@ -209,17 +213,25 @@ export function App() {
     // Outra conta: o transcript vai para lá antes, senão o `--resume` não acha a conversa.
     await levarParaConta(entry, profileId);
     await ensureAgentTrust(cli.id, cwd, profileId);
+    // Sem conversa ligada, a aba Conversa não tem o que mostrar: reusa a do OMNI com esta sessão
+    // ou registra uma nova (conversa aberta fora do OMNI).
+    const command = resumeCommand(cli.command, entry);
+    const existente = (await listConversations()).find((c) => c.segments.some((s) => s.external_session_id === entry.session_id));
+    const conversationId = existente?.id
+      ?? (await beginConversation({ projectId, cwd, provider: cli.id, profileId, command, title: entry.title ?? undefined })).conversation_id;
     const session = await spawnTerminal({
       projectId,
       name: `${cli.label} · ${(entry.title ?? "retomada").slice(0, 40)}`,
       cwd,
       rows: 30,
       cols: 120,
-      initialCommand: resumeCommand(cli.command, entry),
+      initialCommand: command,
       provider: cli.id,
       profileId,
+      conversationId,
       externalSessionId: entry.session_id,
     });
+    await attachTerminal(conversationId, session.id).catch(() => undefined);
     dispatch({ type: "FOCUS_SESSION", workspaceId, projectId, sessionId: session.id, title: session.name });
     setView("workspace");
   }
@@ -236,6 +248,7 @@ export function App() {
         trilha={
           view === "settings" ? ["Configurações"]
             : view === "history" ? ["Histórico"]
+            : view === "conhecimento" ? ["Conhecimento"]
             : view === "fluxos" ? ["Fluxos de agentes"]
             : view === "panorama" ? ["Panorama"]
             : [workspaces.find((item) => item.id === activeWorkspaceId)?.name, activeProject?.name].filter((parte): parte is string => Boolean(parte))
@@ -316,6 +329,8 @@ export function App() {
           setView("workspace");
         }}
         onOpenHistory={openHistory}
+        showConhecimento={view === "conhecimento"}
+        onOpenConhecimento={() => setView("conhecimento")}
         onResumeHistory={resumeHistory}
         onHome={() => setView("workspace")}
         onAddProject={(path) => {
@@ -406,6 +421,8 @@ export function App() {
               onWorkspace={(workspaceId) => { dispatch({ type: "SHOW_WORKSPACE", workspaceId }); setView("workspace"); }}
               onClose={() => setView("workspace")}
             />
+          ) : view === "conhecimento" ? (
+            <ConhecimentoView onClose={() => setView("workspace")} />
           ) : view === "history" ? (
             <HistoryView onResume={resumeHistory} onClose={closeHistory} />
           ) : view === "fluxos" ? (

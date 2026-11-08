@@ -564,6 +564,9 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/painel",get(painel))
         .route("/conversas/{id}/timeline",get(timeline))
         .route("/conversas/{id}/terminal",get(terminal))
+        .route("/conversas/{id}/subagentes",get(subagentes))
+        .route("/conversas/{id}/subagentes/{agente}",get(subagente))
+        .route("/conversas/{id}/subagentes/{agente}/parar",post(parar_subagente))
         .route("/conversas/{id}/imagens/{n}/{k}",get(imagem_da_mensagem))
         .route("/conversas/{id}/teclas",post(teclas))
         .route("/conversas/{id}/parar",post(parar))
@@ -1225,19 +1228,26 @@ async fn imagem_da_mensagem(State(state): State<Arc<EngineState>>, RoutePath((id
     tokio::task::spawn_blocking(move || {
         let dir = state.state_file.parent().unwrap();
         let profiles = omni_core::profiles(dir);
-        let fontes = match current(&state,&id) {
-            Ok((conversation,_)) => omni_core::conversations::fontes(&conversation,&profiles),
+        let sem_imagem = ||error(StatusCode::NOT_FOUND,"Imagem não encontrada");
+        let mut feeds = state.mobile.feeds.lock().expect("feeds poisoned");
+        // `n` é a posição na timeline (mesma montagem da rota de timeline, com ordem por hora e avisos
+        // de troca de conta), não no `.jsonl`: contar o arquivo dava 404 em conversa que trocou de conta.
+        let (fontes, alvo) = match current(&state,&id) {
+            Ok((conversation,_)) => {
+                let alvo = omni_core::conversations::itens_cached(&conversation,&profiles,&mut feeds).0.into_iter().nth(n).ok_or_else(sem_imagem)?.1;
+                (omni_core::conversations::fontes(&conversation,&profiles), alvo)
+            }
             Err(_) => {
                 let entry = historical_entries(&state).into_iter().find(|entry|history_id(entry) == id)
                     .ok_or_else(||error(StatusCode::NOT_FOUND,"Conversa não encontrada"))?;
                 let caminho = omni_core::history::validated(Path::new(&entry.path),&entry.provider,&profiles)
                     .ok_or_else(||error(StatusCode::NOT_FOUND,"Histórico não encontrado"))?;
-                vec![(caminho, entry.provider, None)]
+                let alvo = feeds.read(&caminho,&entry.provider).ok().and_then(|e|e.get(n)).ok_or_else(sem_imagem)?.item.clone();
+                (vec![(caminho, entry.provider, None)], alvo)
             }
         };
-        let mut feeds = state.mobile.feeds.lock().expect("feeds poisoned");
-        let (tipo, dados) = omni_core::feed::imagem(&fontes,n,k,&mut feeds).ok_or_else(||error(StatusCode::NOT_FOUND,"Imagem não encontrada"))?;
-        Ok(Json(json!({"tipo":tipo,"dados":dados})))
+        let (tipo, dados, caminho) = omni_core::feed::imagem(&fontes,&alvo,k,&mut feeds).ok_or_else(sem_imagem)?;
+        Ok(Json(json!({"tipo":tipo,"dados":dados,"caminho":caminho})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler a imagem"))?
 }
 
@@ -1258,6 +1268,88 @@ async fn terminal(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePat
         };
         ler_saida(&sessao, desde.desde)
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler o terminal"))?
+}
+
+/// Transcript do Claude em uso na conversa: é ao lado dele que a CLI grava os subagentes.
+fn transcript_do_claude(state: &EngineState, id: &str) -> Result<(PathBuf, bool), ApiError> {
+    let (conversa, sessao) = current(state,id)?;
+    let dir = state.state_file.parent().unwrap();
+    let caminho = omni_core::conversations::fontes(&conversa,&omni_core::profiles(dir)).into_iter().rev()
+        .find(|(_, provider, _)| provider == "claude").map(|(caminho, _, _)| caminho)
+        .ok_or_else(||error(StatusCode::NOT_FOUND,"Conversa sem transcript do Claude"))?;
+    Ok((caminho, sessao.is_some()))
+}
+
+/// Subagentes da conversa, com o estado de cada um e o que estão fazendo agora.
+async fn subagentes(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let lista = transcript_do_claude(&state,&id).map(|(caminho, viva)| omni_core::subagentes::listar(&caminho, viva)).unwrap_or_default();
+        Ok(Json(json!({"subagentes":lista})))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler subagentes"))?
+}
+
+/// O que um subagente fez, no mesmo formato da timeline da conversa.
+async fn subagente(State(state): State<Arc<EngineState>>, RoutePath((id, agente)): RoutePath<(String, String)>, Query(page): Query<Page>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let (caminho, _) = transcript_do_claude(&state,&id)?;
+        let arquivo = omni_core::subagentes::arquivo(&caminho,&agente).ok_or_else(||error(StatusCode::NOT_FOUND,"Subagente não encontrado"))?;
+        let itens: Vec<_> = {
+            let mut feeds = state.mobile.feeds.lock().expect("feeds poisoned");
+            feeds.read(&arquivo,"claude").map_err(|_|error(StatusCode::NOT_FOUND,"Subagente não encontrado"))?
+                .iter().map(|e|("claude".to_owned(),e.item.clone())).collect()
+        };
+        Ok(Json(json!({"timeline":omni_core::conversations::page(&format!("{id}-{agente}"),itens,page.cursor,TIMELINE_PAGINA)})))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler o subagente"))?
+}
+
+/// Linha do painel de subagentes com a seleção (`❯ ◯ general-purpose  Rodar testes`, `❯ ● main`).
+/// O campo também começa em `❯`, mas o que vem depois é texto, não o glifo da linha.
+fn linha_selecionada_do_painel(tela: &str) -> Option<&str> {
+    tela.lines().rev().find(|linha| linha.trim_start().strip_prefix("❯ ").is_some_and(|resto| resto.starts_with(['◯', '●'])))
+}
+
+/// Para só um subagente pelo painel abaixo do campo do Claude (telas reais, 2.1.319): ↓ desce do campo
+/// para os itens do rodapé (os shells em segundo plano, se houver, e depois `main` e um subagente por
+/// linha); `x` na linha selecionada para aquele subagente; Esc devolve o foco ao campo. Quantos ↓ varia,
+/// então lê a tela a cada passo e só aperta `x` quando a linha selecionada é a dele. A linha muda de
+/// texto com o trabalho ("Running 150-packet…"): sem achar a descrição, devolve `false` e não toca em
+/// nada além das setas — a página pede ao agente (`TaskStop`), que sabe o id.
+fn parar_subagente_na_tela(state: &Arc<EngineState>, sessao: &LiveSession, sessao_id: &str, descricao: &str) -> bool {
+    let tela = || sessao.interaction.lock().map(|i| i.parser.screen().contents()).unwrap_or_default();
+    let livre = sessao.interaction.lock().is_ok_and(|i| interaction::composer_vazio(i.parser.screen()) && interaction::approval(&i.parser.screen().contents(),"claude").is_none());
+    if descricao.trim().is_empty() || !livre { return false; }
+    let mut anterior: Option<String> = None;
+    for _ in 0..10 {
+        if write_terminal(state,sessao_id,"\x1b[B").is_err() { return false; }
+        std::thread::sleep(std::time::Duration::from_millis(350));
+        let agora = tela();
+        let Some(selecionada) = linha_selecionada_do_painel(&agora).map(str::to_owned) else { continue };
+        if selecionada.contains(descricao.trim()) {
+            let _ = write_terminal(state,sessao_id,"x");
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            let _ = write_terminal(state,sessao_id,"\x1b");
+            return true;
+        }
+        // Chegou ao fim da lista (a seleção não anda mais): solta o rodapé e desiste.
+        if anterior.as_deref() == Some(selecionada.as_str()) { break; }
+        anterior = Some(selecionada);
+    }
+    // Esc só com algo do rodapé selecionado: com o campo em foco ele interromperia o turno.
+    if linha_selecionada_do_painel(&tela()).is_some() || tela().contains("Enter to view tasks") { let _ = write_terminal(state,sessao_id,"\x1b"); }
+    false
+}
+
+/// Para um subagente só. `na_tela: false` = não deu pelo painel; a página pede ao agente.
+async fn parar_subagente(State(state): State<Arc<EngineState>>, RoutePath((id, agente)): RoutePath<(String, String)>) -> Result<Json<Value>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let (caminho, _) = transcript_do_claude(&state,&id)?;
+        let descricao = omni_core::subagentes::listar(&caminho, true).into_iter().find(|s| s.id == agente && s.estado == "rodando")
+            .map(|s| s.descricao).ok_or_else(||error(StatusCode::NOT_FOUND,"Subagente não está rodando"))?;
+        let (_, sessao) = current(&state,&id)?;
+        let sessao = sessao.ok_or_else(||error(StatusCode::CONFLICT,"Sessão não está aberta no PC"))?;
+        let sessao_id = sessao.meta.lock().map(|meta| meta.id.clone()).map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Sessão indisponível"))?;
+        Ok(Json(json!({"ok":true,"na_tela":parar_subagente_na_tela(&state,&sessao,&sessao_id,&descricao)})))
+    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao parar o subagente"))?
 }
 
 /// A saída bruta da PTY a partir de `desde` — comum ao terminal de uma conversa e a um shell.
@@ -1368,29 +1460,67 @@ async fn teclas(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<
         Ok(Json(json!({"ok":true})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao enviar teclas"))?
 }
-/// O "parar" da conversa: Esc, e depois apaga o prompt que a CLI devolveu ao campo (com texto lá, o
-/// próximo prompt dava "não reconhecida"). `limpou` diz à página para devolver o texto ao campo dela.
+/// Espera entre leituras da tela no "parar".
+const PARAR_PASSO_MS: u64 = 150;
+/// ~1,5 s: o que o Esc tem para encerrar o turno antes do Ctrl+C.
+const PARAR_ESPERA_ESC: usize = 10;
+/// ~3 s depois do Ctrl+C. Passando disso, o agente não parou e a resposta diz isso.
+const PARAR_ESPERA_CTRL_C: usize = 20;
+/// ~1,5 s de campo livre seguido para dar a parada por terminada.
+const PARAR_LIVRE: usize = 10;
+/// Limite do laço inteiro, para quem só tem o Esc.
+const PARAR_PASSOS: usize = 50;
+
+/// Agente ativo na tela, do jeito de cada CLI. O agente em segundo plano é só do Claude.
+fn agente_ativo(texto: &str, provider: &str) -> bool {
+    if provider == "claude" { interaction::ainda_trabalhando(texto) } else { in_turn(texto, provider) }
+}
+
+/// Esc, e no Claude um Ctrl+C se o Esc não bastou: com agente em segundo plano o Esc não encerra. É
+/// um só, e só com a tela dizendo que há trabalho: o seguinte, ou um com a tela parada, leva ao
+/// "Press Ctrl-C again to exit". Devolve `(limpou, parou)`.
+fn interromper(state: &Arc<EngineState>, sessao: &LiveSession, sessao_id: &str, provider: &str) -> Result<(bool, bool), ApiError> {
+    write_terminal(state,sessao_id,"\x1b").map_err(|erro|error(StatusCode::CONFLICT,&erro.to_string()))?;
+    let (mut limpou, mut livre, mut ctrl_c_em) = (false, 0, None);
+    // ponytail: Ctrl+U apaga até o começo da linha; texto de várias linhas leva um por linha, daí o laço.
+    // Parar logo depois de enviar: o campo aparece vazio por um instante e só depois a CLI devolve
+    // o texto (ou a colagem ainda chega). Por isso só sai com o campo livre por ~1,5 s seguidos.
+    for passo in 1..=PARAR_PASSOS {
+        std::thread::sleep(std::time::Duration::from_millis(PARAR_PASSO_MS));
+        let Ok(context) = sessao.interaction.lock() else { break };
+        let tela = context.parser.screen();
+        let ativo = agente_ativo(&tela.contents(),provider);
+        if !ativo && interaction::ready(tela,provider) { livre += 1; if livre >= PARAR_LIVRE { break; } continue; }
+        livre = 0;
+        let sobra = interaction::sobra_no_campo(tela,provider);
+        drop(context);
+        if sobra { limpou = true; let _ = write_terminal(state,sessao_id,"\x15"); }
+        if !ativo { continue; }
+        match ctrl_c_em {
+            None if provider == "claude" && passo >= PARAR_ESPERA_ESC => {
+                ctrl_c_em = Some(passo);
+                let _ = write_terminal(state,sessao_id,"\x03");
+            }
+            Some(enviado) if passo - enviado >= PARAR_ESPERA_CTRL_C => break,
+            _ => {}
+        }
+    }
+    let parou = sessao.interaction.lock().is_ok_and(|context| !agente_ativo(&context.parser.screen().contents(),provider));
+    Ok((limpou, parou))
+}
+
+/// O "parar" da conversa. `limpou`: o prompt que a CLI devolveu ao campo foi apagado (com texto lá,
+/// o próximo prompt dava "não reconhecida") e a página o devolve ao campo dela. `parou`: a tela não
+/// mostra mais nada em andamento; `false` é o agente seguindo, e o processo não é morto daqui porque
+/// entre os filhos da CLI não dá para separar o trabalho dos servidores MCP.
 async fn parar(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<String>) -> Result<Json<Value>, ApiError> {
     tokio::task::spawn_blocking(move || {
         let (_, sessao) = current(&state,&id)?;
         let sessao = sessao.ok_or_else(||error(StatusCode::CONFLICT,"Sessão não está aberta no PC"))?;
         let (sessao_id, provider) = sessao.meta.lock().map(|meta| (meta.id.clone(), meta.provider.clone().unwrap_or_default()))
             .map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Sessão indisponível"))?;
-        write_terminal(&state,&sessao_id,"\x1b").map_err(|erro|error(StatusCode::CONFLICT,&erro.to_string()))?;
-        let (mut limpou, mut livre) = (false, 0);
-        // ponytail: Ctrl+U apaga até o começo da linha; texto de várias linhas leva um por linha, daí o laço.
-        // Parar logo depois de enviar: o campo aparece vazio por um instante e só depois a CLI devolve
-        // o texto (ou a colagem ainda chega). Por isso só sai com o campo livre por ~1,5 s seguidos.
-        for _ in 0..50 {
-            std::thread::sleep(std::time::Duration::from_millis(150));
-            let Ok(context) = sessao.interaction.lock() else { break };
-            if interaction::ready(context.parser.screen(),&provider) { livre += 1; if livre >= 10 { break; } continue; }
-            livre = 0;
-            let sobra = interaction::sobra_no_campo(context.parser.screen(),&provider);
-            drop(context);
-            if sobra { limpou = true; let _ = write_terminal(&state,&sessao_id,"\x15"); }
-        }
-        Ok(Json(json!({"ok":true,"limpou":limpou})))
+        let (limpou, parou) = interromper(&state,&sessao,&sessao_id,&provider)?;
+        Ok(Json(json!({"ok":true,"limpou":limpou,"parou":parou})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao parar"))?
 }
 /// Renomear a conversa. Vale para o celular e para a web de computador; o desktop chega aqui pelo
@@ -3470,7 +3600,17 @@ quebra"}"#] {
         assert!(validate(&MobileConfig{enabled:true,bind:"127.0.0.1:47321".into(),token:String::new(),serve:false,totp_secret:String::new(),totp_confirmed:false}).is_err());
     }
 
-    #[cfg(windows)]
+    /// Telas reais do Claude 2.1.319 com dois subagentes: a seleção do painel é a linha com `❯ ◯`, nunca o
+    /// campo (que também começa em `❯`), e sem nada selecionado não há linha.
+    #[test] fn painel_de_subagentes_acha_a_linha_selecionada() {
+        let tela = |nome: &str| std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests-fixtures/telas").join(nome)).unwrap();
+        let selecionada = tela("claude.nada.painel-subagentes-selecionado-2.1.319.txt");
+        assert!(linha_selecionada_do_painel(&selecionada).is_some_and(|l| l.contains("Subagent B ping run")));
+        assert_eq!(linha_selecionada_do_painel(&tela("claude.nada.painel-subagentes-campo-2.1.319.txt")), None);
+        assert_eq!(linha_selecionada_do_painel("❯ ◯ não é linha?\n❯ texto no campo"), Some("❯ ◯ não é linha?"));
+        assert_eq!(linha_selecionada_do_painel("❯ texto no campo"), None);
+    }
+
     mod actions {
         use super::*;
         #[derive(Debug)] struct FakeChild;
@@ -3482,7 +3622,7 @@ quebra"}"#] {
             fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> { Ok(None) }
             fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> { Ok(portable_pty::ExitStatus::with_exit_code(0)) }
             fn process_id(&self) -> Option<u32> { Some(42) }
-            fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> { None }
+            #[cfg(windows)] fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> { None }
         }
         struct FakeMaster;
         impl MasterPty for FakeMaster {
@@ -3490,6 +3630,9 @@ quebra"}"#] {
             fn get_size(&self) -> Result<PtySize> { Ok(PtySize{rows:20,cols:100,pixel_width:0,pixel_height:0}) }
             fn try_clone_reader(&self) -> Result<Box<dyn Read + Send>> { Ok(Box::new(std::io::empty())) }
             fn take_writer(&self) -> Result<Box<dyn Write + Send>> { Ok(Box::new(std::io::sink())) }
+            #[cfg(unix)] fn process_group_leader(&self) -> Option<i32> { None }
+            #[cfg(unix)] fn as_raw_fd(&self) -> Option<std::os::fd::RawFd> { None }
+            #[cfg(unix)] fn tty_name(&self) -> Option<std::path::PathBuf> { None }
         }
         struct RecordingWriter(Arc<Mutex<Vec<u8>>>);
         impl Write for RecordingWriter {
@@ -3617,6 +3760,78 @@ quebra"}"#] {
             assert_eq!(estado(),SessionState::Answered,"redesenho virou trabalho");
             crate::append_output(&session,b"\x1b[2J\x1b[H* Pensando (esc to interrupt)",Some(42));
             assert_eq!(estado(),SessionState::Working);
+        }
+
+        /// Agente parado no `❯` com a TUI redesenhando sem pausa (o relógio do agente em segundo
+        /// plano, a linha de status): cada quadro zerava o tempo ocioso e a sessão ficava "trabalhando"
+        /// para sempre, com o Parar na tela. Sem sinal de turno, redesenho não segura o estado.
+        #[test] fn redesenho_constante_no_prompt_nao_segura_o_trabalhando() {
+            let (_dir,state) = fixture(); let (session,_,_) = fake_session(&state,"❯ ");
+            crate::append_output(&session,"\x1b[2J\x1b[H✶ Mulling… (esc to interrupt)\r\n❯ ".as_bytes(),Some(42));
+            assert_eq!(session.meta.lock().unwrap().state,SessionState::Working);
+            for _ in 0..13 {
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                crate::append_output(&session,"\x1b[2J\x1b[H● Pronto.\r\n\r\n❯ ".as_bytes(),Some(42));
+            }
+            assert_eq!(crate::settle(&session).state,SessionState::Answered,"parado no prompt seguiu trabalhando");
+        }
+        /// O texto da conversa logo acima do campo não é sinal de turno: a sessão parada no `❯` que
+        /// citava a frase ficava "trabalhando", com o aviso de fila no campo.
+        #[test] fn frase_do_turno_na_conversa_nao_prende_o_trabalhando() {
+            let (_dir,state) = fixture(); let (session,_,_) = fake_session(&state,"❯ ");
+            crate::append_output(&session,"\x1b[2J\x1b[H✶ Mulling… (esc to interrupt)\r\n❯ ".as_bytes(),Some(42));
+            crate::append_output(&session,"\x1b[2J\x1b[H● A tela mostra esc to interrupt no rodapé.\r\n\r\n❯ ".as_bytes(),Some(42));
+            session.interaction.lock().unwrap().turno_visto_em_ms = 1;
+            assert_eq!(crate::settle(&session).state,SessionState::Answered);
+            assert!(!interaction::pode_enfileirar(session.interaction.lock().unwrap().parser.screen(),"claude"));
+        }
+
+        /// Tela parada: só o Esc. Ctrl+C aqui abriria o aviso de saída da CLI.
+        #[test] fn parar_com_a_tela_parada_nao_manda_ctrl_c() {
+            let (_dir,state) = fixture(); let (session,bytes,_) = fake_session(&state,"● Pronto.\r\n\r\n❯ ");
+            assert_eq!(interromper(&state,&session,"s","claude").unwrap(),(false,true));
+            assert_eq!(bytes.lock().unwrap().as_slice(),b"\x1b");
+        }
+        /// O Esc encerra o turno sozinho: o Ctrl+C não sai.
+        #[test] fn parar_sem_ctrl_c_quando_o_esc_resolve() {
+            let (_dir,state) = fixture(); let (session,bytes,_) = fake_session(&state,"✶ Mulling… (esc to interrupt)\r\n❯ ");
+            let cli = session.clone();
+            std::thread::spawn(move || { std::thread::sleep(std::time::Duration::from_millis(400));
+                crate::append_output(&cli,"\x1b[2J\x1b[H⎿  Interrupted\r\n\r\n❯ ".as_bytes(),Some(42)); });
+            assert_eq!(interromper(&state,&session,"s","claude").unwrap(),(false,true));
+            assert_eq!(bytes.lock().unwrap().as_slice(),b"\x1b");
+        }
+        /// O caso comprovado na CLI 2.1.318: o Esc não encerra agente em segundo plano, um Ctrl+C
+        /// encerra tudo. A tela guarda o "Waiting for" depois disso e o segundo Ctrl+C não pode sair.
+        #[test] fn parar_com_agente_em_segundo_plano_manda_um_ctrl_c_so() {
+            let (_dir,state) = fixture(); let (session,bytes,_) = fake_session(&state,"✻ Waiting for 1 background agent to finish\r\n\r\n❯ ");
+            let (cli,recebido) = (session.clone(),bytes.clone());
+            std::thread::spawn(move || {
+                while !recebido.lock().unwrap().contains(&3) { std::thread::sleep(std::time::Duration::from_millis(20)); }
+                crate::append_output(&cli,"\x1b[2J\x1b[H✻ Waiting for 1 background agent to finish\r\n  ⎿  All background agents stopped\r\n\r\n❯ \r\n  Press Ctrl-C again to exit\x1b[4;3H".as_bytes(),Some(42));
+            });
+            assert_eq!(interromper(&state,&session,"s","claude").unwrap(),(false,true));
+            assert_eq!(bytes.lock().unwrap().as_slice(),b"\x1b\x03");
+        }
+        /// Nada resolveu: um Ctrl+C só, e a resposta diz que o agente não parou.
+        #[test] fn parar_relata_quando_o_agente_nao_para() {
+            let (_dir,state) = fixture(); let (session,bytes,_) = fake_session(&state,"✶ Mulling… (esc to interrupt)\r\n❯ ");
+            assert_eq!(interromper(&state,&session,"s","claude").unwrap(),(false,false));
+            assert_eq!(bytes.lock().unwrap().as_slice(),b"\x1b\x03");
+        }
+        /// Ctrl+C é só do Claude: nas outras CLIs ele pode encerrar a própria CLI.
+        #[test] fn parar_nas_outras_clis_fica_no_esc() {
+            let (_dir,state) = fixture(); let (session,bytes,_) = fake_session(&state,"• Working (3s • esc to interrupt)\r\n› ");
+            assert_eq!(interromper(&state,&session,"s","codex").unwrap(),(false,false));
+            assert_eq!(bytes.lock().unwrap().as_slice(),b"\x1b");
+        }
+        /// Com agente em segundo plano o Parar continua à mão: é por ele que dá para encerrá-lo.
+        #[test] fn redesenho_com_agente_em_segundo_plano_segue_trabalhando() {
+            let (_dir,state) = fixture(); let (session,_,_) = fake_session(&state,"❯ ");
+            crate::append_output(&session,"\x1b[2J\x1b[H✶ Mulling… (esc to interrupt)\r\n❯ ".as_bytes(),Some(42));
+            session.interaction.lock().unwrap().turno_visto_em_ms = 1;
+            crate::append_output(&session,"\x1b[2J\x1b[H✻ Waiting for 1 background agent to finish\r\n\r\n❯ ".as_bytes(),Some(42));
+            assert_eq!(crate::settle(&session).state,SessionState::Working);
         }
 
         /// Plano/Auto pelo chat do PC: o `Idempotency-Key` tem de atravessar o protocolo local.

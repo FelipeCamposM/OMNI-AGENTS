@@ -41,10 +41,13 @@ export function NovaConversa({ catalog, projetoInicial, onFechar, onAberta }: {
   const caixa = useRef<HTMLDivElement>(null);
   const contas = catalog.profiles.filter((p) => p.provider === provider);
 
+  // Foco no agente só ao abrir: com `onFechar` nas dependências, cada atualização da lista atrás
+  // roubava o foco do Nome, e o espaço digitado "clicava" no agente e zerava a conta.
+  useEffect(() => { caixa.current?.querySelector<HTMLElement>("[aria-pressed='true']")?.focus(); }, []);
+
   useEffect(() => {
     const tecla = (evento: KeyboardEvent) => { if (evento.key === "Escape" && !abrindo) onFechar(); };
     window.addEventListener("keydown", tecla);
-    caixa.current?.querySelector<HTMLElement>("[aria-pressed='true']")?.focus();
     return () => window.removeEventListener("keydown", tecla);
   }, [abrindo, onFechar]);
 

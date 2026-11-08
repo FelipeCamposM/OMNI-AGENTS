@@ -8,6 +8,7 @@ mod docker_client;
 mod servidores;
 mod ssh;
 mod target_files;
+mod conhecimento;
 mod history;
 mod instalacao;
 mod profiles;
@@ -89,6 +90,14 @@ pub fn run() {
             conversations::attach_terminal,
             conversations::handoff_prompt,
             conversations::plan_switch,
+            conhecimento::rag_listar,
+            conhecimento::rag_adicionar,
+            conhecimento::rag_remover,
+            conhecimento::rag_buscar,
+            conhecimento::rag_claude_ligado,
+            conhecimento::rag_claude_ligar,
+            conhecimento::rag_memoria_estado,
+            conhecimento::rag_memoria_ligar,
             history::agent_history,
             history::agent_history_transcript,
             profiles::list_profiles,

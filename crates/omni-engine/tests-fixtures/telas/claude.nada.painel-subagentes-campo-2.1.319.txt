@@ -1,0 +1,37 @@
+
+Felipe Campos@PC-FELIPE MINGW64 /d/PROGRAMACAO/PROJETOS/PROJETOS_REACT/OMNI-AGENTS (main)
+$ claude --model haiku --allowedTools 'Bash(sleep:*)'
+ ▐▛███▛█   Claude Code v2.1.319
+▝▜██████▀  Haiku 5.5 · Claude Pro
+ ▝▝   ▝▝   D:\PROGRAMACAO\PROJETOS\PROJETOS_REACT\OMNI-AGENTS
+
+
+❯ Launch two background subagents (general-purpose, run_in_background true) in parallel. Subagent A: run the bash command sleep 150 then      reply A. Subagent B: run sleep 150 then reply B. After launching, just say launched.                                                      
+  
+● 2 background agents launched (↓ to manage)
+   ├ Subagent A sleep 150
+   └ Subagent B sleep 150
+
+● Launched.
+
+✻ Waiting for 2 background agents to finish
+
+› Message from @general-purpose (ctrl+o to expand)
+
+● Subagent B says its sleep 150 was blocked in the foreground, so it ran it in the background and is still waiting. Subagent A hasn't         reported yet. I'll relay each result when its completion notice arrives.
+
+● Agent "Subagent B sleep 150" is waiting on its own background work · 13s
+
+● Agent "Subagent A sleep 150" is waiting on its own background work · 13s
+
+● Both subagents are still pending. Neither has returned its result: A is waiting on its own background sleep, and B is waiting on the
+  background sleep it started after the foreground one was blocked. I'll relay A and B when their reports arrive.
+  
+✻ Churned for 22s · done 3:00 · 2 shells still running
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  ⏵⏵ auto mode on · 2 shells · ↓ to manage
+
+  ● main
+  ◯ general-purpose  Subagent A sleep 150                                                                             13s · ↓ 55.7k tokens
+  ◯ general-purpose  Subagent B sleep 150                                                                             13s · ↓ 55.4k tokens

@@ -69,11 +69,8 @@ fn screen_tracked(provider: Option<&str>) -> bool {
 /// "esc to cancel" enquanto trabalha — e também enquanto espera você responder uma pergunta dele.
 fn in_turn(screen_text: &str, provider: &str) -> bool {
     if provider == "cursor" { return interaction::cursor_em_turno(screen_text); }
-    let texto = interaction::area_do_turno(screen_text).to_ascii_lowercase();
-    match provider {
-        "antigravity" => texto.contains("esc to cancel"),
-        _ => texto.contains("esc to interrupt"),
-    }
+    if provider == "antigravity" { return interaction::area_do_turno(screen_text).to_ascii_lowercase().contains("esc to cancel"); }
+    interaction::turno_na_tela(screen_text)
 }
 
 /// Novo estado depois de `idle_ms` sem saída, e se isso encerra um turno de verdade (= aviso).
@@ -96,8 +93,12 @@ fn settle(session: &LiveSession) -> TerminalSession {
     let mut interaction = session.interaction.lock().expect("screen poisoned");
     let mut meta = session.meta.lock().expect("session metadata poisoned");
     let tracked = screen_tracked(meta.provider.as_deref());
-    let screen_in_turn = tracked && in_turn(&interaction.parser.screen().contents(), meta.provider.as_deref().unwrap_or(""));
-    let idle_ms = now_ms().saturating_sub(meta.last_activity_at_ms);
+    let provider = meta.provider.as_deref().unwrap_or("");
+    let screen_in_turn = tracked && in_turn(&interaction.parser.screen().contents(), provider);
+    // Parado no campo, redesenho não conta como atividade: um relógio na tela zerava o tempo ocioso a
+    // cada quadro e a sessão nunca saía de "trabalhando". Conta o último quadro com turno.
+    let parado = tracked && !screen_in_turn && interaction::campo_parado(interaction.parser.screen(), provider);
+    let idle_ms = now_ms().saturating_sub(if parado { interaction.turno_visto_em_ms } else { meta.last_activity_at_ms });
     // Shell puro calado mas com filho vivo (dev server) continua rodando. Só consulta os processos
     // quando ia virar `Answered`: shell no prompt sai do `Working` e não paga mais nada.
     let shell_busy = meta.provider.is_none() && meta.state == SessionState::Working && idle_ms > ANSWERED_IDLE_MS
@@ -645,9 +646,53 @@ fn sem_aviso_de_update(comando: &str) -> String {
     format!("{binario} -c check_for_update_on_startup=false{}{resto}", if resto.is_empty() { "" } else { " " })
 }
 
+/// `omni-rag` ao lado do engine, com o mesmo sufixo (no dev o nome leva o triple).
+fn caminho_do_rag() -> Option<PathBuf> {
+    let atual = env::current_exe().ok()?;
+    let nome = atual.file_name()?.to_string_lossy().into_owned();
+    let candidato = atual.with_file_name(nome.replacen("omni-engine", "omni-rag", 1));
+    candidato.is_file().then_some(candidato)
+}
+
+/// Só o `claude` interativo ganha memória e MCP: `claude mcp ...`, `claude -p` e afins não têm conversa.
+fn com_extras_do_claude(comando: &str, extras: &str) -> String {
+    let mut partes = comando.split_whitespace();
+    let nome = partes.next().unwrap_or("").trim_matches(['"', '\'']).rsplit(['/', '\\']).next().unwrap_or("")
+        .trim_end_matches(".exe").trim_end_matches(".cmd");
+    let conversa = partes.next().is_none_or(|argumento| argumento.starts_with('-'));
+    let ja_tem = comando.contains("--settings") || comando.contains("--mcp-config");
+    if extras.is_empty() || nome != "claude" || !conversa || ja_tem || comando.contains(" -p") { return comando.to_owned(); }
+    format!("{comando} {extras}")
+}
+
+/// Os argumentos que ligam a memória (ganchos, `--settings`) e o MCP do OMNI (`--mcp-config`) nesta
+/// sessão. Valem só para o Claude que o OMNI abre: o usado fora dele não muda, e cobre toda conta sem
+/// mexer no `.claude.json` de nenhuma. Caminhos com `/` e entre aspas simples: valem no Git Bash e no
+/// PowerShell, os dois shells do engine. Sem o `omni-rag` ao lado (dev sem build), nada muda.
+fn extras_do_claude() -> String {
+    let (Some(rag), Some(base), Ok(dir)) = (caminho_do_rag(), omni_rag::caminho_padrao(), engine_dir()) else { return String::new() };
+    let barra = |caminho: &Path| caminho.to_string_lossy().replace('\\', "/");
+    let exe = barra(&rag);
+    let mut extras = Vec::new();
+    if omni_rag::ganchos::memoria_ligada(&base) {
+        let gancho = |evento: &str| serde_json::json!([{"hooks": [{"type": "command", "command": format!("\"{exe}\" hook {evento}"), "timeout": 5}]}]);
+        let ganchos = serde_json::json!({"hooks": {
+            "UserPromptSubmit": gancho("prompt"), "SessionStart": gancho("inicio"), "PostCompact": gancho("compactou"), "Stop": gancho("fim"),
+        }});
+        let arquivo = dir.join("memoria-ganchos.json");
+        if fs::write(&arquivo, ganchos.to_string()).is_ok() { extras.push(format!("--settings '{}'", barra(&arquivo))); }
+    }
+    if omni_rag::ganchos::mcp_ligado(&base) {
+        let mcp = serde_json::json!({"mcpServers": {"omni": {"command": exe, "args": ["mcp"]}}});
+        let arquivo = dir.join("omni-mcp.json");
+        if fs::write(&arquivo, mcp.to_string()).is_ok() { extras.push(format!("--mcp-config '{}'", barra(&arquivo))); }
+    }
+    extras.join(" ")
+}
+
 fn spawn_initial_command_thread(session: Arc<LiveSession>, initial_command: Option<String>) {
     if let Some(initial_command) = initial_command.filter(|command| !command.trim().is_empty()) {
-        let initial_command = sem_aviso_de_update(&initial_command);
+        let initial_command = com_extras_do_claude(&sem_aviso_de_update(&initial_command), &extras_do_claude());
         std::thread::spawn(move || {
             // ConPTY/PowerShell performs a cursor-position handshake during startup.
             // Let xterm answer it before injecting the selected agent command.
@@ -1287,6 +1332,7 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
     let notice = if em_turno { None }
         else if tracked_provider.is_some() && limite_no_rodape(&screen_text) { Some("usage_limit".into()) }
         else { notice_since(counts, *base) };
+    if em_turno { interaction.turno_visto_em_ms = now_ms(); }
     if let Ok(mut output) = session.output.lock() {
         let sequence = output.next_seq;
         output.next_seq += 1;
@@ -1598,6 +1644,16 @@ mod tests {
         let pronto = sem_aviso_de_update("codex resume abc");
         assert_eq!(sem_aviso_de_update(&pronto), pronto, "reiniciar não repete a opção");
         assert_eq!(sem_aviso_de_update("claude --resume x"), "claude --resume x");
+    }
+
+    #[test]
+    fn memoria_e_mcp_so_nas_conversas_do_claude() {
+        let com = |comando: &str| com_extras_do_claude(comando, "--settings 'g.json'");
+        assert_eq!(com("claude --session-id abc"), "claude --session-id abc --settings 'g.json'");
+        assert_eq!(com("claude"), "claude --settings 'g.json'");
+        assert_eq!(com("C:\\x\\claude.exe --resume 1"), "C:\\x\\claude.exe --resume 1 --settings 'g.json'");
+        for igual in ["codex resume", "claude mcp list", "claude -p oi", "claude --settings x", "npm run dev"] { assert_eq!(com(igual), igual); }
+        assert_eq!(com_extras_do_claude("claude", ""), "claude", "sem omni-rag ao lado, nada muda");
     }
 
     #[test]

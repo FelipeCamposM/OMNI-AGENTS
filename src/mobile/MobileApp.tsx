@@ -13,6 +13,7 @@ import { AgentWorking, BlocoDeAcoes, LinhaDeAviso, LinhaDeComando, MessageBubble
 import { Composer } from "./Composer";
 import { ExportarConversa } from "./ExportarConversa";
 import { CartaoDePergunta } from "./CartaoDePergunta";
+import { TrabalhoAoVivo } from "./TrabalhoAoVivo";
 import { AjustesDaConversa, podeReabrir, type Ajustes } from "./AjustesDaConversa";
 import {
   ANEXO_MAX_BYTES,
@@ -861,12 +862,16 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
       // e o clique seguinte chegava com a versão velha e sumia. Pergunta trocada continua recusando.
       // Na escolha, 409 (menu não lido naquele quadro, a TUI no meio de um redesenho) também relê.
       const relerEscolha = kind === "escolher" && (reason instanceof ApiError && reason.status === 409);
-      if (!relerEscolha && !(reason instanceof ApiError && reason.status === 412 && (kind === "modo" || kind === "ajustes" || kind === "escolher"))) throw reason;
+      // Prompt também: o turno acaba e a CLI ainda redesenha (resposta final, gancho de fim) com a
+      // conversa já "parada"; o Enter chegava com a versão velha. Repete só se a CLI ainda aceita
+      // prompt (campo vazio, sem aprovação) — uma pergunta que surgiu continua recusando.
+      if (!relerEscolha && !(reason instanceof ApiError && reason.status === 412 && (kind === "modo" || kind === "ajustes" || kind === "escolher" || kind === "prompt"))) throw reason;
       if (relerEscolha) await new Promise((r) => setTimeout(r, 400));
       const atual = await request<Timeline>(`/conversas/${encodeURIComponent(conversation.id)}/timeline`);
       const revisao = atual.conversation?.capabilities?.revision;
       if (!revisao) throw reason;
       if (kind === "escolher" && atual.conversation?.capabilities?.escolha?.pergunta !== capability.escolha?.pergunta) throw reason;
+      if (kind === "prompt" && !atual.conversation?.capabilities?.prompt) throw reason;
       pending.current = { signature, key: actionKey(), revision: revisao };
       acao = await enviar();
     }
@@ -967,7 +972,9 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
   async function interromper() {
     setError(null);
     try {
-      const parou = await request<{ limpou?: boolean }>(`/conversas/${encodeURIComponent(conversation.id)}/parar`, { method: "POST" });
+      const parou = await request<{ limpou?: boolean; parou?: boolean }>(`/conversas/${encodeURIComponent(conversation.id)}/parar`, { method: "POST" });
+      // O engine manda Esc e, se não bastou (agente em segundo plano), um Ctrl+C. Seguiu trabalhando: avisa.
+      if (parou?.parou === false) setError("O agente não parou: ele segue trabalhando no terminal. Tente Parar de novo ou encerre pelo terminal.");
       // A CLI devolveu o prompt ao campo dela e o engine o apagou lá: ele volta para este campo.
       if (parou?.limpou && ultimoTexto.current) {
         const texto = ultimoTexto.current;
@@ -1131,6 +1138,7 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
         onEscolher={(opcao) => void escolher(opcao)} onAvancar={() => void escolher("avancar")} onVoltar={() => void escolher("voltar")} />}
       {ativo && !capability?.approve &&
         <AgentWorking desde={trabalhandoDesde.current ?? Date.now()} provider={conversation.provider} tokens={conversation.tokens ?? null} />}
+      <TrabalhoAoVivo conversaId={conversation.id} provider={conversation.provider} ativo={ativo} live={Boolean(conversation.live)} />
       {fila.length > 0 && (
         <div className="chat-fila" aria-label="Mensagens na fila">
           <p className="chat-fila-rotulo">Na fila · entram quando o agente terminar</p>

@@ -13,9 +13,9 @@ use std::{collections::hash_map::DefaultHasher, hash::{Hash, Hasher}, time::{Dur
 /// atual começou. Só os que aparecerem depois disso são deste turno — ver `notice_since`.
 ///
 /// `turnos_iniciados`: antes do primeiro turno, nada na tela é aviso novo — ver `append_output`.
-pub struct Interaction { pub parser: vt100::Parser, pub input_revision: u64, pub turn_active: bool, pub aprovacao_contada: bool, pub avisos_antes_do_turno: (usize, usize), pub turnos_iniciados: u64, generation: u64 }
+pub struct Interaction { pub parser: vt100::Parser, pub input_revision: u64, pub turn_active: bool, pub turno_visto_em_ms: u64, pub aprovacao_contada: bool, pub avisos_antes_do_turno: (usize, usize), pub turnos_iniciados: u64, generation: u64 }
 impl Interaction {
-    pub fn new(rows: u16, cols: u16) -> Self { Self { parser: vt100::Parser::new(rows,cols,0), input_revision: 0, turn_active: false, aprovacao_contada: false, avisos_antes_do_turno: (0, 0), turnos_iniciados: 0, generation: rand::random() } }
+    pub fn new(rows: u16, cols: u16) -> Self { Self { parser: vt100::Parser::new(rows,cols,0), input_revision: 0, turn_active: false, turno_visto_em_ms: 0, aprovacao_contada: false, avisos_antes_do_turno: (0, 0), turnos_iniciados: 0, generation: rand::random() } }
     pub fn revision(&self, session: &Arc<LiveSession>) -> String {
         let mut hash = DefaultHasher::new();
         self.parser.screen().contents().hash(&mut hash);
@@ -257,7 +257,7 @@ pub fn ready(screen: &vt100::Screen, provider: &str) -> bool {
     // no 0.154.0 — a conversa travava em "não reconhecida"); quem garante que é o Codex é o `provider_running`.
     let brand = match provider { "claude" | "codex" => true, "antigravity" => text.contains("? for shortcuts"), _ => false };
     brand && screen.bracketed_paste() && composer_vazio(screen)
-        && !cancelavel(&text) && !area_do_turno(&text).contains("esc to interrupt")
+        && !cancelavel(&text) && !turno_na_tela(&text)
         && approval(&text,provider).is_none()
 }
 
@@ -281,7 +281,7 @@ pub fn sobra_no_campo(screen: &vt100::Screen, provider: &str) -> bool {
     let turno = area_do_turno(&text);
     matches!(provider, "claude" | "codex") && screen.bracketed_paste() && !composer_vazio(screen)
         && turno.lines().any(|l| { let l = l.trim_start(); l.starts_with('❯') || l.starts_with('›') })
-        && !turno.to_lowercase().contains("esc to interrupt") && !cancelavel(&text)
+        && !turno_na_tela(&text) && !cancelavel(&text)
         && approval(&text,provider).is_none()
 }
 
@@ -291,9 +291,70 @@ pub fn sobra_no_campo(screen: &vt100::Screen, provider: &str) -> bool {
 /// "trabalhando" para sempre, mesmo parada no `done`. Sem campo à vista, as últimas linhas.
 pub fn area_do_turno(texto: &str) -> String {
     let linhas: Vec<&str> = texto.lines().collect();
-    let campo = linhas.iter().rposition(|l| { let l = l.trim_start(); l.starts_with('❯') || l.starts_with('›') });
-    let inicio = campo.map_or(linhas.len().saturating_sub(8), |i| i.saturating_sub(4));
+    let inicio = linha_do_campo(&linhas).map_or(linhas.len().saturating_sub(8), |i| i.saturating_sub(LINHAS_ACIMA_DO_CAMPO));
     linhas[inicio..].join("\n")
+}
+
+/// Linhas acima do campo que ainda são da área do turno.
+const LINHAS_ACIMA_DO_CAMPO: usize = 4;
+/// O que Claude Code e Codex mostram enquanto dá para interromper o turno.
+const FRASE_DO_TURNO: &str = "esc to interrupt";
+/// Primeiro caractere da linha de status: os quadros do spinner do Claude e o `•` do Codex. A fala
+/// do agente começa em `●`/`⏺` ou indentada, e por isso fica de fora.
+const GLIFOS_DO_STATUS: [char; 9] = ['·', '✢', '*', '✳', '✶', '✻', '✽', '•', '◦'];
+
+fn linha_do_campo(linhas: &[&str]) -> Option<usize> {
+    linhas.iter().rposition(|l| { let l = l.trim_start(); l.starts_with('❯') || l.starts_with('›') })
+}
+
+fn linha_de_status(linha: &str) -> bool {
+    linha.strip_prefix(' ').unwrap_or(linha).starts_with(GLIFOS_DO_STATUS)
+}
+
+/// A CLI diz que o turno está rodando: "esc to interrupt" no rodapé ou na linha de status. Acima do
+/// campo só vale a linha de status: a última fala do agente costuma cair na área do turno, e uma
+/// resposta que citasse a frase prendia a sessão parada no `❯` em "trabalhando" e abria a fila.
+pub fn turno_na_tela(texto: &str) -> bool {
+    let tem_frase = |linha: &&str| linha.to_lowercase().contains(FRASE_DO_TURNO);
+    let linhas: Vec<&str> = texto.lines().collect();
+    let Some(campo) = linha_do_campo(&linhas) else { return linhas.iter().rev().take(8).any(|l| tem_frase(l)) };
+    linhas[campo + 1..].iter().any(|l| tem_frase(l))
+        || linhas[campo.saturating_sub(LINHAS_ACIMA_DO_CAMPO)..campo].iter().any(|l| linha_de_status(l) && tem_frase(l))
+}
+
+/// Agente em segundo plano ainda rodando depois do fim do turno. A CLI escreve "Waiting for 1
+/// background agent to finish" na conversa, no lugar do "✻ Sautéed for 14s", e essa linha fica lá:
+/// quem manda é a linha mais recente, que pode ser "All background agents stopped", o resumo de um
+/// turno seguinte ou uma fala nova do agente. Na dúvida dá `false`: errar aqui só deixa de mandar o
+/// Ctrl+C, e o contrário abriria o aviso de saída com a tela parada.
+pub fn agente_em_segundo_plano(texto: &str) -> bool {
+    area_do_turno(texto).lines().rev().find_map(|linha| {
+        let inicio = linha.trim_start();
+        if inicio.starts_with(['❯', '›']) { return None; }
+        if inicio.starts_with(['●', '⏺']) { return Some(false); }
+        let minusculo = inicio.to_lowercase();
+        let sem_glifo = minusculo.trim_start_matches(|c: char| !c.is_alphanumeric());
+        if sem_glifo.starts_with("waiting for") && minusculo.contains("background agent") { return Some(true); }
+        if minusculo.contains("to stop background agents") { return Some(true); }
+        (minusculo.contains("background agents stopped") || inicio.starts_with('✻')).then_some(false)
+    }).unwrap_or(false)
+}
+
+/// O agente ainda não parou: decide se o Parar precisa do Ctrl+C. Tela parada tem de dar `false`,
+/// porque Ctrl+C no campo livre abre o "Press Ctrl-C again to exit".
+pub fn ainda_trabalhando(texto: &str) -> bool {
+    turno_na_tela(texto) || agente_em_segundo_plano(texto)
+}
+
+/// Spinner à vista sem o "esc to interrupt", que o rodapé corta quando a aba é estreita.
+fn spinner_na_tela(texto: &str) -> bool {
+    area_do_turno(texto).lines().any(|l| linha_de_status(l) && l.contains('…') && l.contains('('))
+}
+
+/// Campo livre e nada em andamento: o que chegar da CLI agora é redesenho, não trabalho.
+pub fn campo_parado(screen: &vt100::Screen, provider: &str) -> bool {
+    let texto = screen.contents();
+    ready(screen, provider) && !agente_em_segundo_plano(&texto) && !spinner_na_tela(&texto)
 }
 
 /// Turno em andamento com o campo livre: o Claude Code (e o Codex) aceitam digitar e mandar
@@ -305,7 +366,7 @@ pub fn pode_enfileirar(screen: &vt100::Screen, provider: &str) -> bool {
     if provider == "cursor" { return screen.bracketed_paste() && cursor_campo_vazio(&text) && cursor_em_turno(&text); }
     let brand = matches!(provider, "claude" | "codex");
     brand && screen.bracketed_paste() && composer_vazio(screen)
-        && area_do_turno(&text).to_lowercase().contains("esc to interrupt")
+        && turno_na_tela(&text)
         && approval(&text,provider).is_none()
 }
 
@@ -1346,6 +1407,50 @@ Ready to submit your answers?
         let mut vazio = Interaction::new(5,60);
         vazio.parser.process("\x1b[?2004h\u{276f}\u{a0}".as_bytes());
         assert!(!sobra_no_campo(vazio.parser.screen(),"claude"));
+    }
+
+    fn tela_do_claude(acima: &str, rodape: &str) -> String {
+        let borda = "─".repeat(40);
+        format!("{acima}\n\n{borda}\n❯ \n{borda}\n  ⏵⏵ auto mode on (shift+tab to cycle){rodape}\n")
+    }
+
+    #[test] fn turno_rodando_pede_ctrl_c_mas_tela_parada_nunca() {
+        assert!(ainda_trabalhando(&tela_do_claude("✶ Mulling… (51s · ↓ 3.4k tokens)", " · esc to interrupt")));
+        assert!(ainda_trabalhando(&tela_do_claude("✻ Thinking… (Esc to interrupt)", "")));
+        assert!(ainda_trabalhando(&tela_do_claude("✻ Waiting for 1 background agent to finish", "")));
+        assert!(ainda_trabalhando(&tela_do_claude("✻ WAITING FOR 2 BACKGROUND AGENTS TO FINISH", "")));
+        assert!(ainda_trabalhando("✻ Pensando… (esc to interrupt)"), "sem campo à vista vale o fim da tela");
+
+        assert!(!ainda_trabalhando(&tela_do_claude("● Pronto.\n\n✻ Sautéed for 14s · done 21:57", "")));
+        assert!(!ainda_trabalhando(&tela_do_claude("● Pronto.", "")));
+        assert!(!ainda_trabalhando(""));
+    }
+
+    /// Depois do Ctrl+C a tela guarda as duas linhas; a última decide. Reler o "Waiting for" como
+    /// trabalho mandaria o segundo Ctrl+C, que sai da CLI.
+    #[test] fn agentes_encerrados_nao_contam_mesmo_com_o_aviso_antigo_na_tela() {
+        let encerrado = tela_do_claude("✻ Waiting for 1 background agent to finish\n  ⎿  All background agents stopped", "\n  Press Ctrl-C again to exit");
+        assert!(!ainda_trabalhando(&encerrado));
+        let turno_seguinte = tela_do_claude("✻ Waiting for 1 background agent to finish\n● Pronto.\n✻ Sautéed for 3s", "");
+        assert!(!ainda_trabalhando(&turno_seguinte));
+        let fala_seguinte = tela_do_claude("✻ Waiting for 1 background agent to finish\n● Pronto.", "");
+        assert!(!ainda_trabalhando(&fala_seguinte), "turno curto não escreve o resumo com ✻");
+    }
+
+    #[test] fn fala_do_agente_nao_e_sinal_de_trabalho() {
+        for fala in ["● A tela mostra esc to interrupt no rodapé.", "  com \"esc to interrupt\" ainda na resposta",
+            "  245  && text.contains(\"esc to interrupt\")", "● Waiting for 1 background agent to finish",
+            "  o background agent terminou", "● Falta o background agent."] {
+            assert!(!ainda_trabalhando(&tela_do_claude(fala, "")), "{fala}");
+        }
+        assert!(!ainda_trabalhando("❯ esc to interrupt e background agent\n"), "rascunho no campo não é a CLI falando");
+    }
+
+    #[test] fn campo_parado_so_com_a_cli_sem_nada_em_andamento() {
+        let tela = |texto: &str| { let mut i = Interaction::new(12,60); i.parser.process(format!("\x1b[?2004h{texto}\r\n\u{276f}\u{a0}").as_bytes()); i };
+        assert!(campo_parado(tela("● Pronto.").parser.screen(),"claude"));
+        assert!(!campo_parado(tela("✻ Waiting for 1 background agent to finish").parser.screen(),"claude"));
+        assert!(!campo_parado(tela("✶ Mulling… (51s · ↓ 3.4k tokens)").parser.screen(),"claude"), "aba estreita corta o rodapé");
     }
 
     #[test] fn trust_dialog_moves_to_yes_before_confirming() {

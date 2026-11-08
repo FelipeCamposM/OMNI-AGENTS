@@ -1,5 +1,5 @@
 [workspace]
-members = ["src-tauri", "crates/omni-protocol", "crates/omni-engine", "crates/omni-core", "crates/omni-shim"]
+members = ["src-tauri", "crates/omni-protocol", "crates/omni-engine", "crates/omni-core", "crates/omni-shim", "crates/omni-rag"]
 resolver = "2"
 
 [workspace.package]

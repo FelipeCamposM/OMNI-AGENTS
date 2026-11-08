@@ -17,6 +17,7 @@ pub mod comandos;
 pub mod armazenamento;
 pub mod mestra;
 pub mod exportar;
+pub mod subagentes;
 
 use serde::{Deserialize, Serialize};
 use std::{fs, path::{Path, PathBuf}};
