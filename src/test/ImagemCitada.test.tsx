@@ -13,6 +13,8 @@ it("mostra o nome do arquivo na barra e o caminho no texto abre a imagem", async
     imagens={{ conversa: "c", n: 3, total: 1 }} />);
 
   expect(await screen.findByText("print.png")).toBeInTheDocument();
+  // Comentário do código não pode vazar como texto na bolha.
+  expect(document.body.textContent).not.toMatch(/selectable|\/\//);
   // O `![…](C:\…)` não vira ícone quebrado no texto: a imagem é a do cartão.
   expect(screen.getAllByRole("img")).toHaveLength(1);
 

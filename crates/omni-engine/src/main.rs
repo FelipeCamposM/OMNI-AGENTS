@@ -803,6 +803,16 @@ pub(crate) fn spawn_terminal_inner(
         initial_command.map(|comando| com_log_do_antigravity(&comando, &id))
     } else { initial_command };
     compartilhar_extensoes(state, origin.provider.as_deref(), origin.profile_id.as_deref());
+    // Agente aberto sem conversa (cliente antigo, comando digitado): liga pelo id que ele retoma.
+    let mut origin = origin;
+    if origin.conversation_id.is_none() {
+        if let (Some(dir), Some(provider), Some(comando)) = (state.state_file.parent(), origin.provider.as_deref(), initial_command.as_deref()) {
+            if let Some((conversa, externo)) = omni_core::conversations::vincular_sessao(dir, &id, provider, comando) {
+                origin.conversation_id = Some(conversa);
+                origin.external_session_id = origin.external_session_id.or(Some(externo));
+            }
+        }
+    }
     let (pid, writer, master, child, reader) =
         open_pty_and_spawn(&cwd, &shell, rows, cols, &origin.env, origin.provider.is_some())?;
     let metadata = TerminalSession {
@@ -1586,6 +1596,14 @@ fn load_historical_sessions(path: &Path) -> HashMap<String, SessionEntry> {
                     session.profile_id = session.profile_id.take().or(segment.profile_id);
                     session.conversation_id = session.conversation_id.take().or(Some(conversation_id));
                     session.external_session_id = session.external_session_id.take().or(segment.external_session_id);
+                }
+            }
+            if session.conversation_id.is_none() {
+                if let (Some(dir), Some(provider), Some(comando)) = (path.parent(), session.provider.clone(), session.initial_command.clone()) {
+                    if let Some((conversa, externo)) = omni_core::conversations::vincular_sessao(dir, &session.id, &provider, &comando) {
+                        session.conversation_id = Some(conversa);
+                        session.external_session_id = session.external_session_id.take().or(Some(externo));
+                    }
                 }
             }
             session.state = if Path::new(&session.cwd).is_dir() { SessionState::Stopped } else { SessionState::Orphan };

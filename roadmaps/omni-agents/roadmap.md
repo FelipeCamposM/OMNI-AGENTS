@@ -38,6 +38,15 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
+### Correções pós-0.7.13 (2026-11-08, sem release)
+
+- Texto `// selectable: no desktop…` aparecia em toda bolha: comentário JS virou filho do JSX quando a
+  bolha ganhou o `ImagensDaBolha.Provider`. Virou `{/* */}`; `ImagemCitada.test.tsx` trava.
+- Aba de agente aberta sem conversa ligada (Retomar antigo, "ainda não tem uma conversa registrada"):
+  `conversations::vincular_sessao` liga pelo id de `--resume`/`--session-id`/`resume`, no spawn e ao
+  restaurar sessões do `sessions.json`. Teste `sessao_sem_conversa_se_liga_pelo_id_que_retoma`.
+- Removido o "Ver terminal ao vivo" da conversa (pedido do usuário); `TrabalhoAoVivo` só mostra subagentes.
+
 ### Release v0.7.13 (2026-11-08)
 
 - Publicada e liberada (`latest.json` responde 0.7.13). Leva tudo abaixo marcado "sem release" de

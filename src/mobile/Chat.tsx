@@ -211,7 +211,7 @@ export const MessageBubble = memo(function MessageBubble({ lado, provider, texto
   };
   return (
     <ImagensDaBolha.Provider value={imagemCitada}>
-    // `selectable`: no desktop o body barra a seleção (app nativo); o texto da conversa tem de copiar.
+    {/* `selectable`: no desktop o body barra a seleção (app nativo); o texto da conversa tem de copiar. */}
     <article className={`bubble selectable ${doUsuario ? "bubble-user" : "bubble-agent"}${pendente ? " bubble-pending" : ""}${continua ? " bubble-continua" : ""}${entra || pendente ? " entra" : ""}`}>
       {/* Avatar só na primeira fala do turno; as seguintes alinham com ele. */}
       {!doUsuario && !continua && (

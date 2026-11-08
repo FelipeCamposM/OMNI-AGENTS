@@ -14,6 +14,15 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.14",
+    date: "2026-11-08",
+    changes: [
+      "Corrigido: um texto estranho (\"selectable: no desktop…\") aparecia no meio das mensagens da conversa.",
+      "Corrigido: conversas retomadas pelo Histórico em versões anteriores mostravam \"Esta aba ainda não tem uma conversa registrada\". Agora a aba se liga sozinha à conversa.",
+      "Removido o \"Ver terminal ao vivo\" da conversa. A aba Terminal continua igual.",
+    ],
+  },
+  {
     version: "0.7.13",
     date: "2026-11-08",
     changes: [

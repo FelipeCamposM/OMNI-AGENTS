@@ -1,8 +1,6 @@
-import { lazy, Suspense, useState } from "react";
+import { useState } from "react";
 import { request, type Timeline } from "./api";
 import { usePoll } from "./usePoll";
-
-const TerminalEspelho = lazy(() => import("../web/TerminalEspelho"));
 
 export interface Subagente {
   id: string;
@@ -21,8 +19,8 @@ export function pedidoDeParada(sub: Pick<Subagente, "id" | "tipo" | "descricao">
 }
 
 /**
- * O que o agente está fazendo agora, além da conversa: os subagentes (cada um com estado, última
- * ação e o próprio histórico) e o terminal ao vivo, para ver o shell rodando sem trocar de aba.
+ * O que o agente está fazendo agora, além da conversa: os subagentes, cada um com estado, última
+ * ação e o próprio histórico.
  */
 export function TrabalhoAoVivo({ conversaId, provider, ativo, live }: {
   conversaId: string;
@@ -33,7 +31,6 @@ export function TrabalhoAoVivo({ conversaId, provider, ativo, live }: {
   const base = `/conversas/${encodeURIComponent(conversaId)}`;
   const [subagentes, setSubagentes] = useState<Subagente[]>([]);
   const [aberto, setAberto] = useState<string | null>(null);
-  const [verTerminal, setVerTerminal] = useState(false);
   const [parando, setParando] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -61,12 +58,11 @@ export function TrabalhoAoVivo({ conversaId, provider, ativo, live }: {
   }
 
   const recentes = subagentes.filter((s) => s.estado === "rodando" || Date.now() - s.atualizado_ms < 10 * 60_000);
-  if (!live && recentes.length === 0) return null;
+  if (recentes.length === 0) return null;
 
   return (
     <div className="trabalho-ao-vivo" aria-label="Trabalho ao vivo">
-      {recentes.length > 0 && (
-        <ul className="trabalho-subagentes">
+      <ul className="trabalho-subagentes">
           {recentes.map((sub) => (
             <li key={sub.id} className={`trabalho-sub is-${sub.estado}`}>
               <div className="trabalho-sub-linha">
@@ -85,21 +81,8 @@ export function TrabalhoAoVivo({ conversaId, provider, ativo, live }: {
               {aberto === sub.id && <HistoricoDoSubagente rota={`${base}/subagentes/${encodeURIComponent(sub.id)}`} ativo={sub.estado === "rodando"} />}
             </li>
           ))}
-        </ul>
-      )}
+      </ul>
       {erro && <p role="alert" className="m-alerta">{erro}</p>}
-      {live && (
-        <button type="button" className="btn btn-ghost trabalho-botao" aria-expanded={verTerminal} onClick={() => setVerTerminal((v) => !v)}>
-          {verTerminal ? "Esconder terminal" : "Ver terminal ao vivo"}
-        </button>
-      )}
-      {live && verTerminal && (
-        <div className="trabalho-terminal">
-          <Suspense fallback={<p className="m-dica">Abrindo o terminal…</p>}>
-            <TerminalEspelho saida={`${base}/terminal`} teclas={`${base}/teclas`} />
-          </Suspense>
-        </div>
-      )}
     </div>
   );
 }

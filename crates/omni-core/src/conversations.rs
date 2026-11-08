@@ -168,6 +168,29 @@ pub fn read_index(dir: &Path) -> Vec<Conversation> {
         .and_then(|b| serde_json::from_slice::<Store>(&b).ok()).map(|s| s.conversations).unwrap_or_default()
 }
 
+/// Id da conversa do provider que um comando retoma ou abre: `claude --resume <id>`,
+/// `claude --session-id <id>`, `codex resume <id>`.
+pub fn sessao_do_comando(comando: &str) -> Option<String> {
+    let mut partes = comando.split_whitespace();
+    partes.find(|parte| matches!(*parte, "--resume" | "resume" | "--session-id"))?;
+    partes.next().filter(|id| !id.starts_with('-')).map(str::to_owned)
+}
+
+/// Sessão de agente sem conversa ligada (aberta por uma versão que não ligava, como o Retomar do
+/// Histórico antes da 0.7.13): acha a conversa cujo último trecho é o mesmo id do provider e passa
+/// esse trecho para esta sessão. Sem isso a aba Conversa ficava em "ainda não tem uma conversa".
+/// Devolve `(conversa, id do provider)`.
+pub fn vincular_sessao(dir: &Path, sessao: &str, provider: &str, comando: &str) -> Option<(String, String)> {
+    let externo = sessao_do_comando(comando)?;
+    let mut indice = read_index(dir);
+    let conversa = indice.iter_mut().rev().find(|c| c.segments.last()
+        .is_some_and(|s| s.provider == provider && s.external_session_id.as_deref() == Some(externo.as_str())))?;
+    conversa.segments.last_mut()?.terminal_session_id = Some(sessao.to_owned());
+    let id = conversa.id.clone();
+    write_index(dir, &indice).ok()?;
+    Some((id, externo))
+}
+
 /// Grava o índice inteiro. Escrita atômica via `.tmp` + rename, igual ao resto dos stores.
 ///
 /// **Dois escritores agora**: desktop e engine (uma sessão aberta pelo celular nasce no engine).
@@ -593,6 +616,22 @@ mod tests {
         let ultima = t.messages.last().unwrap();
         assert_eq!(ultima.text, "Conta trocada: Padrão → EmailUber");
         assert_eq!(ultima.kind, crate::feed::Kind::Notice);
+    }
+
+    /// Aba aberta pelo Retomar antigo: `claude --resume X` sem conversa. Liga na conversa do X.
+    #[test] fn sessao_sem_conversa_se_liga_pelo_id_que_retoma() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut conversa = conversa_com_transcript(dir.path(), &[]);
+        let externo = "b344ba24".to_owned();
+        conversa.segments[0].external_session_id = Some(externo.clone());
+        write_index(dir.path(), &[conversa.clone()]).unwrap();
+        assert_eq!(sessao_do_comando("codex resume 01a1 --x").as_deref(), Some("01a1"));
+        assert_eq!(sessao_do_comando("claude --session-id ab12").as_deref(), Some("ab12"));
+        assert_eq!(sessao_do_comando("claude --continue"), None);
+        assert_eq!(vincular_sessao(dir.path(), "t2", "codex", &format!("codex resume {externo}")), None, "outro provider");
+        assert_eq!(vincular_sessao(dir.path(), "t2", "claude", &format!("claude --resume {externo} --model opus")),
+            Some((conversa.id.clone(), externo)));
+        assert_eq!(read_index(dir.path())[0].segments[0].terminal_session_id.as_deref(), Some("t2"));
     }
 
     /// O caso real: voltar para uma conta grava no mesmo `.jsonl`. O aviso fica entre as mensagens

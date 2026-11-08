@@ -1527,6 +1527,5 @@ li[data-estado="agora"] > .abrindo-agente-marca { color: rgb(var(--c-accent)); b
 .trabalho-sub-historico { max-height: 18rem; overflow: auto; margin: .375rem 0 0; padding-left: 1.25rem; font-size: .75rem; color: rgb(var(--c-text-secondary)); white-space: pre-wrap; overflow-wrap: anywhere; }
 .trabalho-sub-historico .is-acao { font-family: ui-monospace, monospace; font-size: .6875rem; color: rgb(var(--c-text-muted)); }
 .trabalho-sub-historico .is-pedido { color: rgb(var(--c-text-primary)); }
-.trabalho-terminal { width: 100%; height: 22rem; }
 .bubble-imagem-nome { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0; }
 .imagem-ampliada-nome { position: absolute; left: 1rem; bottom: 1rem; max-width: calc(100% - 2rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .6875rem; color: rgb(255 255 255 / .75); }
