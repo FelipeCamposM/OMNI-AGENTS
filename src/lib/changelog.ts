@@ -14,6 +14,21 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.15",
+    date: "2026-11-11",
+    changes: [
+      "O seletor de modelo do Claude mostra sempre todos os modelos disponíveis, inclusive os lançados depois desta versão (como o Fable 5.2).",
+      "Servidores locais com visual novo: ícone do projeto, porta em destaque (clique para abrir no navegador), botões sempre à vista e confirmação animada para parar.",
+      "Tela Conhecimento redesenhada, com os números da base, interruptores mais claros e a lista de arquivos em cartões.",
+      "No navegador, clicar num projeto mostra só as conversas dele; \"Todos\" volta a mostrar tudo. O mesmo filtro vale no Histórico.",
+      "No navegador, os projetos aparecem do mais usado para o menos usado, e os parados há mais de 30 dias ficam recolhidos.",
+      "O cabeçalho da conversa no navegador mostra o ícone do projeto.",
+      "Ao bifurcar uma conversa aparece o aviso \"Criando o fork…\" até a conversa nova abrir.",
+      "Corrigido: o fork mostrava o que a conversa original estava fazendo.",
+      "Corrigido: abrir conversa pelo navegador dava \"Muitas sessões abertas\" contando abas já paradas.",
+    ],
+  },
+  {
     version: "0.7.14",
     date: "2026-11-08",
     changes: [

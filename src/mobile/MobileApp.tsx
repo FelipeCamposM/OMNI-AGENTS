@@ -354,6 +354,16 @@ export function ConversationList({ conversations, perfis, projetos = [], mostrar
 
 /** A lista em duas partes: o que tem sessão aberta no PC agora (dá para responder na hora) e o
  *  histórico (fechadas — abrir uma permite retomar). Antes vinha tudo misturado, ordenado só por data. */
+/** Retorno do Bifurcar enquanto o PC abre a conversa nova (alguns segundos): sem ele o clique parecia não fazer nada. */
+export function CriandoFork() {
+  return (
+    <p role="status" className="fork-status">
+      <GitBranchIcon aria-hidden className="h-4 w-4 anexo-girando" />
+      <span><b>Criando o fork…</b> uma conversa nova, independente desta, com todo o histórico. Ela abre sozinha.</span>
+    </p>
+  );
+}
+
 export function ConversasPorEstado(props: Parameters<typeof ConversationList>[0]) {
   if (props.conversations.length === 0) return <ConversationList {...props} />;
   const abertas = props.conversations.filter(c => c.live);
@@ -1156,6 +1166,7 @@ export function ConversationDetail({ conversation: daLista, refresh, abrirConver
     )}
 
     {(falhaEnvio || error) && <p role="alert" className="m-alerta">{falhaEnvio ?? error}</p>}
+    {bifurcando && <CriandoFork />}
     {anexoGrande && <p className="m-aviso">Tire o anexo acima de 25 MB para enviar.</p>}
     {/* O motivo genérico só aparece com o agente parado: trabalhando, o "ocupado" é esperado e o
         indicador acima já explica. */}

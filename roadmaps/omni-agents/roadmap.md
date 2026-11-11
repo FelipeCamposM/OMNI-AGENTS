@@ -38,6 +38,39 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
+### Modelos do Claude sempre atuais + visual de Servidores e Conhecimento (2026-11-11, sem release)
+
+- Seletor de modelo do Claude (conversa, agentes e fluxos) lê o registro de modelos embutido no
+  executável do Claude Code (`omni_core::modelos_claude`: `{id:"claude-…",family,display_name,
+  knowledge_cutoff}`), sem Mythos e sem corte < fev/2025. Cache por caminho+mtime (~0,4 s na 1ª
+  leitura, release). Modelo novo (Fable 5.2) aparece quando a CLI atualiza, sem release do OMNI.
+  Reserva fixa se a CLI não for achada. Apelidos mostram "hoje Fable 5.2". Ideia descartada: API
+  `/v1/models` com o OAuth da conta (mexe em credencial).
+- Servidores locais (`ServidoresPanel.tsx` + `servidores.css`): cartão com favicon do projeto
+  (`SimboloDoProjeto`), ponto "rodando" pulsando, porta grande em destaque (clicar abre o navegador),
+  ações sempre visíveis no pé do cartão, e modal de parar com animação (ondas → arco girando → check), erro com "tentar de novo".
+- Conhecimento (`ConhecimentoView.tsx` + `conhecimento.css`): números no topo, interruptores em
+  cartão (checkbox nativo por baixo), área de soltar com os tipos em chips, busca com ícone, arquivos
+  em grade com ícone do tipo e barra de importação.
+- Web/celular "Muitas sessões abertas": o teto (`MAX_SESSOES`, `mobile.rs`) contava toda entrada
+  `Live`, inclusive aba parada (processo morto fica no mapa). Com 16 rodando + 51 paradas travava
+  abrir/retomar/bifurcar. Agora `cabe_mais_uma_sessao` conta só `pid` vivo e o teto foi a 40.
+- Web: clicar num projeto da lateral só reordenava "Abertas no PC" (parecia não fazer nada). Agora
+  é filtro (`filtroProjeto`, `WebApp.tsx`): "Todos" + projetos com `aria-pressed`; Abertas, Conversas
+  (todas do projeto, sem o corte de 6) e a pesquisa respeitam. Um filtro só para Conversas e
+  Histórico (o select do Histórico usa o mesmo estado), guardado em `sessionStorage`
+  (`omni-web-filtro-projeto`). Projetos ordenados pela última atividade; parados > 30 dias (sem
+  sessão aberta, não filtrados) ficam em "Mais N projetos parados".
+- Fork no web mostrava o trabalho (subagentes/comandos) da original: antes da 1ª mensagem o fork
+  não tem arquivo próprio e `transcript_do_claude` (`mobile.rs`) caía no segmento copiado da
+  original. Agora ignora segmento com `historico_ate_ms`. Bifurcar ganhou aviso "Criando o fork…"
+  (`CriandoFork`, `role=status`) no campo da conversa e na lateral do web.
+  Pendente (decidido para depois): pesquisa no texto das conversas no web via `buscar_no_historico`
+  (omni-rag, hoje só Claude).
+  Cabeçalho da conversa mostra o ícone do projeto (`IconeDoProjeto`) junto do nome.
+- Pendente: `cargo check -p omni-agents` falha local no `whisper-rs-sys` (build nativo do ditado),
+  alheio a estas mudanças; o engine compila. Visual não conferido em print.
+
 ### Correções pós-0.7.13 (2026-11-08, v0.7.14 — publicada e liberada)
 
 - Texto `// selectable: no desktop…` aparecia em toda bolha: comentário JS virou filho do JSX quando a

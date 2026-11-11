@@ -13,7 +13,7 @@ import { EtiquetaDoStatus, statusDaConversa } from "../components/ConversaStatus
 import { TarefasNoTopo } from "../features/todo/TarefasNoTopo";
 import type { WorkspaceState } from "../types/workspace";
 import { PairingScreen } from "../mobile/Chat";
-import { ConversationDetail, ConversationList, filterConversations, haQuanto, Ocultas } from "../mobile/MobileApp";
+import { ConversationDetail, ConversationList, CriandoFork, filterConversations, haQuanto, Ocultas } from "../mobile/MobileApp";
 import { useDados } from "../mobile/useDados";
 import { usePoll } from "../mobile/usePoll";
 import { buscarIconeDeExtensao, NOME_DO_AGENTE, request, temConversa, type Conversation, type Projects } from "../mobile/api";
@@ -138,6 +138,9 @@ function criarFonteDaWeb(projetoId: string | null): FonteDeExtensoes {
   };
 }
 const CHAVE_ABA = "omni-web-aba";
+const CHAVE_FILTRO_PROJETO = "omni-web-filtro-projeto";
+/** Projeto sem conversa nova há mais que isso vai para "Mais N projetos". */
+const PROJETO_PARADO_MS = 30 * 86_400_000;
 
 /** Abas da lateral, como no app do PC: as conversas do projeto e as prévias de localhost. */
 type AbaLateral = "conversas" | "historico" | "previas";
@@ -234,9 +237,20 @@ export function WebApp() {
   const [erroTerminal, setErroTerminal] = useState<string | null>(null);
   const { conversations, attention, catalog, carregado, error, semAcesso, refresh, atualizar, parear } = useDados(focada);
   const [projetoId, setProjetoId] = useState<string | null>(null);
+  /** Filtro da lateral: clicar num projeto mostra só as conversas dele; "Todos" volta. */
+  // Um filtro só para as abas Conversas e Histórico; sobrevive a recarregar a página.
+  const [filtroProjeto, setFiltroProjeto] = useState<string | null>(() => {
+    try { return sessionStorage.getItem(CHAVE_FILTRO_PROJETO); } catch { return null; }
+  });
+  useEffect(() => {
+    try {
+      if (filtroProjeto) sessionStorage.setItem(CHAVE_FILTRO_PROJETO, filtroProjeto);
+      else sessionStorage.removeItem(CHAVE_FILTRO_PROJETO);
+    } catch { /* sem armazenamento: vale só agora */ }
+  }, [filtroProjeto]);
+  const [verProjetosParados, setVerProjetosParados] = useState(false);
   const [query, setQuery] = useState("");
   const [buscaHistorico, setBuscaHistorico] = useState("");
-  const [projetoHistorico, setProjetoHistorico] = useState("");
   const [atualizando, setAtualizando] = useState(false);
   const [layout, setLayout] = useState<LayoutPreset | null>(lerLayout);
   const [alvoDoArrasto, setAlvoDoArrasto] = useState<number | null>(null);
@@ -441,8 +455,9 @@ export function WebApp() {
     mostrar(restantes, focada === id ? restantes[restantes.length - 1] ?? null : focada, true);
   }
 
-  function selecionarProjeto(id: string) {
-    setProjetoId(id);
+  function selecionarProjeto(id: string | null) {
+    setFiltroProjeto((atual) => (atual === id ? null : id));
+    if (id) setProjetoId(id);
     setQuery("");
   }
 
@@ -469,15 +484,33 @@ export function WebApp() {
     ?? null;
   // Ocultas saem da lista e da busca; ficam numa seção recolhida no fim.
   const visiveis = conversations.filter((item) => !item.hidden);
-  const doProjeto = visiveis.filter((item) => item.project_id === projetoAtivo?.id);
-  const daLista = filterConversations(query ? visiveis : doProjeto, query, perfis, projetos);
-  // Todas as sessões abertas no PC, de qualquer projeto (o cartão diz de qual): filtrar pelo projeto
-  // escolhido deixava a seção vazia com conversas rodando em outro. As do projeto escolhido vêm antes.
-  const abertasNoPc = visiveis.filter((item) => item.live)
+  // Projeto filtrado sumiu do catálogo? Volta a mostrar todos em vez de uma lista vazia.
+  const filtro = projetos.find((item) => item.id === filtroProjeto) ?? null;
+  const filtradas = filtro ? visiveis.filter((item) => item.project_id === filtro.id) : visiveis;
+  const daLista = filterConversations(filtradas, query, perfis, projetos);
+  // Sem filtro, as do projeto da conversa aberta vêm antes (o cartão diz de qual projeto é cada uma).
+  const abertasNoPc = filtradas.filter((item) => item.live)
     .sort((a, b) => Number(b.project_id === projetoAtivo?.id) - Number(a.project_id === projetoAtivo?.id) || (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0));
-  // Recentes de qualquer projeto (o cartão diz de qual); o resto mora na aba Histórico.
-  const ultimas = visiveis.filter((item) => !item.live).sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0)).slice(0, ULTIMAS);
-  const historico = filterConversations(visiveis.filter((item) => !projetoHistorico || item.project_id === projetoHistorico), buscaHistorico, perfis, projetos)
+  // Sem filtro, só as recentes (o resto mora no Histórico); com filtro, todas as do projeto.
+  const ultimas = filtradas.filter((item) => !item.live).sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0))
+    .slice(0, filtro ? undefined : ULTIMAS);
+  const escopo = filtro ? filtro.name : "todos os projetos";
+  // Lateral: projetos pelo uso mais recente; os parados há mais de 30 dias ficam recolhidos
+  // (o PC guarda toda pasta que um agente já abriu). Filtrado ou com sessão aberta nunca recolhe.
+  const ultimaAtividade = new Map<string, number>();
+  for (const item of conversations) ultimaAtividade.set(item.project_id, Math.max(ultimaAtividade.get(item.project_id) ?? 0, item.updated_at_ms ?? 0));
+  const projetosPorUso = [...projetos].sort((a, b) => (ultimaAtividade.get(b.id) ?? 0) - (ultimaAtividade.get(a.id) ?? 0) || a.name.localeCompare(b.name));
+  const agora = Date.now();
+  // Sem data conhecida (projeto novo, conversa sem horário) não conta como parado.
+  const projetoAtivoNaLista = (projeto: (typeof projetos)[number]) => {
+    const ultima = ultimaAtividade.get(projeto.id) ?? 0;
+    return projeto.id === filtro?.id || !ultima || agora - ultima < PROJETO_PARADO_MS
+      || conversations.some((item) => item.project_id === projeto.id && item.live);
+  };
+  const projetosAtivos = projetosPorUso.filter(projetoAtivoNaLista);
+  const projetosParados = projetosPorUso.length - projetosAtivos.length;
+  const projetosNaLista = verProjetosParados ? projetosPorUso : projetosAtivos;
+  const historico = filterConversations(filtradas, buscaHistorico, perfis, projetos)
     .sort((a, b) => (b.updated_at_ms ?? 0) - (a.updated_at_ms ?? 0));
   // Filtro do histórico: só projetos que têm conversa, os mais usados primeiro.
   const projetosDoHistorico = projetos.map((projeto) => ({ projeto, total: visiveis.filter((item) => item.project_id === projeto.id).length }))
@@ -585,20 +618,20 @@ export function WebApp() {
                         {buscaHistorico && <button type="button" className="w-busca-limpar" aria-label="Limpar busca do histórico" onClick={() => setBuscaHistorico("")}>
                           <CloseIcon aria-hidden className="h-3 w-3" /></button>}
                       </div>
-                      <Select size="sm" aria-label="Projeto do histórico" value={projetoHistorico} onChange={setProjetoHistorico}
+                      <Select size="sm" aria-label="Projeto do histórico" value={filtro?.id ?? ""} onChange={(valor) => setFiltroProjeto(valor || null)}
                         className="w-historico-projeto" searchable={projetosDoHistorico.length > 5} searchPlaceholder="Buscar projeto…"
                         options={[{ value: "", label: "Todos os projetos", hint: `${visiveis.length} ${visiveis.length === 1 ? "conversa" : "conversas"}`,
                           icon: <span className="w-historico-todos"><FolderIcon aria-hidden className="h-3 w-3" /></span> },
                           ...projetosDoHistorico.map(({ projeto, total }) => ({ value: projeto.id, label: projeto.name,
                             hint: `${total} ${total === 1 ? "conversa" : "conversas"}`, section: "Projetos",
                             icon: <span className="w-historico-icone"><IconeDoProjeto projeto={projeto} className="h-3 w-3" /></span> }))]} />
-                      {(buscaHistorico || projetoHistorico) && (
+                      {(buscaHistorico || filtro) && (
                         <p className="w-historico-resumo" aria-live="polite">{historico.length} {historico.length === 1 ? "conversa encontrada" : "conversas encontradas"}</p>
                       )}
                     </div>
                     {historico.length === 0 && <p className="w-vazio">{carregado ? "Nada no histórico com esse filtro." : "Carregando…"}</p>}
                     {porPeriodo(historico).map(([periodo, itens]) => (
-                      <section key={`${periodo}|${projetoHistorico}`} className="w-secao w-secao-periodo">
+                      <section key={`${periodo}|${filtro?.id ?? ""}`} className="w-secao w-secao-periodo">
                         <h2 className="w-rotulo"><span className="w-rotulo-texto">{periodo}</span><span className="w-rotulo-conta">{itens.length}</span></h2>
                         <div className="w-conversas">
                           <ConversationList conversations={itens} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
@@ -606,7 +639,7 @@ export function WebApp() {
                         </div>
                       </section>
                     ))}
-                    <Ocultas conversas={conversations.filter((item) => item.hidden && (!projetoHistorico || item.project_id === projetoHistorico))}
+                    <Ocultas conversas={conversations.filter((item) => item.hidden && (!filtro || item.project_id === filtro.id))}
                       perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa} ativa={focada} />
                   </>
                 ) : (
@@ -621,6 +654,7 @@ export function WebApp() {
                         : <kbd className="w-busca-atalho" aria-hidden>/</kbd>}
                     </div>
                     {erroBifurcar && <p className="w-erro" role="alert">{erroBifurcar}</p>}
+                    {bifurcando && <CriandoFork />}
 
                     {/* Primeiro o que está parado esperando você, de qualquer projeto. */}
                     <section className={`w-secao w-pendencias${pendencias > 0 ? " is-alerta" : ""}`} aria-label="Precisa de você" hidden={Boolean(query)}>
@@ -647,7 +681,17 @@ export function WebApp() {
                           <p className="w-vazio">Nenhum projeto conhecido. Abra um projeto no OMNI do PC.</p>
                         )}
                         <ul className="w-projetos">
-                          {projetos.map((project) => {
+                          {projetos.length > 0 && (
+                            <li>
+                              <button type="button" onClick={() => selecionarProjeto(null)} aria-pressed={!filtro}
+                                className={`w-projeto${!filtro ? " w-projeto-ativo" : ""}`}>
+                                <span className="w-projeto-icone"><FolderIcon aria-hidden className="h-3.5 w-3.5" /></span>
+                                <span className="w-projeto-nome">Todos</span>
+                                <span className="w-projeto-total" aria-hidden>{visiveis.length}</span>
+                              </button>
+                            </li>
+                          )}
+                          {projetosNaLista.map((project) => {
                             const lista = conversations.filter((item) => item.project_id === project.id);
                             const aguardando = lista.filter((item) => item.capabilities?.approve).length;
                             const ativos = lista.filter((item) => item.state === "working").length;
@@ -656,9 +700,9 @@ export function WebApp() {
                                 <button
                                   type="button"
                                   onClick={() => selecionarProjeto(project.id)}
-                                  aria-current={project.id === projetoAtivo?.id ? "true" : undefined}
-                                  className={`w-projeto${project.id === projetoAtivo?.id ? " w-projeto-ativo" : ""}`}
-                                  title={project.path}
+                                  aria-pressed={project.id === filtro?.id}
+                                  className={`w-projeto${project.id === filtro?.id ? " w-projeto-ativo" : ""}`}
+                                  title={`${project.path}\nClique para ver só as conversas deste projeto`}
                                   aria-label={project.name}
                                 >
                                   <span className="w-projeto-icone"><IconeDoProjeto projeto={project} className="h-3.5 w-3.5" /></span>
@@ -675,12 +719,20 @@ export function WebApp() {
                             );
                           })}
                         </ul>
+                        {projetosParados > 0 && (
+                          <button type="button" className="w-ver-historico" aria-expanded={verProjetosParados}
+                            onClick={() => setVerProjetosParados((valor) => !valor)}>
+                            <FolderIcon aria-hidden className="h-3.5 w-3.5" />
+                            {verProjetosParados ? "Esconder os parados" : `Mais ${projetosParados} ${projetosParados === 1 ? "projeto parado" : "projetos parados"}`}
+                            <span aria-hidden>{verProjetosParados ? "↑" : "↓"}</span>
+                          </button>
+                        )}
                       </section>
                     )}
 
                     {query ? (
                       <section className="w-secao">
-                        <h2 className="w-rotulo"><ChatIcon aria-hidden className="h-3 w-3" />Resultados<span className="w-rotulo-conta">{daLista.length}</span></h2>
+                        <h2 className="w-rotulo"><ChatIcon aria-hidden className="h-3 w-3" />Resultados{filtro && <span className="w-rotulo-dica">{filtro.name}</span>}<span className="w-rotulo-conta">{daLista.length}</span></h2>
                         <div className="w-conversas">
                           <ConversationList conversations={daLista} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
                             ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} aoBifurcar={(id) => void bifurcarConversa(id)} bifurcando={bifurcando} aoRenomear={renomearConversa} vazio="Nenhuma conversa encontrada." />
@@ -691,7 +743,7 @@ export function WebApp() {
                         <section className="w-secao" aria-label="Abertas no PC">
                           <h2 className="w-rotulo"><span className="m-dot m-dot-ativo" aria-hidden />
                             <span className="w-rotulo-texto">Abertas no PC</span>
-                            <span className="w-rotulo-dica">todos os projetos</span>
+                            <span className="w-rotulo-dica">{escopo}</span>
                             <span className="w-rotulo-conta">{abertasNoPc.length}</span></h2>
                           {abertasNoPc.length === 0 && (
                             <p className="w-vazio">{carregado ? "Nenhuma conversa aberta no PC agora." : "Carregando…"}</p>
@@ -708,8 +760,8 @@ export function WebApp() {
                           ))}
                         </section>
                         <section className="w-secao">
-                          <h2 className="w-rotulo"><ClockIcon aria-hidden className="h-3 w-3" /><span className="w-rotulo-texto">Últimas conversas</span>
-                            <span className="w-rotulo-dica">todos os projetos</span></h2>
+                          <h2 className="w-rotulo"><ClockIcon aria-hidden className="h-3 w-3" /><span className="w-rotulo-texto">{filtro ? "Conversas" : "Últimas conversas"}</span>
+                            <span className="w-rotulo-dica">{escopo}</span></h2>
                           <div className="w-conversas">
                             <ConversationList conversations={ultimas} perfis={perfis} projetos={projetos} mostrarProjeto abrir={abrirConversa}
                               ativa={focada} naoVistas={naoVistas} aoArrastar={arrastarConversa} aoBifurcar={(id) => void bifurcarConversa(id)} bifurcando={bifurcando} aoRenomear={renomearConversa} vazio={carregado ? "Nenhuma conversa ainda." : "Carregando…"} />
@@ -883,7 +935,7 @@ function PainelDaConversa({ conversa, perfis, projetos, focada, varias, focar, f
   const soTerminal = !temConversa(conversa.provider);
   const abaVisivel: Aba = (aba === "terminal" || soTerminal) && conversa.live ? "terminal" : "conversa";
   const conta = conversa.profile_id ? perfis.find((perfil) => perfil.id === conversa.profile_id)?.name : null;
-  const projeto = projetos.find((item) => item.id === conversa.project_id)?.name;
+  const projeto = projetos.find((item) => item.id === conversa.project_id);
   return (
     <section className={`w-painel${focada && varias ? " is-focada" : ""}`} aria-label={conversa.title} onPointerDownCapture={focar}>
       <div className="w-painel-topo" draggable onDragStart={(evento) => arrastarConversa(evento, conversa.id)}
@@ -894,8 +946,10 @@ function PainelDaConversa({ conversa, perfis, projetos, focada, varias, focar, f
           <span className="w-topo-sub">
             <span className={`m-dot ${tomDoEstado(conversa)}`} aria-hidden />
             {[ESTADO[conversa.state ?? ""] ?? (conversa.historical ? "Histórico" : "Sem sessão aberta"),
-              NOME_DO_AGENTE[conversa.provider ?? ""] ?? conversa.provider, conta, projeto]
+              NOME_DO_AGENTE[conversa.provider ?? ""] ?? conversa.provider, conta]
               .filter(Boolean).join(" · ")}
+            {projeto && <span className="w-topo-projeto" title={projeto.path}>
+              <IconeDoProjeto projeto={projeto} className="h-3 w-3" />{projeto.name}</span>}
           </span>
         </div>
         <div className="w-painel-abas" role="tablist" aria-label="Visualização">

@@ -1,0 +1,82 @@
+/* Servidores locais (lateral) e o modal de parar. */
+.srv-painel { display: flex; flex-direction: column; gap: .375rem; padding: .25rem .5rem .5rem 1rem; }
+.srv-vazio { margin: 0; padding: .375rem .5rem; font-size: .75rem; color: rgb(var(--c-text-muted)); }
+.srv-erro { margin: 0; padding: .25rem .5rem; font-size: .6875rem; color: rgb(var(--c-danger)); border-left: 2px solid rgb(var(--c-danger)); overflow-wrap: anywhere; }
+.srv-lista { display: flex; flex-direction: column; gap: .375rem; margin: 0; padding: 0; list-style: none; }
+
+.srv {
+  position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .5rem;
+  padding: .5rem .5rem .5rem .625rem; background: rgb(var(--c-bg-primary) / .55);
+  border: 1px solid rgb(var(--c-border-subtle)); transition: border-color .15s, background .15s;
+}
+.srv:hover, .srv:focus-within { border-color: rgb(var(--c-outline) / .8); background: rgb(var(--c-bg-primary) / .85); }
+
+.srv-icone { position: relative; display: grid; place-items: center; width: 1.75rem; height: 1.75rem; background: rgb(var(--c-overlay) / .05); border: 1px solid rgb(var(--c-border-subtle)); }
+.srv-vivo { position: absolute; right: -3px; bottom: -3px; width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--c-success)); box-shadow: 0 0 0 2px rgb(var(--c-bg-surface)); animation: srv-pulso 2s ease-in-out infinite; }
+@keyframes srv-pulso { 50% { box-shadow: 0 0 0 2px rgb(var(--c-bg-surface)), 0 0 0 5px rgb(var(--c-success) / .25); } }
+
+.srv-info { display: flex; flex-direction: column; min-width: 0; }
+.srv-nome { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .75rem; color: rgb(var(--c-text-primary)); }
+.srv-tipo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .625rem; color: rgb(var(--c-text-muted)); }
+
+/* A porta é o que se procura: grande, monoespaçada, e é ela que abre no navegador. */
+.srv-porta {
+  display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 3.25rem; padding: .125rem .375rem;
+  font: inherit; color: rgb(var(--c-accent)); background: rgb(var(--c-accent) / .08);
+  border: 1px solid rgb(var(--c-accent) / .45); cursor: pointer; transition: background .15s, transform .15s;
+}
+.srv-porta:hover, .srv-porta:focus-visible { background: rgb(var(--c-accent) / .18); transform: translateY(-1px); outline: none; }
+.srv-porta-rotulo { font-size: .5rem; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: rgb(var(--c-text-muted)); }
+.srv-porta-numero { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .8125rem; font-weight: 700; line-height: 1; }
+
+/* Ações sempre à vista, numa faixa no pé do cartão. */
+.srv-acoes {
+  grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: .25rem;
+  margin: .125rem -.5rem -.5rem -.625rem; padding: .25rem .375rem; border-top: 1px solid rgb(var(--c-border-subtle));
+  background: rgb(var(--c-overlay) / .03);
+}
+.srv-acao { display: grid; place-items: center; width: 1.625rem; height: 1.625rem; color: rgb(var(--c-text-secondary)); background: none; border: 1px solid transparent; cursor: pointer; transition: color .15s, background .15s, border-color .15s; }
+.srv-acao:hover, .srv-acao:focus-visible { color: rgb(var(--c-text-primary)); background: rgb(var(--c-overlay) / .08); border-color: rgb(var(--c-border-subtle)); outline: none; }
+.srv-acao-parar { color: rgb(var(--c-danger) / .8); }
+.srv-acao-parar:hover, .srv-acao-parar:focus-visible { color: rgb(var(--c-danger)); background: rgb(var(--c-danger) / .12); border-color: rgb(var(--c-danger) / .4); }
+
+/* ── Modal de parar ─────────────────────────────────────────────────────────── */
+.srv-parar { display: flex; flex-direction: column; align-items: center; gap: .5rem; padding: .5rem 0 .25rem; text-align: center; }
+.srv-parar-figura { position: relative; display: grid; place-items: center; width: 5.5rem; height: 5.5rem; margin-bottom: .5rem; --tom: var(--c-danger); }
+.srv-parar.is-parado .srv-parar-figura { --tom: var(--c-success); }
+.srv-parar-anel { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgb(var(--tom) / .5); animation: srv-onda 1.8s ease-out infinite; }
+.srv-parar-anel-2 { animation-delay: .9s; }
+@keyframes srv-onda { from { transform: scale(.55); opacity: 1; } to { transform: scale(1.15); opacity: 0; } }
+.srv-parar-centro {
+  position: relative; display: grid; place-items: center; width: 3.25rem; height: 3.25rem; border-radius: 50%;
+  color: rgb(var(--tom)); background: rgb(var(--tom) / .12); border: 2px solid rgb(var(--tom));
+  box-shadow: 0 0 1.25rem rgb(var(--tom) / .35); animation: srv-respira 1.8s ease-in-out infinite;
+}
+@keyframes srv-respira { 50% { transform: scale(1.06); box-shadow: 0 0 2rem rgb(var(--tom) / .5); } }
+/* Parando: o anel vira um arco girando; parado: o check estoura e as ondas param. */
+.srv-parar.is-parando .srv-parar-anel { border-color: transparent; border-top-color: rgb(var(--tom)); animation: srv-gira .8s linear infinite; transform: none; opacity: 1; }
+.srv-parar.is-parando .srv-parar-anel-2 { display: none; }
+.srv-parar.is-parando .srv-parar-centro { animation: none; opacity: .7; }
+@keyframes srv-gira { to { transform: rotate(360deg); } }
+.srv-parar.is-parado .srv-parar-anel { animation: srv-onda .7s ease-out 1 forwards; }
+.srv-parar.is-parado .srv-parar-centro { animation: srv-estoura .45s cubic-bezier(.3, 1.6, .5, 1) 1; }
+@keyframes srv-estoura { from { transform: scale(.4); opacity: 0; } }
+.srv-parar.is-erro .srv-parar-anel { animation: none; opacity: 0; }
+.srv-parar.is-erro .srv-parar-centro { animation: srv-treme .4s 1; }
+@keyframes srv-treme { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+
+.srv-parar-titulo { margin: 0; font-size: .9375rem; color: rgb(var(--c-text-primary)); }
+.srv-parar-detalhe { margin: 0; font-size: .75rem; color: rgb(var(--c-text-secondary)); overflow-wrap: anywhere; }
+.srv-parar-porta { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; color: rgb(var(--c-accent)); }
+.srv-parar-pasta { max-width: 100%; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .625rem; color: rgb(var(--c-text-muted)); }
+.srv-parar-botoes { display: flex; gap: .5rem; margin-top: .75rem; }
+.srv-botao { padding: .45rem .9rem; font: inherit; font-size: .75rem; color: rgb(var(--c-text-primary)); background: rgb(var(--c-bg-primary)); border: 2px solid rgb(var(--c-outline)); cursor: pointer; transition: transform .1s, box-shadow .1s; }
+.srv-botao:hover { box-shadow: 3px 3px 0 rgb(var(--c-outline)); transform: translate(-1px, -1px); }
+.srv-botao:active { box-shadow: none; transform: none; }
+.srv-botao-perigo { color: #fff; background: rgb(var(--c-danger)); border-color: rgb(var(--c-danger)); }
+.srv-botao-perigo:hover { box-shadow: 3px 3px 0 rgb(var(--c-danger) / .45); }
+
+@media (prefers-reduced-motion: reduce) {
+  .srv-vivo, .srv-parar-anel, .srv-parar-centro { animation: none !important; }
+}
+:root[data-foco="fora"] .srv-vivo, :root[data-foco="fora"] .srv-parar-anel, :root[data-foco="fora"] .srv-parar-centro { animation-play-state: paused; }

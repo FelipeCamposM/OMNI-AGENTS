@@ -22,7 +22,7 @@ beforeEach(() => {
   matarServidor.mockResolvedValue(undefined);
 });
 
-it("apelido fica guardado pela pasta e derrubar pede confirmação", async () => {
+it("apelido fica guardado pela pasta e parar pede confirmação num modal", async () => {
   render(<ServidoresPanel />);
   await userEvent.click(await screen.findByRole("button", { name: "Dar apelido a SIAPLUS" }));
   const campo = screen.getByRole("textbox", { name: "Apelido de SIAPLUS" });
@@ -31,14 +31,19 @@ it("apelido fica guardado pela pasta e derrubar pede confirmação", async () =>
   expect(screen.getByText("Sia")).toBeInTheDocument();
   expect(JSON.parse(localStorage.getItem("omni-servidores-apelidos")!)).toEqual({ "D:\\P\\SIAPLUS": "Sia" });
 
-  await userEvent.click(screen.getByRole("button", { name: "Derrubar Sia" }));
+  // A porta aparece em destaque e é ela que abre no navegador.
+  expect(screen.getByRole("button", { name: "Abrir localhost:1520 no navegador" })).toHaveTextContent("1520");
+
+  await userEvent.click(screen.getByRole("button", { name: "Parar Sia" }));
   expect(matarServidor).not.toHaveBeenCalled();
-  await userEvent.click(screen.getByRole("button", { name: "Sim" }));
+  expect(screen.getByRole("dialog", { name: "Parar servidor" })).toHaveTextContent("localhost:1520");
+  await userEvent.click(screen.getByRole("button", { name: "Parar servidor" }));
   await waitFor(() => expect(matarServidor).toHaveBeenCalledWith("D:\\P\\SIAPLUS"));
+  expect(await screen.findByText("Servidor parado")).toBeInTheDocument();
 });
 
-it("o próprio OMNI em dev não tem botão de derrubar", async () => {
+it("o próprio OMNI em dev não tem botão de parar", async () => {
   render(<ServidoresPanel />);
   expect(await screen.findByText("OMNI")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Derrubar OMNI" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Parar OMNI" })).toBeNull();
 });

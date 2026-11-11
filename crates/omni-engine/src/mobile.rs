@@ -1013,10 +1013,7 @@ async fn bifurcar_rota(State(state): State<Arc<EngineState>>, RoutePath(id): Rou
         };
         let provider = fonte.provider.clone().filter(|p| p == "claude" || p == "codex")
             .ok_or_else(||error(StatusCode::CONFLICT,"Só dá para bifurcar conversas do Claude e do Codex"))?;
-        if state.sessions.lock().expect("sessions poisoned").values()
-            .filter(|entry| matches!(entry,SessionEntry::Live(_))).count() >= MAX_SESSOES {
-            return Err(error(StatusCode::TOO_MANY_REQUESTS,"Muitas sessões abertas neste PC; feche alguma antes"));
-        }
+        cabe_mais_uma_sessao(&state)?;
         let resposta = bifurcar(&state, fonte, &provider).map_err(|erro|error(StatusCode::INTERNAL_SERVER_ERROR,&erro.to_string()))?;
         let EngineResponse::Session { session } = resposta else { return Err(error(StatusCode::INTERNAL_SERVER_ERROR,"Resposta inesperada")); };
         Ok((StatusCode::CREATED,Json(json!({"id":session.conversation_id,"title":session.name}))))
@@ -1271,11 +1268,14 @@ async fn terminal(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePat
 }
 
 /// Transcript do Claude em uso na conversa: é ao lado dele que a CLI grava os subagentes.
+/// Segmento com `historico_ate_ms` é o histórico copiado da original num fork: o arquivo é o da
+/// original, e os subagentes dele são dela. Antes da 1ª mensagem o fork não tem arquivo próprio e
+/// o `.rev().find` caía no da original, mostrando o trabalho dela no fork.
 fn transcript_do_claude(state: &EngineState, id: &str) -> Result<(PathBuf, bool), ApiError> {
     let (conversa, sessao) = current(state,id)?;
     let dir = state.state_file.parent().unwrap();
     let caminho = omni_core::conversations::fontes(&conversa,&omni_core::profiles(dir)).into_iter().rev()
-        .find(|(_, provider, _)| provider == "claude").map(|(caminho, _, _)| caminho)
+        .find(|(_, provider, ate)| provider == "claude" && ate.is_none()).map(|(caminho, _, _)| caminho)
         .ok_or_else(||error(StatusCode::NOT_FOUND,"Conversa sem transcript do Claude"))?;
     Ok((caminho, sessao.is_some()))
 }
@@ -1431,10 +1431,7 @@ async fn abrir_terminal(State(state): State<Arc<EngineState>>, Json(body): Json<
         let projeto = known_projects(&state).into_iter().find(|projeto| projeto.id == body.project_id && !projeto.path.is_empty())
             .ok_or_else(||error(StatusCode::NOT_FOUND,"Projeto não encontrado neste PC"))?;
         if !Path::new(&projeto.path).is_dir() { return Err(error(StatusCode::CONFLICT,"A pasta do projeto não existe mais neste PC")); }
-        if state.sessions.lock().expect("sessions poisoned").values()
-            .filter(|entry| matches!(entry,SessionEntry::Live(_))).count() >= MAX_SESSOES {
-            return Err(error(StatusCode::TOO_MANY_REQUESTS,"Muitas sessões abertas neste PC; feche alguma antes"));
-        }
+        cabe_mais_uma_sessao(&state)?;
         // Headless: ninguém exibe esta PTY num terminal de verdade até o desktop abrir a aba.
         let resposta = spawn_terminal(&state, projeto.id, "Terminal".into(), projeto.path, None, None, 32, 120,
             SessionOrigin { ..SessionOrigin::default() })
@@ -1740,8 +1737,17 @@ struct SpawnBody { project_id: String, provider: String, profile_id: Option<Stri
 
 /// Teto de sessões vivas abertas pelo celular somadas às do desktop. Sem ele, um toque repetido no
 /// botão enche o PC de PTYs.
+/// Conta só processo rodando: aba parada/encerrada continua no mapa (para retomar) e não pesa no PC.
 /// ponytail: número fixo; se incomodar, vira configuração na tela de Celular.
-const MAX_SESSOES: usize = 16;
+const MAX_SESSOES: usize = 40;
+
+fn cabe_mais_uma_sessao(state: &EngineState) -> Result<(), ApiError> {
+    let rodando = state.sessions.lock().expect("sessions poisoned").values()
+        .filter(|entry| matches!(entry, SessionEntry::Live(sessao) if sessao.meta.lock().is_ok_and(|meta| meta.pid.is_some())))
+        .count();
+    if rodando >= MAX_SESSOES { return Err(error(StatusCode::TOO_MANY_REQUESTS,"Muitas sessões rodando neste PC; feche alguma antes")); }
+    Ok(())
+}
 
 /// Resolve o pedido do celular contra o que o servidor já conhece. Nada aqui sai do corpo do
 /// request além de escolhas dentro de listas fechadas.
@@ -1772,10 +1778,7 @@ fn resolve_spawn(state: &Arc<EngineState>, body: &SpawnBody) -> Result<SpawnPlan
         return Err(error(StatusCode::BAD_REQUEST,"Título inválido"));
     }
 
-    if state.sessions.lock().expect("sessions poisoned").values()
-        .filter(|entry| matches!(entry,SessionEntry::Live(_))).count() >= MAX_SESSOES {
-        return Err(error(StatusCode::TOO_MANY_REQUESTS,"Muitas sessões abertas neste PC; feche alguma antes"));
-    }
+    cabe_mais_uma_sessao(&state)?;
 
     // Fixar o `--session-id` do Claude aqui é o que torna o caminho do transcript conhecido de
     // imediato — sem isso a timeline do celular ficaria vazia até alguém descobrir o arquivo.
@@ -1885,23 +1888,19 @@ fn execute(state:&Arc<EngineState>, action:&Action) -> Result<()> {
    esforço na linha de comando; trocar por comando interno (`/model`) muda de versão para versão.
    Trocar de conta leva o transcript junto para o config dir da conta nova, como o failover. */
 
-/// (id, rótulo, dica, seção). Os apelidos seguem a versão mais nova; "Mais modelos" é a lista do
-/// `/model` da CLI (2.1.304), por id fixo.
-// ponytail: lista copiada da CLI, revisar quando o `/model` ganhar ou perder versões.
-const MODELOS_CLAUDE: [(&str, &str, &str, &str); 12] = [
-    ("opus","Opus","Trabalho complexo e do dia a dia",""),
-    ("sonnet","Sonnet","Mais econômico, para tarefas simples",""),
-    ("fable","Fable","Para os desafios mais difíceis",""),
-    ("haiku","Haiku","O mais rápido, respostas curtas",""),
-    ("claude-fable-5","Fable 5","Tarefas longas e difíceis","Mais modelos"),
-    ("claude-opus-5","Opus 5","Trabalho complexo e do dia a dia","Mais modelos"),
-    ("claude-sonnet-5","Sonnet 5","Tarefas de rotina","Mais modelos"),
-    ("claude-haiku-4-5","Haiku 4.5","O mais rápido, respostas curtas","Mais modelos"),
-    ("claude-opus-4-8","Opus 4.8","Trabalho complexo e do dia a dia","Mais modelos"),
-    ("claude-opus-4-7","Opus 4.7","Trabalho complexo e do dia a dia","Mais modelos"),
-    ("claude-opus-4-6","Opus 4.6","Trabalho complexo e do dia a dia","Mais modelos"),
-    ("claude-sonnet-4-6","Sonnet 4.6","Tarefas de rotina","Mais modelos"),
-];
+/// Modelos do Claude no seletor: os apelidos (a CLI resolve para o mais novo da família) e, em
+/// "Mais modelos", cada versão que o Claude Code instalado conhece (`omni_core::modelos_claude`).
+/// Modelo novo aparece quando a CLI atualiza, sem release do OMNI.
+fn modelos_claude() -> Vec<Value> {
+    let versoes = omni_core::modelos_claude::disponiveis();
+    let apelidos = ["opus","sonnet","fable","haiku"].into_iter().map(|familia| {
+        let mais_novo = versoes.iter().find(|m| m.familia == familia).map(|m| format!(" · hoje {}", m.nome)).unwrap_or_default();
+        let nome = format!("{}{}", familia[..1].to_uppercase(), &familia[1..]);
+        json!({"id":familia,"label":nome,"hint":format!("{}{mais_novo}", omni_core::modelos_claude::dica(familia)),"section":"","efforts":ESFORCOS_CLAUDE})
+    });
+    apelidos.chain(versoes.iter().map(|m| json!({"id":m.id,"label":m.nome,"hint":omni_core::modelos_claude::dica(&m.familia),
+        "section":"Mais modelos","efforts":ESFORCOS_CLAUDE}))).collect()
+}
 const ESFORCOS_CLAUDE: [&str; 5] = ["low","medium","high","xhigh","max"];
 
 /// Só letras, números e `._-[]`: o valor vira argumento de um comando digitado num shell.
@@ -2007,7 +2006,7 @@ fn opcoes_da_conversa(state: &EngineState, id: &str) -> Result<Value, ApiError> 
         _ => (None, None),
     };
     let modelos: Vec<Value> = match segmento.provider.as_str() {
-        "claude" => MODELOS_CLAUDE.iter().map(|(id,label,hint,secao)| json!({"id":id,"label":label,"hint":hint,"section":secao,"efforts":ESFORCOS_CLAUDE})).collect(),
+        "claude" => modelos_claude(),
         "codex" => atual.map(|perfil| modelos_codex(Path::new(&perfil.config_dir))).unwrap_or_default(),
         "antigravity" => omni_core::antigravity::familias(&saida_agy).into_iter()
             .map(|f| json!({"id":f.id,"label":f.label,"efforts":f.esforcos})).collect(),
@@ -2512,10 +2511,7 @@ async fn retomar_rota(State(state): State<Arc<EngineState>>, RoutePath(id): Rout
         if !valor_seguro(valor) { return Err(error(StatusCode::BAD_REQUEST,"Valor inválido")); }
     }
     tokio::task::spawn_blocking(move || {
-        if state.sessions.lock().expect("sessions poisoned").values()
-            .filter(|entry| matches!(entry,SessionEntry::Live(_))).count() >= MAX_SESSOES {
-            return Err(error(StatusCode::TOO_MANY_REQUESTS,"Muitas sessões abertas neste PC; feche alguma antes"));
-        }
+        cabe_mais_uma_sessao(&state)?;
         let plano = plano_de_retomada(&state,&id,body)?;
         let conversa = plano.conversation_id.clone();
         enqueue(&state,&conversa,&headers,ActionKind::Retomar(plano))

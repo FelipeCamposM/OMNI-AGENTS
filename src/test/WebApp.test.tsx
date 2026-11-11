@@ -81,7 +81,7 @@ it("mostra projetos, conversas e a conversa aberta ao mesmo tempo", async () => 
   expect(location.hash).toBe("#/c/c");
 });
 
-it("troca de projeto com conversa aberta, pesquisa globalmente e oferece voltar", async () => {
+it("clicar no projeto filtra as conversas dele, Todos volta, e a pesquisa respeita o filtro", async () => {
   vi.stubGlobal("fetch", servidor([
     conversa(),
     conversa({ id: "c2", title: "Auditar pagamentos", project_id: "p2" }),
@@ -93,11 +93,21 @@ it("troca de projeto com conversa aberta, pesquisa globalmente e oferece voltar"
   expect(await screen.findByRole("button", { name: "Fechar conversa" })).toBeInTheDocument();
 
   const lateral = screen.getByRole("complementary", { name: "Projetos e conversas" });
+  const abertas = () => within(within(lateral).getByRole("region", { name: "Abertas no PC" }))
+    .getAllByRole("button", { name: /^Abrir conversa/ }).map((b) => b.getAttribute("aria-label"));
+  expect(within(lateral).getByRole("button", { name: "Todos" })).toHaveAttribute("aria-pressed", "true");
+
   await act(async () => { await userEvent.click(within(lateral).getByRole("button", { name: "Outro" })); });
-  // Abertas no PC mostra as de todos os projetos; as do projeto escolhido vêm primeiro.
-  const abertasNoPc = within(lateral).getByRole("region", { name: "Abertas no PC" });
-  const ordem = within(abertasNoPc).getAllByRole("button", { name: /^Abrir conversa/ }).map((b) => b.getAttribute("aria-label"));
-  expect(ordem).toEqual(["Abrir conversa Auditar pagamentos", "Abrir conversa Corrigir o login"]);
+  expect(within(lateral).getByRole("button", { name: "Outro" })).toHaveAttribute("aria-pressed", "true");
+  expect(abertas()).toEqual(["Abrir conversa Auditar pagamentos"]);
+  // Com filtro, a pesquisa fica dentro do projeto.
+  await act(async () => { await userEvent.type(within(lateral).getByLabelText("Pesquisar conversas"), "login"); });
+  expect(within(lateral).queryByRole("button", { name: /Abrir conversa Corrigir o login/ })).not.toBeInTheDocument();
+  await act(async () => { await userEvent.clear(within(lateral).getByLabelText("Pesquisar conversas")); });
+
+  await act(async () => { await userEvent.click(within(lateral).getByRole("button", { name: "Todos" })); });
+  // Todos de novo; as do último projeto escolhido continuam vindo primeiro.
+  expect(abertas()).toEqual(["Abrir conversa Auditar pagamentos", "Abrir conversa Corrigir o login"]);
 
   await act(async () => { await userEvent.type(within(lateral).getByLabelText("Pesquisar conversas"), "login"); });
   expect(within(lateral).getByRole("button", { name: /Abrir conversa Corrigir o login/ })).toBeInTheDocument();
@@ -402,6 +412,16 @@ it("aba Histórico separada: agrupa por período, filtra por projeto e mostra o 
   await act(async () => { await userEvent.click(screen.getByRole("option", { name: (nome) => nome.startsWith("Outro") })); });
   expect(within(painel).queryByRole("button", { name: /Corrigir o login/ })).not.toBeInTheDocument();
   expect(within(within(painel).getByRole("button", { name: /Abrir conversa Auditar pagamentos/ })).getByText("Outro")).toBeInTheDocument();
+
+  // Um filtro só: escolhido no Histórico, vale na aba Conversas e sobrevive a recarregar.
+  expect(sessionStorage.getItem("omni-web-filtro-projeto")).toBe("p2");
+  await act(async () => { await userEvent.click(within(lateral).getByRole("tab", { name: "Conversas" })); });
+  // Outro está parado há 40 dias, mas filtrado não recolhe.
+  expect(await within(lateral).findByRole("button", { name: "Outro" })).toHaveAttribute("aria-pressed", "true");
+  await act(async () => { await userEvent.click(within(lateral).getByRole("button", { name: "Todos" })); });
+  expect(within(lateral).queryByRole("button", { name: "Outro" })).not.toBeInTheDocument();
+  await act(async () => { await userEvent.click(within(lateral).getByRole("button", { name: /Mais 1 projeto parado/ })); });
+  expect(within(lateral).getByRole("button", { name: "Outro" })).toBeInTheDocument();
 });
 
 
@@ -460,4 +480,17 @@ it("nova conversa: escolhe projeto e agente no modal, manda para o PC e abre a c
   await waitFor(() => expect(criadas).toEqual([{ project_id: "p2", provider: "codex", profile_id: null, titulo: null }]));
   await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument(), { timeout: 4000 });
   await waitFor(() => expect(location.hash).toContain("nova"));
+});
+
+it("bifurcar mostra que o fork está sendo criado até a conversa nova abrir", async () => {
+  let liberar: (r: Response) => void = () => undefined;
+  const base = servidor([conversa({ live: true })]);
+  vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) =>
+    url.endsWith("/bifurcar") ? new Promise<Response>((ok) => { liberar = ok; }) : base(url, init)));
+  render(<WebApp />);
+  await screen.findByRole("button", { name: /Abrir conversa Corrigir o login/ });
+  await act(async () => { await userEvent.click(screen.getByRole("button", { name: "Bifurcar conversa Corrigir o login" })); });
+  expect(screen.getByRole("status")).toHaveTextContent("Criando o fork…");
+  await act(async () => { liberar(new Response(JSON.stringify({ id: "c" }), { status: 201 })); });
+  await waitFor(() => expect(screen.queryByText(/Criando o fork…/)).not.toBeInTheDocument());
 });

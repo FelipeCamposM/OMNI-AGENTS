@@ -1,7 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useState } from "react";
-import { Button, Input } from "../../components/ui";
-import { BookIcon, CloseIcon, TrashIcon } from "../../components/ui/PixelIcon";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { BookIcon, CloseIcon, RobotIcon, SearchIcon, SparkleIcon, TrashIcon } from "../../components/ui/PixelIcon";
+import { iconForPath, iconStyle } from "../files/fileIcons";
 import {
   adicionarArquivos,
   buscarConhecimento,
@@ -16,9 +16,11 @@ import {
   type FonteDeConhecimento,
   type ResultadoDeBusca,
 } from "./conhecimentoService";
+import "./conhecimento.css";
 
 const INTERVALO_DA_IMPORTACAO_MS = 1500;
 const ATRASO_DA_BUSCA_MS = 200;
+const TIPOS = [".pdf", ".docx", ".xlsx", ".pptx", ".md", ".txt", ".csv", ".json", ".html", ".sql", ".db", ".backup", ".zip", ".gz", "código"];
 
 /** Base de conhecimento: solte arquivos aqui e o Claude consulta quando você mandar. */
 export function ConhecimentoView({ onClose }: { onClose: () => void }) {
@@ -62,7 +64,7 @@ export function ConhecimentoView({ onClose }: { onClose: () => void }) {
         if (dados.type === "drop") void importar(dados.paths);
       });
       if (vivo) parar = cancelar; else cancelar();
-    });
+    }).catch(() => undefined);
     return () => { vivo = false; parar?.(); };
   }, [importar]);
 
@@ -94,82 +96,112 @@ export function ConhecimentoView({ onClose }: { onClose: () => void }) {
   }
 
   const totalDeTrechos = fontes?.reduce((soma, fonte) => soma + fonte.trechos, 0) ?? 0;
+  const numero = (n: number) => n.toLocaleString("pt-BR");
 
   return (
-    <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto p-4" aria-label="Base de conhecimento">
-      <header className="flex items-center gap-3">
-        <BookIcon className="h-5 w-5 shrink-0 text-accent" aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <h1 className="pixel-text text-sm text-text-primary">Conhecimento</h1>
-          <p className="text-[11px] text-text-secondary">
-            Fica só neste computador. O Claude só consulta quando você pedir, por exemplo: “olha na base como fizemos o deploy”.
-          </p>
+    <section className="kb" aria-label="Base de conhecimento">
+      <div className="kb-miolo">
+        <header className="kb-topo">
+          <span className="kb-selo" aria-hidden><BookIcon className="h-6 w-6" /></span>
+          <div className="kb-titulo">
+            <h1 className="pixel-text">Conhecimento</h1>
+            <p>Fica só neste computador. O Claude só consulta quando você pedir, por exemplo: “olha na base como fizemos o deploy”.</p>
+          </div>
+          <button type="button" className="kb-fechar" onClick={onClose} aria-label="Fechar conhecimento">
+            <CloseIcon className="h-3.5 w-3.5" aria-hidden />
+          </button>
+        </header>
+
+        <dl className="kb-numeros">
+          <div><dt>arquivos</dt><dd>{fontes === null ? "–" : numero(fontes.length)}</dd></div>
+          <div><dt>trechos</dt><dd>{numero(totalDeTrechos)}</dd></div>
+          <div><dt>notas na memória</dt><dd>{memoria ? numero(memoria.notas) : "–"}</dd></div>
+        </dl>
+
+        <div className="kb-chaves">
+          <Interruptor icone={<RobotIcon className="h-4 w-4" />} titulo="Claude usa o OMNI"
+            rotulo="Deixar o Claude usar o OMNI quando eu pedir: esta base, o histórico, a memória e os fluxos"
+            ligado={claude === true} desabilitado={claude === null || mudandoClaude} onAlternar={() => void alternarClaude()}
+            detalhe={mudandoClaude ? "Aplicando…" : claude
+              ? "Vale para as conversas abertas a partir de agora; as abertas precisam ser reiniciadas. Aprovar etapas de fluxo continua só na tela."
+              : "Quando ligado, o Claude consulta esta base, o histórico, a memória e os fluxos se você pedir."} />
+          <Interruptor icone={<SparkleIcon className="h-4 w-4" />} titulo="Memória compartilhada"
+            rotulo="Memória compartilhada" ligado={memoria?.ligada === true} desabilitado={!memoria} onAlternar={() => void alternarMemoria()}
+            detalhe={<>{memoria && <b>{numero(memoria.notas)} notas · </b>}Cada conversa nova recebe as notas ligadas ao pedido; ao fim do turno, um modelo rápido guarda o que vale lembrar. Consome um pouco da sua conta.</>} />
         </div>
-        <Button size="sm" variant="ghost" onClick={onClose} aria-label="Fechar conhecimento">
-          <CloseIcon className="h-3.5 w-3.5" aria-hidden="true" />
-          Fechar
-        </Button>
-      </header>
 
-      <div className={`border-2 border-dashed p-6 text-center ${arrastando ? "border-accent bg-accent/10" : "border-border-subtle"}`}>
-        <p className="text-xs text-text-primary">Solte os arquivos aqui</p>
-        <p className="mt-1 text-[11px] text-text-muted">.sql, .db, .backup, .pdf, .docx, .xlsx, .pptx, .md, .txt, .csv, .json, .html, .zip, .gz e código</p>
-        <Button size="sm" className="mt-3" onClick={() => void escolher()}>Escolher arquivos</Button>
-      </div>
+        <div className={`kb-soltar${arrastando ? " is-arrastando" : ""}`}>
+          <span className="kb-soltar-icone" aria-hidden><BookIcon className="h-7 w-7" /></span>
+          <p className="kb-soltar-titulo">{arrastando ? "Pode soltar" : "Solte os arquivos aqui"}</p>
+          <ul className="kb-tipos" aria-label="Tipos aceitos">{TIPOS.map((tipo) => <li key={tipo}>{tipo}</li>)}</ul>
+          <button type="button" className="kb-botao" onClick={() => void escolher()}>Escolher arquivos</button>
+        </div>
 
-      <label className="flex items-center gap-2 text-xs text-text-secondary">
-        <input type="checkbox" checked={claude === true} disabled={claude === null || mudandoClaude} onChange={() => void alternarClaude()} />
-        Deixar o Claude usar o OMNI quando eu pedir: esta base, o histórico, a memória e os fluxos
-        {mudandoClaude && <span className="text-text-muted">aplicando…</span>}
-      </label>
-      {claude && <p className="text-[11px] text-text-muted">Vale para as conversas do Claude abertas pelo OMNI a partir de agora; as abertas precisam ser reiniciadas. Aprovar etapas de fluxo continua só na tela.</p>}
+        {erro && <p role="alert" className="kb-erro">{erro}</p>}
 
-      <label className="flex items-center gap-2 text-xs text-text-secondary">
-        <input type="checkbox" aria-label="Memória compartilhada" checked={memoria?.ligada === true} disabled={!memoria} onChange={() => void alternarMemoria()} />
-        Memória compartilhada entre as conversas
-        {memoria && <span className="text-text-muted">{memoria.notas.toLocaleString("pt-BR")} notas</span>}
-      </label>
-      <p className="text-[11px] text-text-muted">
-        Cada conversa nova do Claude recebe as notas ligadas ao pedido e, ao fim do turno, um modelo rápido guarda o que vale lembrar. Isso consome um pouco da sua conta.
-      </p>
+        <div className="kb-busca">
+          <SearchIcon className="kb-busca-icone h-4 w-4" aria-hidden />
+          <input type="search" value={consulta} onChange={(evento) => setConsulta(evento.target.value)}
+            placeholder="Testar uma busca na base…" aria-label="Buscar na base" />
+        </div>
+        {consulta.trim() && resultados.length === 0 && <p className="kb-dica">Nada encontrado.</p>}
+        {resultados.length > 0 && (
+          <ul className="kb-resultados" aria-label="Resultados">
+            {resultados.map((item) => (
+              <li key={item.id}>
+                <p className="kb-resultado-fonte">{item.fonte}{item.titulo !== item.fonte && ` · ${item.titulo}`}</p>
+                <p className="kb-resultado-texto">{item.resumo}</p>
+              </li>
+            ))}
+          </ul>
+        )}
 
-      {erro && <p role="alert" className="border-l-2 border-danger px-2 py-1 text-[11px] text-danger">{erro}</p>}
-
-      <Input size="sm" type="search" value={consulta} onChange={(evento) => setConsulta(evento.target.value)}
-        placeholder="Testar uma busca…" aria-label="Buscar na base" />
-      {consulta.trim() && resultados.length === 0 && <p className="text-[11px] text-text-muted">Nada encontrado.</p>}
-      {resultados.length > 0 && (
-        <ul className="space-y-2" aria-label="Resultados">
-          {resultados.map((item) => (
-            <li key={item.id} className="border border-border-subtle p-2">
-              <p className="truncate text-[11px] text-text-muted">{item.fonte} · {item.titulo}</p>
-              <p className="text-xs text-text-secondary">{item.resumo}</p>
-            </li>
-          ))}
+        <h2 className="kb-secao">
+          {fontes === null ? "Carregando…" : `${fontes.length} arquivos · ${numero(totalDeTrechos)} trechos`}
+        </h2>
+        {fontes?.length === 0 && <p className="kb-dica">Nenhum arquivo ainda. Solte documentos acima para começar.</p>}
+        <ul className="kb-arquivos" aria-label="Arquivos da base">
+          {fontes?.map((fonte) => {
+            const Icone = iconForPath(fonte.nome);
+            return (
+              <li key={fonte.id} className={`kb-arquivo is-${fonte.estado}`}>
+                <span className="kb-arquivo-icone" aria-hidden><Icone className="h-5 w-5" style={iconStyle(fonte.nome)} /></span>
+                <div className="kb-arquivo-info">
+                  <p className="kb-arquivo-nome" title={fonte.caminho}>{fonte.nome}</p>
+                  <p className="kb-arquivo-meta">
+                    {fonte.estado === "erro" ? fonte.erro
+                      : fonte.estado === "importando" ? `Importando… ${numero(fonte.trechos)} trechos`
+                      : `${fonte.tipo} · ${tamanhoLegivel(fonte.tamanho)} · ${numero(fonte.trechos)} trechos`}
+                  </p>
+                </div>
+                <button type="button" className="kb-remover" aria-label={`Remover ${fonte.nome}`} title="Remover da base"
+                  disabled={fonte.estado === "importando"}
+                  onClick={() => void removerFonte(fonte.id).then(recarregar).catch((motivo) => setErro(String(motivo)))}>
+                  <TrashIcon className="h-3.5 w-3.5" aria-hidden />
+                </button>
+                {fonte.estado === "importando" && <span className="kb-arquivo-progresso" aria-hidden />}
+              </li>
+            );
+          })}
         </ul>
-      )}
-
-      <h2 className="text-[10px] font-medium uppercase tracking-wider text-text-muted">
-        {fontes === null ? "Carregando…" : `${fontes.length} arquivos · ${totalDeTrechos.toLocaleString("pt-BR")} trechos`}
-      </h2>
-      <ul className="space-y-1" aria-label="Arquivos da base">
-        {fontes?.map((fonte) => (
-          <li key={fonte.id} className="flex items-center gap-3 border border-border-subtle px-3 py-2">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs text-text-primary" title={fonte.caminho}>{fonte.nome}</p>
-              <p className={`truncate text-[11px] ${fonte.estado === "erro" ? "text-danger" : "text-text-muted"}`}>
-                {fonte.estado === "erro" ? fonte.erro
-                  : fonte.estado === "importando" ? `Importando… ${fonte.trechos.toLocaleString("pt-BR")} trechos`
-                  : `${fonte.tipo} · ${tamanhoLegivel(fonte.tamanho)} · ${fonte.trechos.toLocaleString("pt-BR")} trechos`}
-              </p>
-            </div>
-            <Button size="sm" variant="ghost" aria-label={`Remover ${fonte.nome}`} disabled={fonte.estado === "importando"}
-              onClick={() => void removerFonte(fonte.id).then(recarregar).catch((motivo) => setErro(String(motivo)))}>
-              <TrashIcon className="h-3.5 w-3.5" aria-hidden="true" />
-            </Button>
-          </li>
-        ))}
-      </ul>
+      </div>
     </section>
+  );
+}
+
+/** Cartão com interruptor. O checkbox nativo fica por baixo (teclado e leitor de tela continuam). */
+function Interruptor({ icone, titulo, rotulo, detalhe, ligado, desabilitado, onAlternar }: {
+  icone: ReactNode; titulo: string; rotulo: string; detalhe: ReactNode; ligado: boolean; desabilitado: boolean; onAlternar: () => void;
+}) {
+  return (
+    <label className={`kb-chave${ligado ? " is-ligada" : ""}${desabilitado ? " is-travada" : ""}`}>
+      <span className="kb-chave-topo">
+        <span className="kb-chave-icone" aria-hidden>{icone}</span>
+        <span className="kb-chave-titulo">{titulo}</span>
+        <input type="checkbox" className="kb-chave-input" aria-label={rotulo} checked={ligado} disabled={desabilitado} onChange={onAlternar} />
+        <span className="kb-chave-trilho" aria-hidden><span className="kb-chave-bolinha" /></span>
+      </span>
+      <span className="kb-chave-detalhe">{detalhe}</span>
+    </label>
   );
 }

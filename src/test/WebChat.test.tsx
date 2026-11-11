@@ -93,8 +93,11 @@ it("mostra as ações resumidas, abre a lista ao clicar, e mostra comando e avis
 
   expect(screen.getByText("/model opus")).toBeInTheDocument();
   expect(screen.getByText("Interrompido por você")).toHaveAttribute("role", "note");
-  // Cabeçalho diz de quem é a conversa: estado, agente e conta.
-  expect(screen.getByText(/Esperando você · Claude · EmailUber · Projeto/)).toBeInTheDocument();
+  // Cabeçalho diz de quem é a conversa: estado, agente e conta, e o projeto com o ícone dele.
+  expect(screen.getByText(/Esperando você · Claude · EmailUber/)).toBeInTheDocument();
+  const projeto = document.querySelector(".w-topo-projeto");
+  expect(projeto).toHaveTextContent("Projeto");
+  expect(projeto?.querySelector("svg, img")).not.toBeNull();
 });
 
 it("lista e catálogo vêm do /painel; 304 mantém a tela sem refazer nada", async () => {
