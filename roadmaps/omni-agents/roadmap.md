@@ -38,7 +38,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
-### Modelos do Claude sempre atuais + visual de Servidores e Conhecimento (2026-11-11, sem release)
+### Modelos do Claude sempre atuais + visual de Servidores e Conhecimento (2026-11-11, publicada na v0.7.15)
 
 - Seletor de modelo do Claude (conversa, agentes e fluxos) lê o registro de modelos embutido no
   executável do Claude Code (`omni_core::modelos_claude`: `{id:"claude-…",family,display_name,
