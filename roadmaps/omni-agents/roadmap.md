@@ -38,7 +38,7 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
-### Mensagem longa na conversa (2026-11-11, sem release)
+### Mensagem longa na conversa + Codex em Full Access (2026-11-11, publicada na v0.7.16)
 
 - O campo da conversa (desktop, web, celular) cortava em 16 000 caracteres e o engine recusava
   > 16 000 bytes; por baixo, o limite global de 32 KB do corpo também barrava. Agora
