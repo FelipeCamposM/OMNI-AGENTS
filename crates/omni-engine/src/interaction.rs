@@ -892,9 +892,11 @@ fn esperar(pronto: &dyn Fn() -> bool, tempo: Duration) -> bool {
     pronto()
 }
 
-/// Rótulo do preset do `/permissions` do Codex que equivale ao auto do Claude: um revisor decide e só
-/// pergunta o que for arriscado. Os outros: "Read Only", "Ask for approval", "Full Access".
-const AUTO_DO_CODEX: &str = "Approve for me";
+/// Rótulo do preset do `/permissions` do Codex que o botão Auto escolhe: Full Access (nunca pergunta,
+/// sem sandbox), decisão do usuário em 2026-11-11 — o "Approve for me" ainda perguntava quando a
+/// revisão automática recusava. Os outros: "Read Only", "Ask for approval", "Approve for me".
+/// Igual ao `-a never -s danger-full-access` que o engine põe ao abrir (`sem_aviso_de_update`).
+const AUTO_DO_CODEX: &str = "Full Access";
 
 /// Menu do `/permissions` (Codex 0.154.0, tela real):
 /// `  Update Model Permissions` / `› 3. Approve for me (current)  Only ask…` / `Press enter to confirm…`.
@@ -913,7 +915,7 @@ fn menu_de_permissoes(texto: &str, rotulo: &str) -> Option<(u8, u8)> {
     Some((marcada, alvo))
 }
 
-/// Abre o `/permissions` no campo vazio, anda até "Approve for me" e confirma. Erro com motivo se o
+/// Abre o `/permissions` no campo vazio, anda até o preset pedido e confirma. Erro com motivo se o
 /// menu não abrir ou não fechar — nunca aperta às cegas.
 fn permissoes_do_codex(rotulo: &str, tela: &dyn Fn() -> String, pronto: &dyn Fn() -> bool, escrever: &dyn Fn(&[u8]) -> Result<()>) -> Result<()> {
     if !esperar(pronto, Duration::from_millis(1_500)) {
@@ -974,8 +976,8 @@ pub fn modo_da_sessao(session: &Arc<LiveSession>) -> Option<&'static str> {
 }
 
 /// O shift+tab do Codex só alterna Padrão ↔ Plan, e o Padrão não escreve nada no rodapé: com o
-/// campo à vista e sem a marca do Plan, conta como "auto" — o preset que a conta já abre ("Approve
-/// for me") e o que o botão Auto escolhe no `/permissions`.
+/// campo à vista e sem a marca do Plan, conta como "auto" — o preset com que o engine abre o Codex
+/// (Full Access) e o que o botão Auto escolhe no `/permissions`.
 // ponytail: o preset atual não aparece na tela; quem trocar à mão para "Ask for approval" continua
 // vendo Auto aceso. Ler o `approval_policy` do rollout da sessão se isso confundir.
 fn modo_com_provider(screen: &vt100::Screen, provider: &str) -> Option<&'static str> {
@@ -1011,7 +1013,7 @@ pub fn alternar_modo(state: &Arc<EngineState>, session: &Arc<LiveSession>, alvo:
     };
 
     let inicial = ler_modo()?;
-    // Codex: o "auto" dele mora no `/permissions` ("Approve for me"), não no shift+tab. Sai do Plan
+    // Codex: o "auto" dele mora no `/permissions` ("Full Access"), não no shift+tab. Sai do Plan
     // (se estiver) pelo laço abaixo e depois escolhe o preset no menu.
     if provider == "codex" && alvo == "auto" {
         if inicial == Some("plan") {
@@ -1491,8 +1493,8 @@ Ready to submit your answers?
             }).collect();
             format!("  Update Model Permissions\n\n{}\n\n  Press enter to confirm or esc to go back\n", linhas.join("\n"))
         };
-        assert_eq!(menu_de_permissoes(&menu(1), AUTO_DO_CODEX), Some((1, 3)));
-        assert_eq!(menu_de_permissoes(&menu(3), AUTO_DO_CODEX), Some((3, 3)));
+        assert_eq!(menu_de_permissoes(&menu(1), AUTO_DO_CODEX), Some((1, 4)));
+        assert_eq!(menu_de_permissoes(&menu(4), AUTO_DO_CODEX), Some((4, 4)));
         assert_eq!(menu_de_permissoes("› Ask Codex to do anything", AUTO_DO_CODEX), None);
     }
 

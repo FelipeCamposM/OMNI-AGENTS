@@ -570,7 +570,9 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/conversas/{id}/imagens/{n}/{k}",get(imagem_da_mensagem))
         .route("/conversas/{id}/teclas",post(teclas))
         .route("/conversas/{id}/parar",post(parar))
-        .route("/conversas/{id}/prompt",post(prompt))
+        // Texto longo colado (spec, log) passa do limite global de 32 KB: o JSON escapa aspas e
+        // quebras, então a rota aceita o dobro do texto.
+        .route("/conversas/{id}/prompt",post(prompt).layer(DefaultBodyLimit::max(2 * PROMPT_MAX_BYTES)))
         .route("/conversas/{id}/aprovar",post(approve))
         .route("/conversas/{id}/escolher",post(escolher))
         .route("/conversas/{id}/nome",post(renomear))
@@ -1563,6 +1565,9 @@ fn adotar_do_historico(state: &EngineState, id: &str) -> Result<String, ApiError
 /// Tamanho máximo de um anexo vindo do celular. Cobre foto de câmera, PDF e print com folga, e
 /// ainda cabe na memória sem susto — o corpo é lido inteiro antes de gravar.
 const ANEXO_MAX_BYTES: usize = 25 * 1024 * 1024;
+/// Teto do texto de uma mensagem. Vai inteiro numa colagem só (bracketed paste); a CLI resume colagem
+/// grande em "[Pasted text #1]". Igual ao `maxLength` do `Composer.tsx`.
+const PROMPT_MAX_BYTES: usize = 1_000_000;
 /// Pasta dos anexos, dentro do projeto da conversa. Dentro do projeto de propósito: a CLI lê sem
 /// pedir permissão extra, e é a mesma família do `.omni-agents/pasted/` que o desktop já usa.
 const PASTA_ANEXOS: [&str; 2] = [".omni-agents", "anexos"];
@@ -1703,8 +1708,8 @@ async fn prompt(State(state): State<Arc<EngineState>>, RoutePath(id): RoutePath<
     // `/comando` passa: colado na CLI e confirmado com Enter, ela executa como se fosse digitado
     // (conferido com `/context` no Claude 2.1.304). Caractere de controle continua barrado — é ele
     // que viraria tecla (Esc, Ctrl+C) dentro do terminal.
-    if body.texto.trim().is_empty() || body.texto.len() > 16_000 || body.texto.chars().any(|c|c.is_control() && c != '\n' && c != '\t') {
-        return Err(error(StatusCode::BAD_REQUEST,"Envie texto de até 16000 bytes, sem caracteres de controle"));
+    if body.texto.trim().is_empty() || body.texto.len() > PROMPT_MAX_BYTES || body.texto.chars().any(|c|c.is_control() && c != '\n' && c != '\t') {
+        return Err(error(StatusCode::BAD_REQUEST,"Envie texto de até 1 MB, sem caracteres de controle"));
     }
     let kind = if body.fila { ActionKind::Fila(body.texto) } else { ActionKind::Prompt(body.texto) };
     enqueue_async(state,id,headers,kind).await
@@ -3199,6 +3204,16 @@ quebra"}"#] {
         assert_eq!(app.clone().oneshot(req("POST","/conversas/c/prompt","https://evil.example",r#"{"texto":"oi"}"#)).await.unwrap().status(),StatusCode::FORBIDDEN);
         assert_eq!(app.clone().oneshot(req("GET","/conversas/missing/timeline","","")).await.unwrap().status(),StatusCode::NOT_FOUND);
         assert_eq!(app.oneshot(req("POST","/conversas/c/prompt","http://127.0.0.1:47322",r#"{"texto":"oi\u001b[A"}"#)).await.unwrap().status(),StatusCode::BAD_REQUEST);
+    }
+    /// Texto longo colado passava do limite global de 32 KB (e do antigo teto de 16 000 bytes).
+    #[tokio::test] async fn prompt_longo_passa_e_so_o_acima_de_1_mb_e_recusado() {
+        let (_dir,state) = fixture(); let app = router(state);
+        let corpo = |texto: String| json!({"texto": texto}).to_string();
+        // Passa do corpo e da validação; para só porque a fixture não tem sessão aberta.
+        let longo = corpo("linha \"citada\" com acento é\n".repeat(8_000));
+        assert_eq!(app.clone().oneshot(req("POST","/conversas/c/prompt","http://127.0.0.1:47322",&longo)).await.unwrap().status(),StatusCode::CONFLICT);
+        let demais = corpo("x".repeat(PROMPT_MAX_BYTES + 1));
+        assert_eq!(app.oneshot(req("POST","/conversas/c/prompt","http://127.0.0.1:47322",&demais)).await.unwrap().status(),StatusCode::BAD_REQUEST);
     }
     #[test] fn idempotent_retry_does_not_need_a_live_session_or_enqueue_again() {
         let (_dir,state) = fixture();

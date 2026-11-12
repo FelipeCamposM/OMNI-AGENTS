@@ -38,6 +38,20 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
+### Mensagem longa na conversa (2026-11-11, sem release)
+
+- O campo da conversa (desktop, web, celular) cortava em 16 000 caracteres e o engine recusava
+  > 16 000 bytes; por baixo, o limite global de 32 KB do corpo também barrava. Agora
+  `PROMPT_MAX_BYTES` = 1 MB (`mobile.rs`), a rota `/prompt` tem limite de corpo próprio (2×, pelo
+  escape do JSON) e o `maxLength` do `Composer.tsx` acompanha. Entrega continua numa colagem só.
+  Teste: `prompt_longo_passa_e_so_o_acima_de_1_mb_e_recusado`.
+- Codex pedia aprovação com "Auto" aceso: o botão só olhava se não estava em Plan, e a sessão abria
+  com o `approvals_reviewer = "user"` do `~/.codex/config.toml` (rollout de 02/11 confirma). Agora
+  `sem_aviso_de_update` (`main.rs`, por onde passa todo comando do Codex, inclusive reiniciar) põe
+  `-a never -s danger-full-access` (= "Full Access" do `/permissions`, decisão do usuário: o
+  "Approve for me" ainda perguntava quando a revisão automática recusava), salvo se o comando já
+  escolhe política/sandbox. O botão Auto (`AUTO_DO_CODEX`, `interaction.rs`) também escolhe Full Access.
+
 ### Modelos do Claude sempre atuais + visual de Servidores e Conhecimento (2026-11-11, publicada na v0.7.15)
 
 - Seletor de modelo do Claude (conversa, agentes e fluxos) lê o registro de modelos embutido no

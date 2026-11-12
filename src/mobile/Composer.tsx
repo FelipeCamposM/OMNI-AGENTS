@@ -579,7 +579,7 @@ export function Composer({ texto, onTexto, anexos, onAdicionar, onRemover, onEnv
         )}
         <label htmlFor="reply" className="sr-only">Sua resposta</label>
         <div className="composer-campo-caixa">
-        <textarea id="reply" ref={campo} rows={1} value={texto} maxLength={16000} placeholder={placeholder}
+        <textarea id="reply" ref={campo} rows={1} value={texto} maxLength={1_000_000} placeholder={placeholder}
           className="composer-campo" onPaste={colar} onKeyDown={tecla}
           onChange={(event) => { onTexto(event.target.value); acompanharMencao(event.target.value, event.target.selectionStart ?? event.target.value.length); }}
           onClick={(event) => acompanharMencao(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)}

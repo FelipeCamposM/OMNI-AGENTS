@@ -14,6 +14,14 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.16",
+    date: "2026-11-11",
+    changes: [
+      "Mensagens longas: agora cabe até 1 MB de texto no campo da conversa (antes cortava em 16 mil caracteres).",
+      "Codex no modo Auto não pede mais aprovação: abre com acesso total (Full Access), executando os comandos sem perguntar. Use o Plano quando quiser cautela.",
+    ],
+  },
+  {
     version: "0.7.15",
     date: "2026-11-11",
     changes: [

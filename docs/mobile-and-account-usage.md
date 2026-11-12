@@ -103,7 +103,7 @@ UI e API usam a mesma origem, com validação de `Host`, `Origin` nos POSTs e co
 | --- | --- |
 | `GET /conversas` | Lista resumida do índice OMNI unida ao histórico nativo deduplicado, com provider/perfil, estado e capacidades/revisão atuais. |
 | `GET /conversas/:id/timeline?cursor=0` | Até 100 mensagens do índice; históricos nativos devolvem a prévia segura de até 400 mensagens. |
-| `POST /conversas/:id/prompt` | `{ "texto": "..." }`, até 16000 bytes; sem slash command ou controles de terminal. |
+| `POST /conversas/:id/prompt` | `{ "texto": "..." }`, até 1 MB (1.000.000 bytes); sem slash command ou controles de terminal. |
 | `POST /conversas/:id/aprovar` | `{ "permitir": true }` ou `false`; apenas escolha de uso único reconhecida. |
 | `GET /atencao` | Sessões esperando entrada e possíveis pedidos de aprovação. |
 | `GET /projetos` | Projetos publicados pelo desktop unidos aos das conversas, CLIs disponíveis, contas e a idade da publicação. |

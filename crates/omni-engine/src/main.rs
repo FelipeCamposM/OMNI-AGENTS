@@ -642,8 +642,18 @@ fn sem_aviso_de_update(comando: &str) -> String {
     let (binario, resto) = comando.split_once(' ').map_or((comando, ""), |(b, r)| (b, r));
     let nome = binario.trim_matches('"').rsplit(['/', '\\']).next().unwrap_or("").to_ascii_lowercase();
     let eh_codex = matches!(nome.as_str(), "codex" | "codex.exe" | "codex.cmd" | "codex.ps1");
-    if !eh_codex || comando.contains("check_for_update_on_startup") { return comando.to_owned(); }
-    format!("{binario} -c check_for_update_on_startup=false{}{resto}", if resto.is_empty() { "" } else { " " })
+    if !eh_codex { return comando.to_owned(); }
+    let mut opcoes = Vec::new();
+    if !comando.contains("check_for_update_on_startup") { opcoes.push("-c check_for_update_on_startup=false"); }
+    // Abre em Full Access (nunca pede aprovação, sem sandbox), que é o que o botão Auto do OMNI
+    // mostra — decisão do usuário. Sem isso valia o `approvals_reviewer` do `config.toml` da conta
+    // ("user" = pede aprovação de tudo) com a tela dizendo Auto. Política já escolhida no comando
+    // fica como está.
+    let escolhe_aprovacao = ["--approve-for-me", "--ask-for-approval", " -a ", "--sandbox", " -s ", "--dangerously-bypass", "--yolo", "--full-auto", "approvals_reviewer", "approval_policy", "sandbox_mode"]
+        .iter().any(|marca| comando.contains(marca));
+    if !escolhe_aprovacao { opcoes.push("-a never -s danger-full-access"); }
+    if opcoes.is_empty() { return comando.to_owned(); }
+    format!("{binario} {}{}{resto}", opcoes.join(" "), if resto.is_empty() { "" } else { " " })
 }
 
 /// `omni-rag` ao lado do engine, com o mesmo sufixo (no dev o nome leva o triple).
@@ -1005,8 +1015,7 @@ fn bifurcar(state: &Arc<EngineState>, source: TerminalSession, provider: &str) -
 /// conversa com o mesmo id (o celular continua lendo o mesmo arquivo). Sem transcript — nenhuma
 /// mensagem foi mandada ainda — o `--resume` falharia, então fica o comando original.
 fn comando_ao_reiniciar(meta: &TerminalSession) -> Option<String> {
-    let original = meta.initial_command.clone()?;
-    // Antigravity reaberto sem `--conversation` começa uma conversa nova — era o que fazia a Conversa
+    let original = meta.initial_command.clone()?;    // Antigravity reaberto sem `--conversation` começa uma conversa nova — era o que fazia a Conversa
     // mostrar a anterior depois de reiniciar o app. O log da sessão diz qual retomar.
     if meta.provider.as_deref() == Some("antigravity") {
         let comando = com_log_do_antigravity(&original, &meta.id);
@@ -1656,9 +1665,12 @@ mod tests {
     /// (o Claude ali pararia de gravar transcript) nem a pasta de conta dela (rodaria na conta errada).
     #[test]
     fn codex_abre_sem_tela_de_update() {
-        assert_eq!(sem_aviso_de_update("codex"), "codex -c check_for_update_on_startup=false");
-        assert_eq!(sem_aviso_de_update("codex resume abc"), "codex -c check_for_update_on_startup=false resume abc");
-        assert_eq!(sem_aviso_de_update(r"C:\bin\codex.cmd fork x"), r"C:\bin\codex.cmd -c check_for_update_on_startup=false fork x");
+        const AUTO: &str = "-c check_for_update_on_startup=false -a never -s danger-full-access";
+        assert_eq!(sem_aviso_de_update("codex"), format!("codex {AUTO}"));
+        assert_eq!(sem_aviso_de_update("codex resume abc"), format!("codex {AUTO} resume abc"));
+        assert_eq!(sem_aviso_de_update(r"C:\bin\codex.cmd fork x"), format!(r"C:\bin\codex.cmd {AUTO} fork x"));
+        // Política escolhida no comando vale: o Auto do OMNI não passa por cima.
+        assert_eq!(sem_aviso_de_update("codex -a never"), "codex -c check_for_update_on_startup=false -a never");
         let pronto = sem_aviso_de_update("codex resume abc");
         assert_eq!(sem_aviso_de_update(&pronto), pronto, "reiniciar não repete a opção");
         assert_eq!(sem_aviso_de_update("claude --resume x"), "claude --resume x");
