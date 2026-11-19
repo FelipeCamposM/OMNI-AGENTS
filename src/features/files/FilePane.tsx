@@ -1,8 +1,14 @@
 import "./monacoSetup";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { useEffect, useRef, useState } from "react";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { WorkspaceTab } from "../../types/workspace";
 import { readTextFile, writeTextFile } from "./filesService";
+
+/** Binário lido como texto (docx, zip, exe…): tem byte nulo. Editar e salvar corromperia o arquivo. */
+export function pareceBinario(texto: string) {
+  return texto.slice(0, 8000).includes("\u0000");
+}
 
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   ts: "typescript",
@@ -52,6 +58,7 @@ export function FilePane({ projectPath, tab, saveMode, onDirtyChange }: FilePane
   const path = tab.resourceId ?? "";
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [binario, setBinario] = useState(false);
   const dirtyRef = useRef(false);
   const savedContentRef = useRef("");
   const autoSaveTimerRef = useRef<number | undefined>(undefined);
@@ -70,6 +77,7 @@ export function FilePane({ projectPath, tab, saveMode, onDirtyChange }: FilePane
     let cancelled = false;
     setContent(null);
     setError(null);
+    setBinario(false);
     const existing = drafts.get(tab);
     if (existing && existing.text !== existing.saved) {
       draftRef.current = existing;
@@ -84,6 +92,7 @@ export function FilePane({ projectPath, tab, saveMode, onDirtyChange }: FilePane
     readTextFile(path, projectPath)
       .then((text) => {
         if (cancelled) return;
+        if (pareceBinario(text)) { setBinario(true); return; }
         savedContentRef.current = text;
         const draft = { text, saved: text, listeners: new Set<() => void>() };
         drafts.set(tab, draft);
@@ -136,6 +145,20 @@ export function FilePane({ projectPath, tab, saveMode, onDirtyChange }: FilePane
     editor.addCommand(monacoInstance.KeyMod.CtrlCmd | monacoInstance.KeyCode.KeyS, () => void save(editor.getValue()));
   };
 
+  if (binario) {
+    const extensao = path.split(".").pop()?.toLowerCase() ?? "";
+    const falhou = (reason: unknown) => setError(`Não consegui abrir: ${reason instanceof Error ? reason.message : String(reason)}`);
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-xs text-text-secondary">
+        <p className="text-sm text-text-primary">Este arquivo{extensao ? ` .${extensao}` : ""} não é texto</p>
+        <p className="max-w-sm text-text-muted">O editor só mostra texto. Abra no programa do sistema.</p>
+        <div className="flex gap-2">
+          <button type="button" className="btn btn-primary" onClick={() => openPath(path).catch(falhou)}>Abrir no app padrão</button>
+          <button type="button" className="btn btn-ghost" onClick={() => revealItemInDir(path).catch(falhou)}>Mostrar na pasta</button>
+        </div>
+      </div>
+    );
+  }
   if (error) {
     return (
       <div role="alert" className="p-4 text-xs text-danger">

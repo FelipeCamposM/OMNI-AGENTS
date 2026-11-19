@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { FilePane } from "../features/files/FilePane";
 
+const opener = vi.hoisted(() => ({ openPath: vi.fn(async () => undefined), revealItemInDir: vi.fn(async () => undefined) }));
+vi.mock("@tauri-apps/plugin-opener", () => opener);
+
 const mockReadTextFile = vi.mocked((await import("@tauri-apps/plugin-fs")).readTextFile);
 const mockWriteTextFile = vi.mocked((await import("@tauri-apps/plugin-fs")).writeTextFile);
 
@@ -14,6 +17,16 @@ afterEach(() => {
 });
 
 describe("FilePane", () => {
+  it("binário (docx) não vira texto editável: oferece abrir no app padrão", async () => {
+    mockReadTextFile.mockResolvedValueOnce("PK\u0003\u0004\u0000\u0000word/document.xml");
+    const tab = { id: "docx", kind: "file" as const, title: "a.docx", resourceId: "C:/dev/projeto/a.docx" };
+    render(<FilePane projectPath="C:/dev/projeto" tab={tab} saveMode="auto" onDirtyChange={vi.fn()} />);
+    expect(await screen.findByText("Este arquivo .docx não é texto")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir no app padrão" }));
+    expect(opener.openPath).toHaveBeenCalledWith("C:/dev/projeto/a.docx");
+  });
+
   it.each(["manual", "auto"] as const)("preserva o rascunho ao remontar a aba em outro painel no modo %s", async (saveMode) => {
     mockReadTextFile.mockResolvedValueOnce("original");
     const tab = { id: "moving-file", kind: "file" as const, title: "a.ts", resourceId: "C:/dev/projeto/a.ts" };

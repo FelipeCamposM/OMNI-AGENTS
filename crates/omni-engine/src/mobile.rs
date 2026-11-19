@@ -566,7 +566,6 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/conversas/{id}/terminal",get(terminal))
         .route("/conversas/{id}/subagentes",get(subagentes))
         .route("/conversas/{id}/subagentes/{agente}",get(subagente))
-        .route("/conversas/{id}/subagentes/{agente}/parar",post(parar_subagente))
         .route("/conversas/{id}/imagens/{n}/{k}",get(imagem_da_mensagem))
         .route("/conversas/{id}/teclas",post(teclas))
         .route("/conversas/{id}/parar",post(parar))
@@ -1302,56 +1301,6 @@ async fn subagente(State(state): State<Arc<EngineState>>, RoutePath((id, agente)
         };
         Ok(Json(json!({"timeline":omni_core::conversations::page(&format!("{id}-{agente}"),itens,page.cursor,TIMELINE_PAGINA)})))
     }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao ler o subagente"))?
-}
-
-/// Linha do painel de subagentes com a seleção (`❯ ◯ general-purpose  Rodar testes`, `❯ ● main`).
-/// O campo também começa em `❯`, mas o que vem depois é texto, não o glifo da linha.
-fn linha_selecionada_do_painel(tela: &str) -> Option<&str> {
-    tela.lines().rev().find(|linha| linha.trim_start().strip_prefix("❯ ").is_some_and(|resto| resto.starts_with(['◯', '●'])))
-}
-
-/// Para só um subagente pelo painel abaixo do campo do Claude (telas reais, 2.1.319): ↓ desce do campo
-/// para os itens do rodapé (os shells em segundo plano, se houver, e depois `main` e um subagente por
-/// linha); `x` na linha selecionada para aquele subagente; Esc devolve o foco ao campo. Quantos ↓ varia,
-/// então lê a tela a cada passo e só aperta `x` quando a linha selecionada é a dele. A linha muda de
-/// texto com o trabalho ("Running 150-packet…"): sem achar a descrição, devolve `false` e não toca em
-/// nada além das setas — a página pede ao agente (`TaskStop`), que sabe o id.
-fn parar_subagente_na_tela(state: &Arc<EngineState>, sessao: &LiveSession, sessao_id: &str, descricao: &str) -> bool {
-    let tela = || sessao.interaction.lock().map(|i| i.parser.screen().contents()).unwrap_or_default();
-    let livre = sessao.interaction.lock().is_ok_and(|i| interaction::composer_vazio(i.parser.screen()) && interaction::approval(&i.parser.screen().contents(),"claude").is_none());
-    if descricao.trim().is_empty() || !livre { return false; }
-    let mut anterior: Option<String> = None;
-    for _ in 0..10 {
-        if write_terminal(state,sessao_id,"\x1b[B").is_err() { return false; }
-        std::thread::sleep(std::time::Duration::from_millis(350));
-        let agora = tela();
-        let Some(selecionada) = linha_selecionada_do_painel(&agora).map(str::to_owned) else { continue };
-        if selecionada.contains(descricao.trim()) {
-            let _ = write_terminal(state,sessao_id,"x");
-            std::thread::sleep(std::time::Duration::from_millis(400));
-            let _ = write_terminal(state,sessao_id,"\x1b");
-            return true;
-        }
-        // Chegou ao fim da lista (a seleção não anda mais): solta o rodapé e desiste.
-        if anterior.as_deref() == Some(selecionada.as_str()) { break; }
-        anterior = Some(selecionada);
-    }
-    // Esc só com algo do rodapé selecionado: com o campo em foco ele interromperia o turno.
-    if linha_selecionada_do_painel(&tela()).is_some() || tela().contains("Enter to view tasks") { let _ = write_terminal(state,sessao_id,"\x1b"); }
-    false
-}
-
-/// Para um subagente só. `na_tela: false` = não deu pelo painel; a página pede ao agente.
-async fn parar_subagente(State(state): State<Arc<EngineState>>, RoutePath((id, agente)): RoutePath<(String, String)>) -> Result<Json<Value>, ApiError> {
-    tokio::task::spawn_blocking(move || {
-        let (caminho, _) = transcript_do_claude(&state,&id)?;
-        let descricao = omni_core::subagentes::listar(&caminho, true).into_iter().find(|s| s.id == agente && s.estado == "rodando")
-            .map(|s| s.descricao).ok_or_else(||error(StatusCode::NOT_FOUND,"Subagente não está rodando"))?;
-        let (_, sessao) = current(&state,&id)?;
-        let sessao = sessao.ok_or_else(||error(StatusCode::CONFLICT,"Sessão não está aberta no PC"))?;
-        let sessao_id = sessao.meta.lock().map(|meta| meta.id.clone()).map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Sessão indisponível"))?;
-        Ok(Json(json!({"ok":true,"na_tela":parar_subagente_na_tela(&state,&sessao,&sessao_id,&descricao)})))
-    }).await.map_err(|_|error(StatusCode::INTERNAL_SERVER_ERROR,"Falha ao parar o subagente"))?
 }
 
 /// A saída bruta da PTY a partir de `desde` — comum ao terminal de uma conversa e a um shell.
@@ -3609,17 +3558,6 @@ quebra"}"#] {
         let config = MobileConfig::default(); assert!(!config.enabled); assert!(validate(&config).is_ok());
         assert!(validate(&MobileConfig{enabled:true,bind:"0.0.0.0:47322".into(),token:String::new(),serve:false,totp_secret:String::new(),totp_confirmed:false}).is_err());
         assert!(validate(&MobileConfig{enabled:true,bind:"127.0.0.1:47321".into(),token:String::new(),serve:false,totp_secret:String::new(),totp_confirmed:false}).is_err());
-    }
-
-    /// Telas reais do Claude 2.1.319 com dois subagentes: a seleção do painel é a linha com `❯ ◯`, nunca o
-    /// campo (que também começa em `❯`), e sem nada selecionado não há linha.
-    #[test] fn painel_de_subagentes_acha_a_linha_selecionada() {
-        let tela = |nome: &str| std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests-fixtures/telas").join(nome)).unwrap();
-        let selecionada = tela("claude.nada.painel-subagentes-selecionado-2.1.319.txt");
-        assert!(linha_selecionada_do_painel(&selecionada).is_some_and(|l| l.contains("Subagent B ping run")));
-        assert_eq!(linha_selecionada_do_painel(&tela("claude.nada.painel-subagentes-campo-2.1.319.txt")), None);
-        assert_eq!(linha_selecionada_do_painel("❯ ◯ não é linha?\n❯ texto no campo"), Some("❯ ◯ não é linha?"));
-        assert_eq!(linha_selecionada_do_painel("❯ texto no campo"), None);
     }
 
     mod actions {

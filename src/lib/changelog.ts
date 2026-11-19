@@ -14,6 +14,18 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.17",
+    date: "2026-11-19",
+    changes: [
+      "Painel de subagentes na conversa: cada um com ícone do tipo, a tarefa que está fazendo, a última ação e o histórico completo em \"Ver\". O painel só aparece enquanto algum está rodando.",
+      "Parar um subagente agora pede ao agente principal que encerre só aquele, sem travar a conversa.",
+      "Corrigido: subagente que já tinha terminado continuava aparecendo como \"Rodando\".",
+      "Corrigido: \"Ver\" de um subagente abria vazio.",
+      "O histórico não mostra mais as conversas criadas por scripts e sites que usam o Claude Code por baixo (claude -p).",
+      "Arquivo que não é texto (Word, Excel, zip…) não abre mais como caracteres embaralhados: aparece um aviso com os botões para abrir no programa do sistema ou mostrar na pasta.",
+    ],
+  },
+  {
     version: "0.7.16",
     date: "2026-11-11",
     changes: [

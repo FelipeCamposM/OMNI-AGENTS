@@ -369,9 +369,16 @@ fn item(kind: Kind, role: &str, text: String, tool: Option<String>, value: &Valu
     Item { kind, role: role.into(), text, tool, timestamp: value["timestamp"].as_str().map(str::to_owned), imagens: 0, diff: None }
 }
 
-/// Itens de uma linha do transcript, na ordem em que aparecem nela.
+/// Itens de uma linha do transcript, na ordem em que aparecem nela. Linha de subagente
+/// (`isSidechain`) no transcript da conversa fica de fora; no arquivo do próprio subagente, use
+/// [`items_do_subagente`].
 pub fn items(value: &Value, provider: &str) -> Vec<Item> {
     if value["isSidechain"] == true { return Vec::new(); }
+    items_do_subagente(value, provider)
+}
+
+/// Como [`items`], aceitando linhas `isSidechain` (todas as de `subagents/agent-*.jsonl` são).
+pub fn items_do_subagente(value: &Value, provider: &str) -> Vec<Item> {
     let mut saida = Vec::new();
     match provider {
         "claude" if value["type"] == "user" || value["type"] == "assistant" => {
@@ -544,11 +551,12 @@ fn chamada_da_api(linha: &[u8]) -> bool {
     linha.starts_with(br#"{"type":"api-request"#)
 }
 
-fn entradas(linha: &[u8], provider: &str) -> Vec<Entry> {
+fn entradas(linha: &[u8], provider: &str, subagente: bool) -> Vec<Entry> {
     if linha.iter().all(u8::is_ascii_whitespace) || chamada_da_api(linha) { return Vec::new(); }
     let Ok(value) = serde_json::from_slice::<Value>(linha) else { return Vec::new() };
     let base = value["uuid"].as_str().map(str::to_owned).unwrap_or_else(|| format!("{:016x}", hash(linha)));
-    items(&value, provider).into_iter().enumerate()
+    let itens = if subagente { items_do_subagente(&value, provider) } else { items(&value, provider) };
+    itens.into_iter().enumerate()
         .map(|(i, item)| Entry { identity: format!("{provider}:{base}#{i}"), item })
         .collect()
 }
@@ -588,6 +596,7 @@ impl FeedCache {
         }
         let mut file = crate::abrir(path)?;
         let tamanho = file.metadata()?.len();
+        let subagente = path.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "subagents");
         if !self.feeds.contains_key(path) && self.feeds.len() >= CACHE_MAX {
             if let Some(velho) = self.feeds.iter().min_by_key(|(_, feed)| feed.usado_em).map(|(p, _)| p.clone()) {
                 self.feeds.remove(&velho);
@@ -613,12 +622,12 @@ impl FeedCache {
                     // simplesmente terminou assim. Se já é um JSON inteiro ela aparece, mas fica
                     // provisória: a próxima leitura recomeça dela, então nada duplica quando a CLI
                     // completar a linha.
-                    let resto = entradas(&linha, provider);
+                    let resto = entradas(&linha, provider, subagente);
                     feed.provisorios = resto.len();
                     feed.entries.extend(resto);
                     break;
                 }
-                feed.entries.extend(entradas(&linha[..linha.len() - 1], provider));
+                feed.entries.extend(entradas(&linha[..linha.len() - 1], provider, subagente));
                 feed.offset += linha.len() as u64;
             }
         }

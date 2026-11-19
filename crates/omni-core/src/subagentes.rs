@@ -37,8 +37,13 @@ pub fn listar(transcript: &Path, viva: bool) -> Vec<Subagente> {
         let meta: Value = std::fs::read(caminho.with_extension("meta.json")).ok()
             .and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
         let (terminou, ultima_acao) = fim(&caminho);
+        let tool_use_id = meta["toolUseId"].as_str().unwrap_or("");
+        // A CLI marca `finished` no meta; em primeiro plano, a resposta já chegou ao pai (tool_result).
+        let respondeu_ao_pai = meta["requestShape"] != "background" && !tool_use_id.is_empty()
+            && pai.contains(&format!("\"tool_use_id\":\"{tool_use_id}\""));
+        let terminou = terminou || meta["finished"] == true || respondeu_ao_pai;
         let estado = if terminou { "concluido" }
-            else if !viva || parado_no_pai(&pai, meta["toolUseId"].as_str().unwrap_or("")) { "parado" }
+            else if !viva || parado_no_pai(&pai, tool_use_id) { "parado" }
             else { "rodando" };
         let atualizado_ms = entrada.metadata().ok()?.modified().ok()?
             .duration_since(std::time::UNIX_EPOCH).ok()?.as_millis() as u64;
@@ -59,8 +64,13 @@ fn fim(caminho: &Path) -> (bool, Option<String>) {
     let (mut terminou, mut acao) = (false, None);
     for linha in BufReader::new(arquivo).lines().map_while(Result::ok) {
         let Ok(valor) = serde_json::from_str::<Value>(&linha) else { continue };
-        if valor["type"] == "assistant" { terminou = valor["message"]["stop_reason"] == "end_turn"; }
-        for item in crate::feed::items(&valor, "claude") {
+        if valor["type"] == "assistant" {
+            let conteudo = valor["message"]["content"].as_array();
+            // Subagente que entrega o relatório por `SubagentHandback` termina com tool_use, não end_turn.
+            let entregou = conteudo.is_some_and(|c| c.iter().any(|p| p["name"] == "SubagentHandback"));
+            terminou = valor["message"]["stop_reason"] == "end_turn" || entregou;
+        }
+        for item in crate::feed::items_do_subagente(&valor, "claude") {
             if item.kind == crate::feed::Kind::Tool {
                 acao = Some(format!("{} {}", item.tool.unwrap_or_default(), item.text).trim().to_owned());
             }
@@ -95,7 +105,7 @@ mod tests {
         let transcript = dir.path().join("sessao.jsonl");
         let sub = pasta(&transcript);
         std::fs::create_dir_all(&sub).unwrap();
-        let bash = json!({"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"npm test"}}]}});
+        let bash = json!({"type":"assistant","isSidechain":true,"message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"npm test"}}]}});
         let fim = json!({"type":"assistant","message":{"role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Pronto"}]}});
         grava(&sub, "a1", json!({"agentType":"Explore","description":"Mapear rotas","toolUseId":"tu1"}), &[bash.clone()]);
         grava(&sub, "a2", json!({"agentType":"general-purpose","description":"Rodar testes","toolUseId":"tu2"}), &[bash.clone(), fim]);
@@ -111,6 +121,29 @@ mod tests {
 
         assert_eq!(listar(&transcript, false).iter().find(|s| s.id == "a1").unwrap().estado, "parado", "sessão fechada não roda nada");
         assert!(arquivo(&transcript, "a1").is_some());
+        // O "Ver" lê pelo cache do feed: linha `isSidechain` do arquivo do subagente tem que aparecer.
+        let mut cache = crate::feed::FeedCache::default();
+        assert!(!cache.read(&arquivo(&transcript, "a1").unwrap(), "claude").unwrap().is_empty());
         assert!(arquivo(&transcript, "../x").is_none());
+    }
+
+    #[test]
+    fn entrega_por_handback_meta_finished_ou_resposta_no_pai_conta_como_concluido() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("sessao.jsonl");
+        let sub = pasta(&transcript);
+        std::fs::create_dir_all(&sub).unwrap();
+        let busca = json!({"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t1","name":"WebFetch","input":{"url":"https://x"}}]}});
+        let handback = json!({"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t2","name":"SubagentHandback","input":{"message":"ok"}}]}});
+        grava(&sub, "h", json!({"agentType":"web-fetch","toolUseId":"tu1"}), &[busca.clone(), handback]);
+        grava(&sub, "f", json!({"agentType":"web-fetch","toolUseId":"tu2","finished":true}), &[busca.clone()]);
+        grava(&sub, "p", json!({"agentType":"Explore","toolUseId":"tu3"}), &[busca.clone()]);
+        grava(&sub, "b", json!({"agentType":"Explore","toolUseId":"tu4","requestShape":"background"}), &[busca]);
+        std::fs::write(&transcript, r#"{"type":"user","message":{"content":[{"tool_use_id":"tu3","type":"tool_result"},{"tool_use_id":"tu4","type":"tool_result"}]}}"#).unwrap();
+
+        let lista = listar(&transcript, true);
+        let estado = |id: &str| lista.iter().find(|s| s.id == id).unwrap().estado;
+        assert_eq!((estado("h"), estado("f"), estado("p")), ("concluido", "concluido", "concluido"));
+        assert_eq!(estado("b"), "rodando", "em segundo plano, o tool_result é só o aviso de que começou");
     }
 }

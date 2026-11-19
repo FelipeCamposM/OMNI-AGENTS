@@ -93,7 +93,14 @@ pub fn claude_entry(path: &Path, profile: &Profile) -> Option<HistoryEntry> {
     let file = crate::abrir(path).ok()?;
     let mut entry = blank("claude", profile, path.file_stem()?.to_string_lossy().into_owned(), path);
     let mut summary = None;
+    // `claude -p` (scripts, sites, SDK) grava `entrypoint: sdk-*`; a CLI interativa, `cli`. Sessão só de
+    // script fica fora do histórico; retomada na CLI interativa, volta a aparecer.
+    let (mut por_script, mut interativa) = (false, false);
     for line in BufReader::new(file).lines().map_while(Result::ok) {
+        if !interativa && line.contains("\"entrypoint\":\"") {
+            interativa = line.contains("\"entrypoint\":\"cli\"");
+            por_script |= line.contains("\"entrypoint\":\"sdk-");
+        }
         // Só desserializa linha que interessa: transcript passa de 5 MB.
         if line.contains("\"type\":\"ai-title\"") {
             let title = serde_json::from_str::<Value>(&line).ok().and_then(|value| value["aiTitle"].as_str().map(str::to_owned));
@@ -109,6 +116,7 @@ pub fn claude_entry(path: &Path, profile: &Profile) -> Option<HistoryEntry> {
         }
     }
     entry.first_prompt.as_ref()?;
+    if por_script && !interativa { return None; }
     if entry.title.is_none() { entry.title = summary; }
     Some(entry)
 }
@@ -289,10 +297,16 @@ mod tests {
         // Só hook de inicialização, nenhum prompt: não é conversa.
         fs::write(project.join("vazia.jsonl"), lines(&[json!({"type":"mode","mode":"normal"})])).unwrap();
         fs::write(project.join("abc").join("subagents").join("x.jsonl"), "{}").unwrap();
+        // `claude -p` de script/site: fora. Retomada depois na CLI interativa: entra.
+        let pedido = |entrypoint: &str| json!({"type":"user","entrypoint":entrypoint,"message":{"role":"user","content":"resuma"}});
+        fs::write(project.join("script.jsonl"), lines(&[pedido("sdk-cli")])).unwrap();
+        fs::write(project.join("retomada.jsonl"), lines(&[pedido("sdk-cli"), pedido("cli")])).unwrap();
 
         let mut cache = ScanCache::new();
-        let claude = scan("claude", &[profile("claude", claude_dir.path())], &mut cache);
-        assert_eq!(claude.len(), 1);
+        let mut claude = scan("claude", &[profile("claude", claude_dir.path())], &mut cache);
+        let ids: std::collections::BTreeSet<_> = claude.iter().map(|e| e.session_id.as_str()).collect();
+        assert_eq!(ids, ["abc", "retomada"].into(), "a sessão só de script fica fora");
+        claude.retain(|e| e.session_id == "abc");
         assert_eq!(claude[0].session_id, "abc");
         assert_eq!(claude[0].title.as_deref(), Some("Corrigir login"));
         assert_eq!(claude[0].first_prompt.as_deref(), Some("corrige o login"));

@@ -38,6 +38,29 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
+### Subagente que já terminou ficava "Rodando" na conversa (2026-11-16, sem release)
+
+- Caso real: web-fetch em EMBUSCADACASAAUTOMATICA. Subagente entrega o relatório por `SubagentHandback`
+  (último `stop_reason` = `tool_use`, nunca `end_turn`), então `omni-core/src/subagentes.rs` o achava vivo.
+- Agora conta como concluído também: `SubagentHandback` chamado, `finished: true` no `.meta.json`, ou (fora de
+  segundo plano) `tool_result` daquele `toolUseId` no transcript do pai. Teste novo no mesmo arquivo.
+- Painel de subagentes na conversa (`src/mobile/TrabalhoAoVivo.tsx`): cabeçalho com "N rodando · N no total",
+  ícone por tipo (Explore=lupa, web-fetch=globo, Plan=notas, review=bug, resto=robô) que pulsa enquanto roda,
+  título = tarefa, linha "estado · tipo · há X min", última ação com ícone da ferramenta, Ver (histórico com
+  ícones) e Parar só aquele. Só aparece com algum rodando; concluídos ficam atrás de "Ver concluídos (N)".
+- "Ver" vinha vazio: `feed::items` descarta linhas `isSidechain`, e todas as do `subagents/agent-*.jsonl` são.
+  Agora `items_do_subagente` e o `FeedCache` aceitam sidechain quando o arquivo está em `subagents/`.
+- "Parar" quebrava a sessão: o engine teclava ↓/`x`/Esc no rodapé da CLI e deixava a tela fora do que a
+  conversa reconhece ("Entrada do CLI não reconhecida"); o plano B não mandava `Idempotency-Key`. Removida a
+  rota `/subagentes/{id}/parar` e a navegação na tela; o botão pede ao agente (`TaskStop`) com chave, na fila
+  se o turno estiver em andamento, e fica "Parando…" até o subagente sair de rodando.
+- Histórico poluído por `claude -p` de scripts/sites: `history::claude_entry` esconde sessões com
+  `entrypoint: sdk-*` que nunca tiveram linha `entrypoint: cli` (retomada interativa volta a aparecer).
+  Pendente se pedirem: o mesmo para `codex exec`.
+- Arquivo binário (docx citado na conversa) abria no Monaco como lixo, com auto-save podendo corromper.
+  `FilePane` detecta byte nulo e mostra "não é texto" + "Abrir no app padrão" / "Mostrar na pasta".
+  `opener:allow-open-path` ganhou escopo só de extensões de documento/mídia/arquivo compactado (nada executável).
+
 ### Mensagem longa na conversa + Codex em Full Access (2026-11-11, publicada na v0.7.16)
 
 - O campo da conversa (desktop, web, celular) cortava em 16 000 caracteres e o engine recusava
