@@ -97,7 +97,14 @@ export const PALETAS: Paleta[] = [
 
 export const PALETA_PADRAO = "laranja";
 
+/** Cor livre (`settings.accent` = `#RRGGBB`): a sombra e a versão do tema claro saem dela. */
+export const ehCorLivre = (id: string | undefined): id is string => /^#[0-9a-f]{6}$/i.test(id ?? "");
+
 export function getPaleta(id: string | undefined): Paleta {
+  if (ehCorLivre(id)) {
+    const base = id.toUpperCase();
+    return { id: base, label: base, base, deep: escurecer(base, 0.25), claro: { base: escurecer(base, 0.3), deep: escurecer(base, 0.45) } };
+  }
   return PALETAS.find((p) => p.id === id) ?? PALETAS[0];
 }
 

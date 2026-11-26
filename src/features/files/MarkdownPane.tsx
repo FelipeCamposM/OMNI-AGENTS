@@ -4,6 +4,9 @@ import remarkGfm from "remark-gfm";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../../components/ui";
 import type { WorkspaceTab } from "../../types/workspace";
+import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
+import { DocumentoPaginado } from "./DocumentoPaginado";
 import { FilePane } from "./FilePane";
 import { fileMtime, readTextFile } from "./filesService";
 
@@ -18,6 +21,26 @@ interface MarkdownPaneProps {
 
 type ViewMode = "app" | "document";
 
+/** Copia as folhas para `#md-impressao` (direto no body, fora das áreas com rolagem que cortariam a
+ *  impressão), liga o CSS de impressão e pede o PDF ao WebView2. Fora do Windows, o diálogo de imprimir. */
+async function imprimirFolhasEmPdf(destino: string) {
+  const folhas = document.querySelector("[data-md-paginas]");
+  if (!folhas) throw new Error("As páginas ainda não foram montadas.");
+  const copia = document.createElement("div");
+  copia.id = "md-impressao";
+  copia.innerHTML = [...folhas.querySelectorAll(".md-folha")].map((f) => f.outerHTML).join("");
+  document.body.appendChild(copia);
+  document.documentElement.classList.add("imprimindo-md");
+  try {
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    if (navigator.userAgent.includes("Windows")) await invoke("salvar_pdf_da_pagina", { caminho: destino });
+    else window.print();
+  } finally {
+    document.documentElement.classList.remove("imprimindo-md");
+    copia.remove();
+  }
+}
+
 /** Reload automático quando o arquivo muda por fora, reaproveitando o mesmo padrão
  * setTimeout/cancelled de `useTerminalSessions`.
  *
@@ -31,6 +54,7 @@ export function MarkdownPane({ projectPath, tab, fileSaveMode, onDirtyChange }: 
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<ViewMode>("app");
   const [editing, setEditing] = useState(false);
+  const [baixando, setBaixando] = useState(false);
   const lastMtimeRef = useRef(0);
 
   const load = useCallback(async () => {
@@ -80,6 +104,16 @@ export function MarkdownPane({ projectPath, tab, fileSaveMode, onDirtyChange }: 
 
   const isDocument = mode === "document";
 
+  async function baixar() {
+    const nome = (path.split(/[\\/]/).pop() ?? "documento").replace(/\.(md|markdown)$/i, "") + ".pdf";
+    const destino = await save({ defaultPath: nome, filters: [{ name: "PDF", extensions: ["pdf"] }] });
+    if (!destino) return;
+    setBaixando(true);
+    try { await imprimirFolhasEmPdf(destino.toLowerCase().endsWith(".pdf") ? destino : `${destino}.pdf`); }
+    catch (motivo) { setError(motivo instanceof Error ? motivo.message : String(motivo)); }
+    finally { setBaixando(false); }
+  }
+
   function stopEditing() {
     setEditing(false);
     void load(); // pega a versão salva na hora, sem esperar o próximo tick do poll
@@ -117,15 +151,17 @@ export function MarkdownPane({ projectPath, tab, fileSaveMode, onDirtyChange }: 
         >
           {isDocument ? "◧ Voltar ao app" : "▤ Ver como documento (estilo PDF)"}
         </Button>
+        {isDocument && (
+          <Button size="sm" variant="primary" loading={baixando} onClick={() => void baixar()}
+            title="Salvar estas páginas como um arquivo PDF">
+            Baixar PDF
+          </Button>
+        )}
       </div>
 
       {isDocument ? (
         <div className="min-h-0 flex-1 overflow-auto bg-[#3a3a42] px-6 py-10">
-          <article className="prose prose-neutral mx-auto max-w-[820px] bg-white px-16 py-14 shadow-2xl">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
-              {content}
-            </ReactMarkdown>
-          </article>
+          <DocumentoPaginado conteudo={content} />
         </div>
       ) : editing ? (
         <FilePane projectPath={projectPath} tab={tab} saveMode={fileSaveMode} onDirtyChange={onDirtyChange} />

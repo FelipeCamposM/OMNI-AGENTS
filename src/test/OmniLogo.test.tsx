@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render } from "@testing-library/react";
 import { OmniLogo, svgDaLogo, LADO_DA_LOGO, type CamadaDaLogo } from "../components/ui/OmniLogo";
-import { PALETAS, coresDaLogo } from "../lib/palettes";
+import { PALETAS, coresDaLogo, coresDaPaleta } from "../lib/palettes";
 
 const CAMADAS: CamadaDaLogo[] = ["outline", "shadow", "primary", "secondary", "accent", "highlight"];
 
@@ -65,5 +65,11 @@ describe("coresDaLogo", () => {
   it("segue a variante clara da paleta", () => {
     // Sem isto a logo ficaria com o tom escuro do tema escuro sobre fundo branco.
     expect(coresDaLogo("roxo", true).primary).toBe(PALETAS.find(p => p.id === "roxo")!.claro!.base);
+  });
+
+  it("cor livre (hex) vira paleta, mais escura no tema claro", () => {
+    expect(coresDaLogo("#12ab34", false).primary).toBe("#12AB34");
+    expect(coresDaPaleta("#12AB34", true).base).not.toBe("#12AB34");
+    expect(coresDaPaleta("nada", false).base).toBe(PALETAS[0].base);
   });
 });

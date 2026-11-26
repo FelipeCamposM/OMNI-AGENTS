@@ -14,6 +14,23 @@ export interface EntradaChangelog {
 
 export const CHANGELOG: EntradaChangelog[] = [
   {
+    version: "0.7.18",
+    date: "2026-11-26",
+    changes: [
+      "Novo: Estudos na lateral, com Roadmaps de estudo, Mentor, Pomodoro e Análises. Também no celular.",
+      "Roadmaps de estudo: a IA faz algumas perguntas e monta um caminho de etapas diárias, com aula, tarefas, cards de revisão e caderno. Ideia e método do Enzo.",
+      "Mentor de estudo: conte o que está estudando e as plataformas que usa; ele registra o que você fez e diz o próximo passo, com quanto tempo e quantas questões. Dá para cancelar a resposta.",
+      "Pomodoro por matéria, com histórico, metas e análises por dia, semana e matéria. Os tempos se escolhem numa roda de rolar, como no alarme do celular.",
+      "Login de 1 ano para o Claude: em Configurações → Contas, o botão de relógio faz o login uma vez e a conta para de pedir /login quando o prazo acaba.",
+      "Cor de destaque livre: além das cores prontas, escolha qualquer cor num seletor próprio do app.",
+      "Arquivos .html abrem com a página renderizada ao lado do código, e ela atualiza sozinha quando o arquivo muda.",
+      "Markdown no modo documento agora aparece dividido em páginas A4 e tem o botão Baixar PDF.",
+      "Corrigido: conversa antiga do Codex aberta pelos Recentes aparecia vazia na aba Conversa.",
+      "Corrigido: a pergunta do Claude vinha com uma barra na frente e cortada pela metade.",
+      "Corrigido: o título da pergunta do Claude às vezes mostrava outra frase da tela, e o clique na opção podia ser recusado.",
+    ],
+  },
+  {
     version: "0.7.17",
     date: "2026-11-19",
     changes: [

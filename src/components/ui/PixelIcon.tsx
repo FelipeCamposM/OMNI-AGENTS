@@ -4,7 +4,7 @@ import type { SVGProps } from "react";
  * ARQUIVO GERADO — não editar à mão.
  * Rode `node scripts/gen-pixel-icons.mjs` depois de mexer na lista ICONS do script.
  *
- * Ícones pixel-art de `pixelarticons` v2.4.1 (MIT), inlineados: o app usa ~106 dos
+ * Ícones pixel-art de `pixelarticons` v2.4.1 (MIT), inlineados: o app usa ~114 dos
  * 1036 do pacote, e nenhum runtime externo entra no bundle por causa disso.
  */
 type IconProps = SVGProps<SVGSVGElement> & { size?: number | string };
@@ -419,11 +419,6 @@ export const StarIcon = makeIcon(
   "M5 20H8V22H3V16H5V20ZM21 22H16V20H19V16H21V22ZM10 20H8V18H10V20ZM16 20H14V18H16V20ZM14 18H10V16H14V18ZM7 16H5V13H7V16ZM19 16H17V13H19V16ZM5 13H3V11H5V13ZM21 13H19V11H21V13ZM9 9H3V11H1V7H9V9ZM23 11H21V9H15V7H23V11ZM11 7H9V3H11V7ZM15 7H13V3H15V7ZM13 3H11V1H13V3Z"
 );
 
-/** Estrela cheia: a conta principal. */
-export const StarFilledIcon = makeIcon(
-  "M11 1h2v2h-2zM9 3h6v4H9zM1 7h22v4H1zM3 11h18v2H3zM5 13h14v3H5zM5 16h5v2H5zm9 0h5v2h-5zM5 18h3v2H5zm11 0h3v2h-3zM3 20h5v2H3zm13 0h5v2h-5z"
-);
-
 export const EyeIcon = makeIcon(
   "M16 20H8v-2h8v2Zm-8-2H4v-2h4v2Zm12 0h-4v-2h4v2ZM4 16H2v-2h2v2Zm10-6h-2v2h2v-2h2v4h-2v2h-4v-2H8v-4h2V8h4v2Zm8 6h-2v-2h2v2ZM2 14H0v-4h2v4Zm22 0h-2v-4h2v4ZM4 10H2V8h2v2Zm18 0h-2V8h2v2ZM8 8H4V6h4v2Zm12 0h-4V6h4v2Zm-4-2H8V4h8v2Z"
 );
@@ -440,14 +435,51 @@ export const AttachmentIcon = makeIcon(
   "M7 7v10H5V7zm12 0v12h-2V7zm-8 2v10H9V9zm4 0v8h-2V9zm0-6v2H9V3zm-2 4v2h-2V7zm4 12v2h-6v-2zm0-14v2h-2V5zM9 5v2H7V5z"
 );
 
-export const MicIcon = makeIcon(
-  "M10 2h4v2h2v8h-2v2h-4v-2H8V4h2zM5 9h2v3h2v2h6v-2h2V9h2v3h-2v2h-2v2H9v-2H7v-2H5zm6 7h2v4h-2zm-4 4h10v2H7z"
-);
-
 export const SendIcon = makeIcon(
   "M4 19h4v2H2v-8h2v6Zm8 0H8v-2h4v2Zm4-2h-4v-2h4v2Zm4-2h-4v-2h4v2Zm-10-2H4v-2h6v2Zm12 0h-2v-2h2v2ZM8 5H4v6H2V3h6v2Zm12 6h-4V9h4v2Zm-4-2h-4V7h4v2Zm-4-2H8V5h4v2Z"
 );
 
 export const ArrowLeftIcon = makeIcon(
   "M20 11v2H4v-2zM8 13v2H6v-2zm2 2v2H8v-2zm2 2v2h-2v-2zm-4-6V9H6v2zM10 15V7H8v8zm2 2V5h-2v12z"
+);
+
+export const FireIcon = makeIcon(
+  "M9 2h2v4H9zM7 6h2v2H7zM5 8h2v2H5zm8 2h2v2h-2zm2-2h2v2h-2zm2 2h2v2h-2zm2 2h2v6h-2zM3 10h2v8H3zm8-4h2v4h-2zm6 12h2v2h-2zM7 20h10v2H7zm-2-2h2v2H5zm4-2h6v4H9zM11 14h2v3h-2z"
+);
+
+export const PauseIcon = makeIcon(
+  "M10 20H4V4h6v16Zm8-16v16h-6V4h6Zm-4 2v12h2V6h-2ZM6 18h2V6H6v12Z"
+);
+
+export const TrophyIcon = makeIcon(
+  "M16 17H13V19H15V21H9V19H11V17H8V15H16V17ZM18 5H22V11H20V7H18V11H20V13H18V15H16V5H8V15H6V13H4V11H6V7H4V11H2V5H6V3H18V5Z"
+);
+
+export const MapIcon = makeIcon(
+  "M4 20h2v2H2V6h2v14Zm12 0h2v2h-4v-2h-2v-2h2V8h-2V6h4v14Zm-8 0H6v-2h2v2Zm12 0h-2v-2h2v2ZM10 4h2v2h-2v10h2v2H8V4H6V2h4v2Zm12 14h-2V4h-2V2h4v16ZM6 6H4V4h2v2Zm12 0h-2V4h2v2Z"
+);
+
+export const CompassIcon = makeIcon(
+  "M18 22H6V20H18V22ZM6 20H4V18H6V20ZM20 20H18V18H20V20ZM10 16H12V18H10V19H8V10H10V16ZM4 18H2V6H4V18ZM22 18H20V6H22V18ZM14 16H12V14H14V16ZM16 14H14V8H12V6H14V5H16V14ZM13 13H11V11H13V13ZM12 10H10V8H12V10ZM6 6H4V4H6V6ZM20 6H18V4H20V6ZM18 4H6V2H18V4Z"
+);
+
+export const HourglassIcon = makeIcon(
+  "M16 22H8v-2h8v2Zm-8-2H6v-4h2v4Zm10 0h-2v-4h2v4Zm-8-4H8v-2h2v2Zm6 0h-2v-2h2v2Zm-6-6h4v4h-4v-4Zm0 0H8V8h2v2Zm6 0h-2V8h2v2ZM8 8H6V4h2v4Zm10 0h-2V4h2v4Zm-2-4H8V2h8v2Z"
+);
+
+export const TargetIcon = makeIcon(
+  "M5 1h14v2H5zM3 3h2v2H3zm0 16h2v2H3zm16 0h2v2h-2zm0-16h2v2h-2zm2 2h2v14h-2zM5 21h14v2H5zM1 5h2v14H1zm8 0h6v2H9zM5 9h2v6H5zm4 8h6v2H9zm8-8h2v6h-2zm-6 0h2v2h-2zM7 7h2v2H7zm0 8h2v2H7zm8 0h2v2h-2zm0-8h2v2h-2zm-6 4h2v2H9zm2 2h2v2h-2zm2-2h2v2h-2z"
+);
+
+export const ChartBarIcon = makeIcon(
+  "M4 20h18v2H4zM2 2h2v18H2zm16 11v3h-2v-3zM8 13v3H6v-3zm8-2v2H8v-2zm0 5v2H8v-2zm4-12v3h-2V4zM8 4v3H6V4zm10-2v2H8V2zm0 5v2H8V7z"
+);
+
+/** Estrela cheia: a conta principal. */
+export const StarFilledIcon = makeIcon(
+  "M11 1h2v2h-2zM9 3h6v4H9zM1 7h22v4H1zM3 11h18v2H3zM5 13h14v3H5zM5 16h5v2H5zm9 0h5v2h-5zM5 18h3v2H5zm11 0h3v2h-3zM3 20h5v2H3zm13 0h5v2h-5z"
+);
+
+export const MicIcon = makeIcon(
+  "M10 2h4v2h2v8h-2v2h-4v-2H8V4h2zM5 9h2v3h2v2h6v-2h2V9h2v3h-2v2h-2v2H9v-2H7v-2H5zm6 7h2v4h-2zm-4 4h10v2H7z"
 );

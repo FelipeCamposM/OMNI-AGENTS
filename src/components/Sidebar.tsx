@@ -6,6 +6,7 @@ import {
   CloseIcon,
   CopyIcon,
   DockerIcon,
+  FlagIcon,
   FolderIcon,
   FolderPlusIcon as FolderPlus,
   ImageIcon,
@@ -120,6 +121,9 @@ interface SidebarProps {
   /** Tela de fluxos de agentes (editor estilo n8n e execuções). */
   showFluxos?: boolean;
   showConhecimento?: boolean;
+  /** Estudos: roadmaps, Pomodoro e análises. */
+  showEstudos?: boolean;
+  onOpenEstudos?: () => void;
   onOpenConhecimento?: () => void;
   onOpenFluxos?: () => void;
   onOpenHistory: () => void;
@@ -172,6 +176,8 @@ export function Sidebar({
   showHistory,
   showFluxos = false,
   showConhecimento = false,
+  showEstudos = false,
+  onOpenEstudos,
   onOpenConhecimento,
   onOpenFluxos,
   onOpenHistory,
@@ -539,6 +545,14 @@ Arraste para mudar a ordem`}
             onClick={onOpenConhecimento}
             icon={<BookIcon className="w-4 h-4" aria-hidden="true" />}
             label="Conhecimento"
+          />
+        )}
+        {onOpenEstudos && (
+          <NavItem
+            active={showEstudos}
+            onClick={onOpenEstudos}
+            icon={<FlagIcon className="w-4 h-4" aria-hidden="true" />}
+            label="Estudos"
           />
         )}
         <NavItem

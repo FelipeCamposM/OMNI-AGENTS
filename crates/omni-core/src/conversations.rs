@@ -417,7 +417,7 @@ pub fn timeline(conversation: &Conversation, profiles: &[crate::Profile], cursor
 /// de novo uma mensagem pelo número — ver `feed::imagem`.
 pub fn fontes(conversation: &Conversation, profiles: &[crate::Profile]) -> Vec<(std::path::PathBuf, String, Option<u64>)> {
     conversation.segments.iter()
-        .filter(|segment| !segment.transcript_path.as_deref().is_some_and(|path| !Path::new(path).exists()))
+        .filter(|segment| !segment.transcript_path.as_deref().is_some_and(|path| !crate::transcript_existe(Path::new(path))))
         .filter_map(|segment| resolve_transcript(segment, conversation, profiles).map(|path| (path, segment.provider.clone(), segment.historico_ate_ms)))
         .collect()
 }
@@ -452,7 +452,7 @@ pub fn itens_cached(
         // caminho já fixado (`--session-id`) mas nenhum arquivo: isso é "vazia", não "indisponível".
         // Antes caía no aviso de histórico perdido logo na primeira abertura. Nada é lido aqui, então
         // pular não abre brecha na checagem de caminho feita em `resolve_transcript`.
-        if segment.transcript_path.as_deref().is_some_and(|path| !Path::new(path).exists()) { continue }
+        if segment.transcript_path.as_deref().is_some_and(|path| !crate::transcript_existe(Path::new(path))) { continue }
         let Some(path) = resolve_transcript(segment, conversation, profiles) else {
             if !codex_sem_rollout(segment, conversation, profiles) { unavailable.push(segment_index); }
             continue
@@ -704,6 +704,29 @@ segunda linha"}}),
 
         let vazia = conversa_com_transcript(dir.path(), &[]);
         assert_eq!(display_title(&vazia), "Conversa");
+    }
+
+    /// Caso real (notebook, retomada pelo Recentes): o índice guarda `x.jsonl`, o Codex compactou para
+    /// `x.jsonl.zst`. O terminal mostrava a conversa e a aba Conversa ficava vazia.
+    #[test]
+    fn codex_com_rollout_compactado_ainda_mostra_a_conversa() {
+        let dir = tempfile::tempdir().unwrap();
+        let sessions = dir.path().join("sessions").join("2026").join("11").join("25");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let jsonl = sessions.join("rollout-x.jsonl");
+        let linhas = [
+            json!({"type":"session_meta","payload":{"id":"codex-z","cwd":"C:/z","timestamp":"2026-11-25T10:00:00Z"}}),
+            json!({"type":"response_item","timestamp":"2026-11-25T10:00:01Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Oi do notebook"}]}}),
+        ].iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+        std::fs::write(crate::compactado(&jsonl), ruzstd::encoding::compress_to_vec(linhas.as_bytes(), ruzstd::encoding::CompressionLevel::Fastest)).unwrap();
+        let profile = crate::Profile { id:"codex-p".into(),provider:"codex".into(),name:"Codex".into(),
+            config_dir:dir.path().to_string_lossy().into_owned(),builtin:true,created_at_ms:0,last_used_at_ms:None,authenticated:false,email:None };
+        let conversa = Conversation { id:"c".into(),project_id:"p".into(),cwd:"C:/z".into(),title:"Conversa".into(),title_source:TitleSource::Auto,created_at_ms:0,
+            segments:vec![Segment { provider:"codex".into(),profile_id:Some("codex-p".into()),external_session_id:Some("codex-z".into()),
+                transcript_path:Some(jsonl.to_string_lossy().into_owned()),terminal_session_id:None,started_at_ms:0,ended_at_ms:None,historico_ate_ms:None }] };
+        let pagina = timeline(&conversa, &[profile], None, 10);
+        assert!(pagina.unavailable_segments.is_empty());
+        assert!(serde_json::to_string(&pagina).unwrap().contains("Oi do notebook"), "o trecho compactado não pode sumir");
     }
 
     #[test]

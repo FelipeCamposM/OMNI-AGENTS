@@ -18,7 +18,13 @@ impl Interaction {
     pub fn new(rows: u16, cols: u16) -> Self { Self { parser: vt100::Parser::new(rows,cols,0), input_revision: 0, turn_active: false, turno_visto_em_ms: 0, aprovacao_contada: false, avisos_antes_do_turno: (0, 0), turnos_iniciados: 0, generation: rand::random() } }
     pub fn revision(&self, session: &Arc<LiveSession>) -> String {
         let mut hash = DefaultHasher::new();
-        self.parser.screen().contents().hash(&mut hash);
+        // Menu na tela: vale a identidade dele (opções, marcações, abas respondidas), não a tela toda.
+        // Um painel que redesenha em volta (o diff da 2.1.330) recusava todo clique; outra pergunta,
+        // com outras opções ou outra aba respondida, continua recusada.
+        match escolha(&linha_a_linha(self.parser.screen())) {
+            Some(menu) => serde_json::to_string(&(&menu.opcoes, &menu.etapas, menu.multipla)).unwrap_or_default().hash(&mut hash),
+            None => self.parser.screen().contents().hash(&mut hash),
+        }
         self.input_revision.hash(&mut hash);
         self.generation.hash(&mut hash);
         (Arc::as_ptr(session) as usize).hash(&mut hash);
@@ -213,9 +219,18 @@ fn escolha_numerada(text: &str) -> Option<Escolha> {
             })
             .filter(|e| !e.titulo.is_empty()).collect()
     }).filter(|e: &Vec<Etapa>| e.len() > 1).unwrap_or_default();
-    let mut textos = caixa[..primeira].iter().filter(|l| !aba(l)).map(|l| l.trim()).filter(|l| !l.is_empty());
+    let mut textos = caixa[..primeira].iter().filter(|l| !aba(l)).map(|l| l.trim()).filter(|l| !l.is_empty()).peekable();
+    // Pergunta longa vem como citação: cada linha quebrada começa com a barra ("▎ Etapa 1 de 4…",
+    // "▎ tudo que vem depois…"). A barra é desenho e as linhas são um parágrafo só.
+    let barra = |l: &str| l.starts_with(['▎', '▍', '▌', '▏', '│', '┃']);
+    let sem_barra = |l: &str| l.trim_start_matches(['▎', '▍', '▌', '▏', '│', '┃']).trim().to_owned();
+    let citada = textos.peek().is_some_and(|l| barra(l)).then(|| {
+        let mut partes = Vec::new();
+        while let Some(linha) = textos.next_if(|l| barra(l)) { partes.push(sem_barra(linha)); }
+        partes.join(" ")
+    });
     // Antigravity numera as perguntas ("Question 1/1: O que…"): a numeração não é texto da pergunta.
-    let pergunta = textos.next()?.trim_start_matches("> ");
+    let pergunta = match &citada { Some(texto) => texto.as_str(), None => textos.next()? }.trim_start_matches("> ");
     let pergunta = pergunta.strip_prefix("Question ").and_then(|resto| resto.split_once(": "))
         .filter(|(n, _)| n.contains('/') && n.chars().all(|c| c.is_ascii_digit() || c == '/'))
         .map_or(pergunta, |(_, texto)| texto).to_owned();
@@ -1292,6 +1307,11 @@ mod tests {
         // Borda da largura toda colada na linha de baixo, como sai do texto da tela.
         let colada = tela.replacen(&format!("{borda}\n ←"), &format!("{borda} ←"), 1);
         assert_eq!(escolha(&colada).expect("pergunta com borda colada").pergunta, "Qual banco de dados usar?");
+        // Print do usuário (2.1.332): pergunta longa em citação, com "▎" no começo de cada linha quebrada.
+        let citada = tela.replace("Qual banco de dados usar?", "▎ Etapa 1 de 4: você vai montar um deck novo. O público define o tom de\n▎ tudo que vem depois. Para quem é essa apresentação?");
+        let menu_citado = escolha(&citada).expect("pergunta em citação reconhecida");
+        assert_eq!(menu_citado.pergunta, "Etapa 1 de 4: você vai montar um deck novo. O público define o tom de tudo que vem depois. Para quem é essa apresentação?");
+        assert_eq!(menu_citado.detalhe, None);
         // Revisão no fim de duas perguntas: sem rodapé (tela real, 2.1.302).
         let revisao = format!("{borda}
 ←  ☒ Cor  ☒ Fruta  ✔ Submit  →
@@ -1657,7 +1677,15 @@ mod sonda {
             }
             // `OMNI_SONDA_SEGUNDOS`: só espera e devolve a tela (ex.: a sugestão do Claude depois da resposta).
             if let Some(s) = std::env::var("OMNI_SONDA_SEGUNDOS").ok().and_then(|s| s.parse::<u64>().ok()) {
-                if Instant::now() + Duration::from_secs(120 - s) > limite { break tela; } else { continue; }
+                if Instant::now() + Duration::from_secs(120 - s) <= limite { continue; }
+                // `OMNI_SONDA_TECLAS`: aperta as teclas (`|` separa os writes) e mostra a tela depois de cada uma.
+                for tecla in std::env::var("OMNI_SONDA_TECLAS").unwrap_or_default().split('|').filter(|t| !t.is_empty()) {
+                    let bytes = tecla.replace("\\r", "\r").replace("\\t", "\t").replace("\\e", "\x1b");
+                    let _ = escritor.write_all(bytes.as_bytes());
+                    std::thread::sleep(Duration::from_secs(2));
+                    println!("=== DEPOIS DE {tecla:?} ===\n{}\n=== FIM", parser.lock().unwrap().screen().contents());
+                }
+                break parser.lock().unwrap().screen().contents();
             }
             if tela.contains("Do you want") || tela.contains("Would you like") || Instant::now() > limite { break tela; }
             // Troca para o auto do Codex com a mesma função do engine e reabre o menu para conferir.

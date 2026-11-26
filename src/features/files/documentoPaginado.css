@@ -1,0 +1,21 @@
+/* Folhas A4 (794 × 1123 px a 96 dpi, margem 72 px): os números batem com DocumentoPaginado.tsx. */
+.md-paginas { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1.5rem; }
+.md-folha {
+  position: relative; flex: none; width: 794px; height: 1123px; padding: 72px; overflow: hidden;
+  background: #fff; box-shadow: 0 12px 40px rgb(0 0 0 / .45);
+}
+.md-folha-conteudo { max-width: none; }
+.md-folha-conteudo > :first-child { margin-top: 0; }
+.md-medida { position: absolute; left: -10000px; top: 0; width: 650px; visibility: hidden; pointer-events: none; }
+.md-folha-numero { position: absolute; bottom: 28px; left: 0; right: 0; text-align: center; font-size: 11px; color: #888; }
+
+/* Baixar PDF: o MarkdownPane põe uma cópia das folhas em #md-impressao, direto no body, e só ela imprime. */
+#md-impressao { display: none; }
+@media print {
+  @page { size: A4; margin: 0; }
+  html.imprimindo-md body > *:not(#md-impressao) { display: none !important; }
+  html.imprimindo-md, html.imprimindo-md body { background: #fff !important; height: auto !important; overflow: visible !important; }
+  html.imprimindo-md #md-impressao { display: block; }
+  #md-impressao .md-folha { width: 210mm; height: 297mm; box-shadow: none; break-after: page; }
+  #md-impressao .md-folha:last-child { break-after: auto; }
+}

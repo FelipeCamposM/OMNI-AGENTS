@@ -5,7 +5,8 @@ import { Component, useCallback, useEffect, useState } from "react";
 import type { ErrorInfo, ReactNode } from "react";
 import type { PaneNode, SplitNode, WorkspaceAction } from "../../types/workspace";
 import type { KanbanAction, KanbanState } from "../../types/kanban";
-import { isImagePath, isPdfPath } from "../files/filesService";
+import { isHtmlPath, isImagePath, isPdfPath } from "../files/filesService";
+import { HtmlPane } from "../files/HtmlPane";
 import { FilePane } from "../files/FilePane";
 import { ImagePane, PdfPane } from "../files/ImagePane";
 import { MarkdownPane } from "../files/MarkdownPane";
@@ -183,6 +184,8 @@ export function PaneView({
           <ImagePane tab={tab} />
         ) : tab?.kind === "file" && tab.resourceId && isPdfPath(tab.resourceId) ? (
           <PdfPane tab={tab} />
+        ) : tab?.kind === "file" && tab.resourceId && isHtmlPath(tab.resourceId) ? (
+          <HtmlPane projectPath={projectPath} tab={tab} fileSaveMode={fileSaveMode} onDirtyChange={handleDirtyChange} />
         ) : tab?.kind === "file" ? (
           <FilePane projectPath={projectPath} tab={tab} saveMode={fileSaveMode} onDirtyChange={handleDirtyChange} />
         ) : tab?.kind === "markdown" ? (

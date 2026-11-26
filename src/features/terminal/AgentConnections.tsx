@@ -7,7 +7,9 @@ import { InstalarFerramenta } from "./InstalarFerramenta";
 import { AccountUsage, type Usage, type UsageWindow } from "./AccountUsage";
 import {
   MULTI_ACCOUNT_PROVIDERS,
+  abrirLoginLongo,
   connectAgentCli,
+  contasComLoginLongo,
   contasMestras,
   createProfile,
   definirMestra,
@@ -93,6 +95,7 @@ export function AgentConnections() {
   const [newName, setNewName] = useState("");
   const [removendo, setRemovendo] = useState<string | null>(null);
   const [usos, setUsos] = useState<Record<string, Usage | null>>({});
+  const [longos, setLongos] = useState<string[]>([]);
   const guardarUso = useCallback((id: string, uso: Usage | null) => setUsos((m) => (m[id] === uso ? m : { ...m, [id]: uso })), []);
 
   const refresh = useCallback(async () => {
@@ -104,6 +107,7 @@ export function AgentConnections() {
       setProfiles(accounts);
       // Sem o Tauri (ou numa versão sem o comando) a tela segue sem estrela.
       setMestras(await contasMestras().catch(() => ({})));
+      setLongos(await contasComLoginLongo().catch(() => []));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -257,6 +261,7 @@ export function AgentConnections() {
                           <span className="ag-conta-sub">
                             {profile.email && <span className="ag-conta-email" title={profile.email}>{profile.email}</span>}
                             <span className="ag-conta-estado" data-ok={profile.authenticated || undefined}>{profile.authenticated ? "conectado" : "sem login"}</span>
+                            {longos.includes(profile.id) && <span className="ag-conta-estado" data-ok title="Esta conta não pede /login por 1 ano">login de 1 ano</span>}
                           </span>
                         </span>
                         {multiAccount && accounts.length > 1 && (
@@ -266,6 +271,14 @@ export function AgentConnections() {
                             disabled={mestra || busy !== null}
                             onClick={() => void run("mestra-" + profile.id, () => definirMestra(profile.id))}>
                             {mestra ? <StarFilledIcon className="h-3.5 w-3.5" aria-hidden /> : <StarIcon className="h-3.5 w-3.5" aria-hidden />}
+                          </button>
+                        )}
+                        {agent.id === "claude" && !longos.includes(profile.id) && (
+                          <button type="button" className="ag-remover" disabled={busy !== null}
+                            aria-label={`Login de 1 ano para ${profile.name}`}
+                            title="Login de 1 ano: roda `claude setup-token` numa aba. Você autoriza no navegador uma vez e esta conta para de pedir /login."
+                            onClick={() => void run("longo-" + profile.id, () => abrirLoginLongo(profile.id, profile.name))}>
+                            <ClockIcon className="h-3.5 w-3.5" aria-hidden />
                           </button>
                         )}
                         {multiAccount && (

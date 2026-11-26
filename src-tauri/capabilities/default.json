@@ -59,6 +59,8 @@
     ] },
     "opener:allow-reveal-item-in-dir",
     { "identifier": "opener:allow-open-url", "allow": [
+      { "url": "https://*" },
+      { "url": "http://*" },
       { "url": "https://login.tailscale.com/*" },
       { "url": "https://tailscale.com/*" },
       { "url": "https://code.claude.com/*" },

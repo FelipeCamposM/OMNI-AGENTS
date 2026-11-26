@@ -1404,7 +1404,7 @@ li[data-estado="agora"] > .abrindo-agente-marca { color: rgb(var(--c-accent)); b
 .m-shell-com-barra { padding-bottom: calc(5rem + env(safe-area-inset-bottom)); }
 .m-barra {
   position: fixed; z-index: 30; left: 50%; bottom: max(.625rem, env(safe-area-inset-bottom)); translate: -50% 0;
-  width: min(calc(100% - 1.5rem), 26rem); display: grid; grid-template-columns: repeat(3, 1fr); padding: .3125rem;
+  width: min(calc(100% - 1.5rem), 28rem); display: grid; grid-template-columns: repeat(4, 1fr); padding: .3125rem;
   background: rgb(var(--c-bg-primary) / .82); -webkit-backdrop-filter: blur(16px) saturate(1.5); backdrop-filter: blur(16px) saturate(1.5);
   border: 1px solid rgb(var(--c-border-subtle)); box-shadow: 0 14px 34px -12px rgb(0 0 0 / .85), 0 0 0 1px rgb(var(--c-accent) / .08);
   animation: m-barra-entra .35s cubic-bezier(.2, .9, .3, 1.2) both;

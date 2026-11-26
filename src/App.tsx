@@ -34,6 +34,7 @@ import {
   spawnTerminal,
 } from "./features/terminal/terminalService";
 import { ConhecimentoView } from "./features/conhecimento/ConhecimentoView";
+import { RoadmapsView } from "./features/roadmaps/RoadmapsViewTardio"; // Estudos: só carrega ao abrir.
 import { HistoryView } from "./features/history/HistoryView";
 import { FluxosView } from "./features/fluxos/FluxosView";
 import { Panorama } from "./features/panorama/Panorama";
@@ -45,7 +46,7 @@ import type { SettingsSection } from "./hooks/useNotifications";
 import { useSettings } from "./hooks/useSettings";
 import { matchesShortcut } from "./lib/shortcuts";
 
-type View = "workspace" | "settings" | "history" | "fluxos" | "panorama" | "conhecimento";
+type View = "workspace" | "settings" | "history" | "fluxos" | "panorama" | "conhecimento" | "estudos";
 
 export function App() {
   const [view, setView] = useState<View>("workspace");
@@ -161,6 +162,28 @@ export function App() {
     setView("workspace");
   }
 
+  // "Login de 1 ano" (Configurações → Contas): `claude setup-token` numa aba com a conta escolhida; o
+  // engine guarda o token que aparecer na tela (`guardar_token_do_setup`).
+  const loginLongo = useRef<(detalhe: { profileId: string; nome: string }) => Promise<void>>(async () => undefined);
+  loginLongo.current = async ({ profileId, nome }) => {
+    if (!activeProject) throw new Error("Abra um projeto antes: o login roda numa aba de terminal dele.");
+    await ensureEngine();
+    const session = await spawnTerminal({
+      projectId: activeProject.id, name: `Login de 1 ano · ${nome}`, cwd: activeProject.path, rows: 30, cols: 120,
+      initialCommand: "claude setup-token", provider: "claude", profileId,
+    });
+    dispatch({ type: "ATTACH_TERMINAL", sessionId: session.id, title: session.name });
+    setView("workspace");
+  };
+  useEffect(() => {
+    const abrir = (evento: Event) => {
+      const { profileId, nome, ok, falha } = (evento as CustomEvent<{ profileId: string; nome: string; ok: () => void; falha: (motivo: Error) => void }>).detail;
+      loginLongo.current({ profileId, nome }).then(ok, falha);
+    };
+    window.addEventListener("omni:login-longo", abrir);
+    return () => window.removeEventListener("omni:login-longo", abrir);
+  }, []);
+
   function openFile(path: string, kind: "file" | "markdown") {
     if (!activeProject) return;
     const title = path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -249,6 +272,7 @@ export function App() {
           view === "settings" ? ["Configurações"]
             : view === "history" ? ["Histórico"]
             : view === "conhecimento" ? ["Conhecimento"]
+            : view === "estudos" ? ["Estudos"]
             : view === "fluxos" ? ["Fluxos de agentes"]
             : view === "panorama" ? ["Panorama"]
             : [workspaces.find((item) => item.id === activeWorkspaceId)?.name, activeProject?.name].filter((parte): parte is string => Boolean(parte))
@@ -331,6 +355,8 @@ export function App() {
         onOpenHistory={openHistory}
         showConhecimento={view === "conhecimento"}
         onOpenConhecimento={() => setView("conhecimento")}
+        showEstudos={view === "estudos"}
+        onOpenEstudos={() => setView("estudos")}
         onResumeHistory={resumeHistory}
         onHome={() => setView("workspace")}
         onAddProject={(path) => {
@@ -421,6 +447,8 @@ export function App() {
               onWorkspace={(workspaceId) => { dispatch({ type: "SHOW_WORKSPACE", workspaceId }); setView("workspace"); }}
               onClose={() => setView("workspace")}
             />
+          ) : view === "estudos" ? (
+            <RoadmapsView continuar onClose={() => setView("workspace")} />
           ) : view === "conhecimento" ? (
             <ConhecimentoView onClose={() => setView("workspace")} />
           ) : view === "history" ? (

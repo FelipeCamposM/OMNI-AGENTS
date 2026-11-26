@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { SeletorDeCor } from "./SeletorDeCor";
 
 /** Atalhos para as cores mais comuns. */
 const RAPIDAS = [
@@ -24,10 +25,8 @@ export interface ColorPickerProps {
 /**
  * Seletor de cor: amostra + atalhos + roda nativa.
  *
- * A roda é um `<input type="color">`, que abre o diálogo do sistema. Aqui isso
- * é aceitável — diferente do `<select>`, cujo dropdown ficava fora do tema, um
- * diálogo de cor é modal e esperado. Construir um HSV próprio seria muito
- * código para pouco ganho.
+ * A amostra abre o `SeletorDeCor` (popover próprio, no tema do app): a roda nativa
+ * abria o diálogo do sistema, fora do visual.
  *
  * O valor circula sempre como `#RRGGBB`.
  */
@@ -39,24 +38,13 @@ export function ColorPicker({ id, value, onChange, onReset, disabled }: ColorPic
     <div className="flex items-center gap-1.5 flex-wrap">
       {/* A amostra É o input: o `<input type="color">` nativo é feio em todo
           navegador, então some e a cor vira o próprio botão. */}
-      <label
-        htmlFor={inputId}
+      <SeletorDeCor value={value} onChange={onChange} disabled={disabled} rotulo={`Escolher cor (${value})`}
         className={[
-          "glass-inset relative w-8 h-8 shrink-0 rounded-none overflow-hidden",
+          "glass-inset relative w-8 h-8 shrink-0 rounded-none overflow-hidden block",
           disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
-        ].join(" ")}
-        style={{ backgroundColor: value }}
-        title={value}
-      >
-        <input
-          id={inputId}
-          type="color"
-          value={value}
-          disabled={disabled}
-          onChange={(e) => onChange(e.target.value.toUpperCase())}
-          className="absolute inset-0 opacity-0 cursor-pointer disabled:cursor-not-allowed"
-        />
-      </label>
+        ].join(" ")}>
+        <span id={inputId} className="block w-full h-full" style={{ backgroundColor: value }} />
+      </SeletorDeCor>
 
       <span className="text-text-muted text-[10px] font-mono tabular-nums w-16">{value}</span>
 

@@ -25,6 +25,10 @@ export function isImagePath(path: string): boolean {
   return IMAGE_EXTENSIONS.has(extension);
 }
 
+export function isHtmlPath(path: string): boolean {
+  return /\.html?$/i.test(path);
+}
+
 export function isPdfPath(path: string): boolean {
   return path.toLowerCase().endsWith(".pdf");
 }

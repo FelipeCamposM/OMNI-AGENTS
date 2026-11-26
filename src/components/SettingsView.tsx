@@ -5,7 +5,8 @@ import type { AppSettings, Background, GlassLevel, MotionLevel, Theme } from "..
 import { UpdateCard } from "./UpdateCard";
 import { acenderNaTela, SettingsSearch, type Achado } from "./SettingsSearch";
 import { BACKGROUND_EFFECTS, isBackgroundEffect } from "./backgrounds/registry";
-import { PALETAS } from "../lib/palettes";
+import { PALETAS, ehCorLivre } from "../lib/palettes";
+import { SeletorDeCor } from "./ui/SeletorDeCor";
 import { CHANGELOG } from "../lib/changelog";
 import { Button, Card, Field, Input, SegmentedControl, Select, Slider } from "./ui";
 import { Modal } from "./ui/Modal";
@@ -243,7 +244,20 @@ function AparenciaSection({ settings, onChange }: SectionProps) {
                 />
               );
             })}
+            {/* Qualquer outra cor: abre o seletor próprio; o hex fica gravado no lugar do id. */}
+            <SeletorDeCor
+              rotulo="Outra cor de destaque"
+              value={ehCorLivre(settings.accent) ? settings.accent : "#F97316"}
+              onChange={(hex) => onChange({ accent: hex })}
+              className={[
+                "w-8 h-8 rounded-none transition-transform focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent",
+                ehCorLivre(settings.accent) ? "ring-2 ring-offset-2 ring-offset-bg-surface ring-text-primary scale-110" : "hover:scale-110 border-2 border-dashed border-border-subtle",
+              ].join(" ")}
+            >
+              <span className="block w-full h-full" style={ehCorLivre(settings.accent) ? { background: settings.accent } : { background: "conic-gradient(#F87171, #FBBF24, #34D399, #22D3EE, #3B82F6, #A855F7, #F472B6, #F87171)" }} />
+            </SeletorDeCor>
           </div>
+          {ehCorLivre(settings.accent) && <p className="mt-1.5 text-[10px] font-mono text-text-muted">{settings.accent}</p>}
         </Field>
       </Card>
 

@@ -137,6 +137,18 @@ export async function contasMestras() {
   return (await invoke<Record<string, string> | null>("contas_mestras")) ?? {};
 }
 
+/** Contas Claude com login de 1 ano (`claude setup-token`) guardado. */
+export async function contasComLoginLongo() {
+  return (await invoke<string[] | null>("contas_com_login_longo")) ?? [];
+}
+
+/** Abre `claude setup-token` numa aba do projeto ativo com esta conta (quem ouve é o App). */
+export function abrirLoginLongo(profileId: string, nome: string) {
+  return new Promise<void>((ok, falha) => {
+    window.dispatchEvent(new CustomEvent("omni:login-longo", { detail: { profileId, nome, ok, falha } }));
+  });
+}
+
 export async function definirMestra(profileId: string) {
   await invoke("definir_mestra", { profileId });
 }

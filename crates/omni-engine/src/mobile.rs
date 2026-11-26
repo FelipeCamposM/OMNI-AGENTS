@@ -9,6 +9,8 @@ use std::{
     net::{SocketAddr, IpAddr},
 };
 use tokio::sync::Notify;
+#[path = "mobile_roadmaps.rs"]
+mod roadmaps_rotas;
 
 #[cfg(mobile_assets)]
 static ASSETS: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../dist-mobile");
@@ -622,6 +624,7 @@ fn rotas() -> Router<Arc<EngineState>> {
         .route("/atencao",get(attention))
         .route("/sessoes",post(create_session))
         .route("/parear",post(parear))
+        .merge(roadmaps_rotas::rotas()) // Roadmaps de estudo + Pomodoro no celular.
 }
 
 fn router(state: Arc<EngineState>) -> Router {
@@ -835,7 +838,12 @@ fn history_key(provider: &str, session_id: &str) -> String {
 /// para responder agora. Estado e capacidades saem da sessão viva, quando há.
 fn resumo(state: &EngineState, c: &omni_core::conversations::Conversation) -> Value {
     let live = linked_session(state,c);
-    let capabilities = live.as_ref().map(interaction::capabilities);
+    let mut capabilities = live.as_ref().map(interaction::capabilities);
+    // Pergunta do agente na tela: o título vem do `AskUserQuestion` do transcript, não do que a TUI
+    // desenhou em volta (a 2.1.330 mostrou "New file not yet staged." no lugar da pergunta).
+    if let Some(escolha) = capabilities.as_mut().and_then(|c| c.escolha.as_mut()) {
+        if let Ok((caminho, _)) = transcript_do_claude(state,&c.id) { corrigir_pela_pergunta(escolha,&caminho); }
+    }
     let meta = live.as_ref().map(|s| settle(s));
     let status = meta.as_ref().map(|m| m.state.clone());
     // Identidade do último evento de atenção (fim de turno, pedido de aprovação). A tela usa para
@@ -1279,6 +1287,33 @@ fn transcript_do_claude(state: &EngineState, id: &str) -> Result<(PathBuf, bool)
         .find(|(_, provider, ate)| provider == "claude" && ate.is_none()).map(|(caminho, _, _)| caminho)
         .ok_or_else(||error(StatusCode::NOT_FOUND,"Conversa sem transcript do Claude"))?;
     Ok((caminho, sessao.is_some()))
+}
+
+/// Perguntas do último `AskUserQuestion` do transcript: (texto, rótulos das opções). Lê só o fim do
+/// arquivo — a pergunta aberta é sempre recente.
+fn ultima_pergunta(caminho: &Path) -> Vec<(String, Vec<String>)> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut arquivo) = std::fs::File::open(caminho) else { return Vec::new() };
+    let tamanho = arquivo.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = arquivo.seek(SeekFrom::Start(tamanho.saturating_sub(4 << 20)));
+    let mut texto = String::new();
+    if arquivo.read_to_string(&mut texto).is_err() { texto = String::from_utf8_lossy(&std::fs::read(caminho).unwrap_or_default()).into_owned(); }
+    let Some(valor) = texto.lines().rev().filter(|l| l.contains("\"AskUserQuestion\""))
+        .find_map(|l| serde_json::from_str::<Value>(l).ok()) else { return Vec::new() };
+    valor["message"]["content"].as_array().into_iter().flatten().filter(|p| p["name"] == "AskUserQuestion")
+        .flat_map(|p| p["input"]["questions"].as_array().cloned().unwrap_or_default())
+        .filter_map(|q| Some((q["question"].as_str()?.to_owned(),
+            q["options"].as_array()?.iter().filter_map(|o| o["label"].as_str().map(str::to_owned)).collect())))
+        .collect()
+}
+
+/// Troca o título da pergunta na tela pelo do transcript quando as opções batem (todas as do agente
+/// estão na tela). Sem par, fica o que a tela mostrou.
+fn corrigir_pela_pergunta(escolha: &mut interaction::Escolha, transcript: &Path) {
+    let na_tela: Vec<&str> = escolha.opcoes.iter().map(|o| o.rotulo.as_str()).collect();
+    let par = ultima_pergunta(transcript).into_iter()
+        .find(|(_, rotulos)| !rotulos.is_empty() && rotulos.iter().all(|r| na_tela.contains(&r.as_str())));
+    if let Some((pergunta, _)) = par { escolha.pergunta = pergunta; escolha.detalhe = None; }
 }
 
 /// Subagentes da conversa, com o estado de cada um e o que estão fazendo agora.
@@ -2810,7 +2845,7 @@ mod tests {
     use tower::ServiceExt;
     use axum::body::{Body,to_bytes};
 
-    fn fixture() -> (tempfile::TempDir, Arc<EngineState>) {
+    pub(super) fn fixture() -> (tempfile::TempDir, Arc<EngineState>) {
         let dir = tempfile::tempdir().unwrap();
         let state = Arc::new(EngineState { persist_lock:Mutex::new(()),mobile:MobileRuntime::new(dir.path()),
             token:"test-only".into(),state_file:dir.path().join("sessions.json"),sessions:Mutex::new(HashMap::new()),id_sequence:AtomicU64::new(1) });
@@ -3554,6 +3589,27 @@ quebra"}"#] {
         assert!(totp_uri.is_none(),"depois de confirmado o segredo não sai mais do engine");
     }
 
+    /// Caso real (Claude 2.1.330): a tela pôs "New file not yet staged." acima da pergunta, e o cartão
+    /// mostrava isso como título. O texto vem do `AskUserQuestion` do transcript quando as opções batem.
+    #[test] fn pergunta_usa_o_texto_do_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("s.jsonl");
+        let chamada = json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"AskUserQuestion","input":{"questions":[
+            {"question":"Card de uso — onde quer?","options":[{"label":"Início, no topo (Recommended)"},{"label":"Trocar o menu do topo"}]},
+            {"question":"Qual e-mail?","options":[{"label":"Gmail"},{"label":"Domínio"}]}]}}]}});
+        std::fs::write(&transcript, format!("{{\"type\":\"user\"}}\n{chamada}\n")).unwrap();
+        let tela = "────────────────────\n←  ☐ Orbes  ☐ E-mail  ✔ Submit  →\n\nNew file not yet staged.\nCard de uso — onde quer?\nRun `git add :/x.png` to see line counts.\n\n❯ 1. Início, no topo (Recommended)\n  2. Trocar o menu do topo\n  3. Type something.\n────────────────────\n  4. Chat about this\n\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel\n";
+        let mut escolha = interaction::escolha(tela).expect("pergunta reconhecida");
+        assert_eq!(escolha.pergunta, "New file not yet staged.", "a tela sozinha erra o título");
+        corrigir_pela_pergunta(&mut escolha, &transcript);
+        assert_eq!((escolha.pergunta.as_str(), escolha.detalhe.as_deref()), ("Card de uso — onde quer?", None));
+
+        // Opções de outra pergunta: não troca.
+        let mut outra = interaction::escolha(&tela.replace("Trocar o menu do topo", "Outra coisa")).unwrap();
+        corrigir_pela_pergunta(&mut outra, &transcript);
+        assert_eq!(outra.pergunta, "New file not yet staged.");
+    }
+
     #[test] fn loopback_default_and_no_wildcard() {
         let config = MobileConfig::default(); assert!(!config.enabled); assert!(validate(&config).is_ok());
         assert!(validate(&MobileConfig{enabled:true,bind:"0.0.0.0:47322".into(),token:String::new(),serve:false,totp_secret:String::new(),totp_confirmed:false}).is_err());
@@ -3610,6 +3666,20 @@ quebra"}"#] {
         /// tela), então ela vai para a fila da CLI — sem a trava de versão da tela, que mudaria a cada
         /// quadro do spinner. Prompt comum continua recusado durante o turno, e rascunho no campo
         /// continua bloqueando a fila.
+        /// Pergunta na tela com um painel que redesenha em volta (o diff da 2.1.330): o clique vale,
+        /// porque o menu é o mesmo. Respondida a aba (outro menu), a versão antiga é recusada.
+        #[test] fn escolha_sobrevive_a_redesenho_em_volta_do_menu() {
+            let (_dir,state) = fixture();
+            let menu = "─────────────────────\r\n←  ☐ Cor  ☐ Fruta  ✔ Submit  →\r\nQual cor?\r\n❯ 1. Azul\r\n  2. Verde\r\n─────────────────────\r\n  3. Chat about this\r\nEnter to select · Tab/Arrow keys to navigate · Esc to cancel";
+            let (session,_bytes,_) = fake_session(&state,&format!("New file not yet staged.\r\n{menu}"));
+            let antes = session.interaction.lock().unwrap().revision(&session);
+            session.interaction.lock().unwrap().parser.process(b"\x1b[1;1HDiff too large to display.");
+            assert_eq!(session.interaction.lock().unwrap().revision(&session), antes, "redesenho fora do menu não muda a versão");
+            session.interaction.lock().unwrap().parser.process(b"\x1b[2J\x1b[H");
+            session.interaction.lock().unwrap().parser.process(menu.replace("☐ Cor", "☒ Cor").replace("Azul", "Uva").replace("Verde", "Pera").as_bytes());
+            assert_ne!(session.interaction.lock().unwrap().revision(&session), antes, "outra pergunta, outra versão");
+        }
+
         #[test] fn mensagem_durante_o_turno_entra_na_fila_da_cli() {
             let (_dir,state) = fixture();
             let (session,bytes,prompt) = fake_session(&state,"✻ Pensando… (esc to interrupt)\r\n❯ ");

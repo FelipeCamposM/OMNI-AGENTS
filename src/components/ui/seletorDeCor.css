@@ -1,0 +1,44 @@
+/* Seletor de cor próprio (SeletorDeCor.tsx): cantos retos e sombra dura, como o resto do app. */
+.sc-raiz { position: relative; display: inline-flex; }
+.sc-pop {
+  position: absolute; z-index: 60; top: calc(100% + .5rem); left: 0; padding: .75rem;
+  background: rgb(var(--c-bg-elevated)); border: 2px solid rgb(var(--c-outline)); box-shadow: 5px 5px 0 rgb(0 0 0 / .35);
+  transform-origin: top left; animation: sc-abrir .18s cubic-bezier(.2, .9, .3, 1.25);
+}
+@keyframes sc-abrir { from { opacity: 0; transform: translateY(-6px) scale(.94); } to { opacity: 1; transform: none; } }
+:root[data-motion="desligadas"] .sc-pop { animation: none; }
+@media (prefers-reduced-motion: reduce) { .sc-pop { animation: none; } }
+
+.sc-painel { display: flex; flex-direction: column; gap: .625rem; width: 14rem; }
+.sc-area {
+  position: relative; height: 9rem; cursor: crosshair; touch-action: none; outline: none;
+  background-image: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent);
+  border: 2px solid rgb(var(--c-border-subtle));
+}
+.sc-area:focus-visible, .sc-matiz:focus-visible { border-color: rgb(var(--c-accent)); }
+.sc-mira {
+  position: absolute; width: 14px; height: 14px; transform: translate(-50%, -50%); pointer-events: none;
+  border: 2px solid #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / .6), 2px 2px 0 rgb(0 0 0 / .35);
+  transition: transform .1s;
+}
+.sc-area:active .sc-mira { transform: translate(-50%, -50%) scale(1.25); }
+.sc-matiz {
+  position: relative; height: .875rem; cursor: ew-resize; touch-action: none; outline: none; border: 2px solid rgb(var(--c-border-subtle));
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+.sc-puxador {
+  position: absolute; top: 50%; width: 10px; height: calc(100% + 8px); transform: translate(-50%, -50%); pointer-events: none;
+  border: 2px solid #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / .6), 2px 2px 0 rgb(0 0 0 / .35);
+}
+.sc-linha { display: flex; gap: .5rem; align-items: center; }
+.sc-amostra { width: 2rem; height: 2rem; flex: none; border: 2px solid rgb(var(--c-outline)); box-shadow: 2px 2px 0 rgb(0 0 0 / .3); transition: background-color .12s; }
+.sc-hex {
+  flex: 1; min-width: 0; padding: .375rem .5rem; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .8125rem;
+  color: rgb(var(--c-text-primary)); background: rgb(var(--c-bg-primary)); border: 2px solid rgb(var(--c-border-subtle));
+  box-shadow: inset 2px 2px 0 rgb(0 0 0 / .22); outline: none;
+}
+.sc-hex:focus { border-color: rgb(var(--c-accent)); }
+.sc-atalhos { display: grid; grid-template-columns: repeat(10, 1fr); gap: .25rem; }
+.sc-atalho { aspect-ratio: 1; border: 1px solid rgb(0 0 0 / .35); cursor: pointer; transition: transform .1s; }
+.sc-atalho:hover { transform: scale(1.18); }
+.sc-atalho[aria-pressed="true"] { outline: 2px solid rgb(var(--c-text-primary)); outline-offset: 1px; }

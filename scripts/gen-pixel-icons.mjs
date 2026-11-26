@@ -141,7 +141,26 @@ const ICONS = {
   AttachmentIcon: "attachment",
   SendIcon: "send",
   ArrowLeftIcon: "arrow-left",
+  // Estudos (Roadmaps, Mentor, Pomodoro, Análises)
+  FireIcon: "fire",
+  PauseIcon: "pause",
+  TrophyIcon: "trophy",
+  MapIcon: "map",
+  CompassIcon: "compass",
+  HourglassIcon: "hourglass",
+  TargetIcon: "target",
+  ChartBarIcon: "chart-bar-big",
 };
+
+/** Desenhados à mão (fora do pacote): entram iguais no fim do arquivo gerado. */
+const DESENHADOS = `/** Estrela cheia: a conta principal. */
+export const StarFilledIcon = makeIcon(
+  "M11 1h2v2h-2zM9 3h6v4H9zM1 7h22v4H1zM3 11h18v2H3zM5 13h14v3H5zM5 16h5v2H5zm9 0h5v2h-5zM5 18h3v2H5zm11 0h3v2h-3zM3 20h5v2H3zm13 0h5v2h-5z"
+);
+
+export const MicIcon = makeIcon(
+  "M10 2h4v2h2v8h-2v2h-4v-2H8V4h2zM5 9h2v3h2v2h6v-2h2V9h2v3h-2v2h-2v2H9v-2H7v-2H5zm6 7h2v4h-2zm-4 4h10v2H7z"
+);`;
 
 /**
  * Alguns SVGs do pacote trazem mais de um `<path>` (o `reload`, por exemplo, tem três). Todos são
@@ -183,6 +202,8 @@ function makeIcon(path: string) {
 }
 
 ${body}
+
+${DESENHADOS}
 `;
 
 writeFileSync(output, file, "utf8");

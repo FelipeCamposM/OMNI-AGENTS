@@ -7,7 +7,7 @@ import { SegmentedControl } from "../components/ui/SegmentedControl";
 import { Select } from "../components/ui/Select";
 import { AgentIcon } from "../components/ui/AgentIcon";
 import { OmniLogo } from "../components/ui/OmniLogo";
-import { AlertIcon, ArchiveIcon, GearIcon, ArrowLeftIcon, AttachmentIcon, ChatIcon, EditIcon, FolderIcon, GitBranchIcon, NotesIcon, PlayIcon, ReloadIcon, SearchIcon, WarningIcon } from "../components/ui/PixelIcon";
+import { AlertIcon, ArchiveIcon, FlagIcon, GearIcon, ArrowLeftIcon, AttachmentIcon, ChatIcon, EditIcon, FolderIcon, GitBranchIcon, NotesIcon, PlayIcon, ReloadIcon, SearchIcon, WarningIcon } from "../components/ui/PixelIcon";
 import { NOME_DO_AGENTE, request, requestSeMudou, esquecerVersao, actionKey, ApiError, type Comando, type Conversation, type Mensagem, type Projects, type Timeline } from "./api";
 import { AgentWorking, BlocoDeAcoes, LinhaDeAviso, LinhaDeComando, MessageBubble, PairingScreen } from "./Chat";
 import { Composer } from "./Composer";
@@ -23,6 +23,7 @@ import {
   montarPrompt,
   type Anexo, EVENTO_ANEXAR, EVENTO_ARRASTANDO } from "./anexos";
 import { useRota, type Rota } from "./rota";
+import { EstudosNoCelular } from "./EstudosTardio";
 import { useDados } from "./useDados";
 import { usePoll } from "./usePoll";
 import { corrigir, transcrever, useVozInstalada } from "./voz";
@@ -1272,10 +1273,13 @@ const CHAVE_FILTRO = "omni-filtro";
 const urlDaConversa = (id: string) => urlDaRota({ tela: "conversa", conversa: id });
 
 /** Navegação de baixo, ao alcance do polegar: início, o que espera você e os ajustes. */
-function BarraDeBaixo({ aba, aguardando, ir }: { aba: "inicio" | "atencao" | "ajustes"; aguardando: number; ir: (aba: "inicio" | "atencao" | "ajustes") => void }) {
+type AbaDeBaixo = "inicio" | "atencao" | "estudos" | "ajustes";
+
+function BarraDeBaixo({ aba, aguardando, ir }: { aba: AbaDeBaixo; aguardando: number; ir: (aba: AbaDeBaixo) => void }) {
   const itens = [
     { id: "inicio" as const, rotulo: "Início", icone: FolderIcon },
     { id: "atencao" as const, rotulo: "Precisa de você", icone: AlertIcon },
+    { id: "estudos" as const, rotulo: "Estudos", icone: FlagIcon },
     { id: "ajustes" as const, rotulo: "Ajustes", icone: GearIcon },
   ];
   return (
@@ -1336,7 +1340,8 @@ export function MobileApp() {
   const perfis = catalog?.profiles ?? [];
   const aviso = catalog ? idadeDaLista(catalog.published_at_ms) : null;
 
-  const pai: Rota = rota.tela === "conversa" && conversa ? { tela: "projeto", projeto: conversa.project_id } : { tela: "inicio" };
+  const pai: Rota = rota.tela === "conversa" && conversa ? { tela: "projeto", projeto: conversa.project_id }
+    : rota.tela === "estudos" && rota.roadmap ? { tela: "estudos", secao: "roadmaps" } : { tela: "inicio" };
   const abrirConversa = (id: string) => ir({ tela: "conversa", conversa: id });
 
   let titulo: ReactNode = <span className="pixel-text">OMNI AGENTS</span>;
@@ -1344,7 +1349,12 @@ export function MobileApp() {
   let marca: ReactNode = null;
   let conteudo: ReactNode;
 
-  if (rota.tela === "ajustes") {
+  if (rota.tela === "estudos") {
+    titulo = "Estudos";
+    subtitulo = <span className="truncate">Roadmaps, Pomodoro e análises</span>;
+    conteudo = <EstudosNoCelular secao={rota.secao} roadmap={rota.roadmap ?? null}
+      ir={(secao, roadmap) => ir(roadmap ? { tela: "estudos", secao, roadmap } : { tela: "estudos", secao })} />;
+  } else if (rota.tela === "ajustes") {
     titulo = "Ajustes";
     subtitulo = <span className="truncate">Avisos e conexão deste aparelho</span>;
     conteudo = <AjustesDoAparelho />;
@@ -1473,10 +1483,11 @@ export function MobileApp() {
     </>;
   }
 
-  const aba = rota.tela === "ajustes" ? "ajustes" : rota.tela === "inicio" && onlyAttention ? "atencao" : "inicio";
+  const aba: AbaDeBaixo = rota.tela === "ajustes" ? "ajustes" : rota.tela === "estudos" ? "estudos" : rota.tela === "inicio" && onlyAttention ? "atencao" : "inicio";
   const irPelaBarra = (destino: typeof aba) => {
     setQuery("");
     if (destino === "ajustes") { if (rota.tela !== "ajustes") ir({ tela: "ajustes" }); return; }
+    if (destino === "estudos") { if (rota.tela !== "estudos") ir({ tela: "estudos", secao: "roadmaps" }); return; }
     setOnlyAttention(destino === "atencao");
     if (rota.tela !== "inicio") ir({ tela: "inicio" });
     window.scrollTo({ top: 0, behavior: "smooth" });

@@ -299,7 +299,7 @@ pub fn limpar(dir: &Path, dias: u64, agora_ms: u64, protegidas: &HashSet<String>
         let antes = indice.len();
         let sobra: Vec<_> = indice.into_iter().filter(|c| {
             let dela = c.segments.iter().any(|s| s.external_session_id.as_deref().is_some_and(|id| apagadas.contains(&id.to_lowercase())));
-            let algum_arquivo = c.segments.iter().any(|s| s.transcript_path.as_deref().is_some_and(|p| Path::new(p).exists()));
+            let algum_arquivo = c.segments.iter().any(|s| s.transcript_path.as_deref().is_some_and(|p| crate::transcript_existe(Path::new(p))));
             !dela || algum_arquivo
         }).collect();
         if sobra.len() != antes { let _ = crate::conversations::write_index(dir, &sobra); }

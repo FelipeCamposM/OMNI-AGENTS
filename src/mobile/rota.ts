@@ -4,11 +4,19 @@ export type Rota =
   | { tela: "inicio" }
   | { tela: "projeto"; projeto: string }
   | { tela: "conversa"; conversa: string }
-  | { tela: "ajustes" };
+  | { tela: "ajustes" }
+  | { tela: "estudos"; secao: "roadmaps" | "mentor" | "pomodoro" | "analises"; roadmap?: string };
 
 /** `#/p/<projeto>` ou `#/c/<conversa>`. Qualquer outra coisa (inclusive o `#t=` do QR) é o início. */
 export function lerRota(hash = location.hash): Rota {
   if (hash === "#/ajustes") return { tela: "ajustes" };
+  // Estudos: `#/estudos`, `#/estudos/mentor`, `#/estudos/pomodoro`, `#/estudos/analises`, `#/estudos/r/<roadmap>`.
+  if (hash === "#/estudos" || hash === "#/estudos/roadmaps") return { tela: "estudos", secao: "roadmaps" };
+  if (hash === "#/estudos/mentor") return { tela: "estudos", secao: "mentor" };
+  if (hash === "#/estudos/pomodoro") return { tela: "estudos", secao: "pomodoro" };
+  if (hash === "#/estudos/analises") return { tela: "estudos", secao: "analises" };
+  const [, roadmap] = hash.match(/^#\/estudos\/r\/([a-z0-9-]{1,64})$/) ?? [];
+  if (roadmap) return { tela: "estudos", secao: "roadmaps", roadmap };
   const [, tipo, id] = hash.match(/^#\/([pc])\/([^/?#]+)$/) ?? [];
   if (!id) return { tela: "inicio" };
   let valor: string;
@@ -21,6 +29,7 @@ export function urlDaRota(rota: Rota): string {
   if (rota.tela === "projeto") return `${base}#/p/${encodeURIComponent(rota.projeto)}`;
   if (rota.tela === "conversa") return `${base}#/c/${encodeURIComponent(rota.conversa)}`;
   if (rota.tela === "ajustes") return `${base}#/ajustes`;
+  if (rota.tela === "estudos") return rota.roadmap ? `${base}#/estudos/r/${rota.roadmap}` : `${base}#/estudos${rota.secao === "roadmaps" ? "" : `/${rota.secao}`}`;
   return base;
 }
 

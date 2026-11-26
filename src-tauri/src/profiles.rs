@@ -50,6 +50,7 @@ pub fn native_config_dir(provider: &str) -> Option<PathBuf> {
 pub fn credential_present(provider: &str, config_dir: &Path) -> bool {
     let Some((credential_file, api_key_var)) = credential_rule(provider) else { return false };
     config_dir.join(credential_file).is_file()
+        || (provider == "claude" && omni_core::token_longo(config_dir).is_some())
         || (cfg!(target_os = "macos") && provider == "claude" && claude_oauth_account(config_dir))
         || (!api_key_var.is_empty()
             && env::var_os(api_key_var).is_some_and(|value| !value.is_empty()))
@@ -365,6 +366,14 @@ pub fn delete_profile(profile_id: String) -> Result<(), String> {
 
 /// Conta mestra das conversas de cada IA (`omni_core::mestra`): `provider → id da conta`, já com
 /// a padrão (a primeira criada) onde o usuário não escolheu.
+/// Contas Claude com login de 1 ano (`claude setup-token`) guardado. Só os ids: o token não sai daqui.
+#[tauri::command(async)]
+pub fn contas_com_login_longo() -> Vec<String> {
+    list_profiles().into_iter()
+        .filter(|p| p.provider == "claude" && omni_core::token_longo(Path::new(&p.config_dir)).is_some())
+        .map(|p| p.id).collect()
+}
+
 #[tauri::command(async)]
 pub fn contas_mestras() -> Result<std::collections::HashMap<String, String>, String> {
     let dir = crate::engine_client::engine_dir()?;

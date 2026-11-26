@@ -453,7 +453,10 @@ fn garantir_verdadeiro(caminho: &Path, chave: &str) {
             None => return, // arquivo estranho: não mexe
         },
     };
-    let _ = fs::write(caminho, novo);
+    // Atômico (temporário + rename): `fs::write` trunca antes de escrever, e um Claude aberto na mesma
+    // conta lendo o `.claude.json` nesse instante via arquivo vazio/pela metade (suspeita do /login).
+    let temporario = caminho.with_extension(format!("omni-{}.tmp", std::process::id()));
+    if fs::write(&temporario, novo).is_ok() && fs::rename(&temporario, caminho).is_err() { let _ = fs::remove_file(&temporario); }
 }
 
 fn ambiente_do_terminal_com(command: &mut CommandBuilder, env: &[(String, String)], dentro_do_claude: bool) {
@@ -1301,6 +1304,26 @@ fn notice_since(counts: (usize, usize), base: (usize, usize)) -> Option<String> 
     None
 }
 
+/// Aba aberta por "Login de 1 ano": quando o `claude setup-token` mostra o token, ele vai para a pasta
+/// da conta e todo Claude aberto nela depois sai com `CLAUDE_CODE_OAUTH_TOKEN` (`omni_core::env_for`).
+fn guardar_token_do_setup(session: &LiveSession, profile_id: &str, tela: &str) {
+    let Some(token) = omni_core::token_na_tela(tela) else { return };
+    let Ok(dir) = engine_dir() else { return };
+    let Some(perfil) = omni_core::profiles(&dir).into_iter().find(|p| p.id == profile_id && p.provider == "claude") else { return };
+    if let Ok(true) = omni_core::guardar_token_longo(Path::new(&perfil.config_dir), &token) {
+        // Recado no próprio terminal (vai antes do pedaço que trouxe o token; a tela é a mesma).
+        let recado = format!("
+[32m[OMNI] Login de 1 ano salvo na conta {}. Pode fechar esta aba: os Claude abertos nela a partir de agora já entram com ele.[0m
+", perfil.name);
+        if let Ok(mut output) = session.output.lock() {
+            let sequencia = output.next_seq;
+            output.next_seq += 1;
+            output.bytes += recado.len();
+            output.chunks.push_back((sequencia, recado));
+        }
+    }
+}
+
 fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) {
     let data = String::from_utf8_lossy(bytes).into_owned();
     if data.is_empty() {
@@ -1308,14 +1331,16 @@ fn append_output(session: &LiveSession, bytes: &[u8], watched_pid: Option<u32>) 
     }
     let length = data.len();
     let mut interaction = session.interaction.lock().expect("screen poisoned");
-    let tracked_provider = {
+    let (tracked_provider, conta_do_setup_token) = {
         let meta = session.meta.lock().expect("metadata poisoned");
         if meta.pid != watched_pid { return; }
-        meta.provider.clone().filter(|provider| screen_tracked(Some(provider)))
+        let setup = meta.initial_command.as_deref().is_some_and(|c| c.contains("setup-token")).then(|| meta.profile_id.clone()).flatten();
+        (meta.provider.clone().filter(|provider| screen_tracked(Some(provider))), setup)
     };
     interaction.parser.process(&interaction::sem_substituto(bytes));
     answer_terminal_queries(session, &data, interaction.parser.screen());
     let screen_text = interaction.parser.screen().contents();
+    if let Some(conta) = conta_do_setup_token { guardar_token_do_setup(session, &conta, &screen_text); }
     let approval_requested = match &tracked_provider {
         // O diálogo real, reconhecido estrito — não "do you want to" solto numa resposta do agente.
         Some(provider) => {

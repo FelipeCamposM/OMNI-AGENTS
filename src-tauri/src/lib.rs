@@ -18,7 +18,9 @@ mod relatorio;
 mod agentes;
 mod fluxos;
 mod microfone;
+mod pdf; // Baixar PDF do Markdown (WebView2 PrintToPdf).
 mod inicio_com_windows;
+mod roadmaps; // Roadmaps de estudo + Pomodoro.
 
 pub fn run() {
     #[cfg(unix)]
@@ -105,6 +107,8 @@ pub fn run() {
             profiles::rename_profile,
             profiles::delete_profile,
             profiles::contas_mestras,
+            profiles::contas_com_login_longo,
+            pdf::salvar_pdf_da_pagina,
             profiles::definir_mestra,
             git_client::git_status,
             docker_client::docker_containers,
@@ -143,6 +147,17 @@ pub fn run() {
             agentes::agentes_instalar_claude,
             agentes::agentes_criar_com_ia,
             agentes::agentes_modelos,
+            roadmaps::roadmaps_listar, // Roadmaps de estudo.
+            roadmaps::roadmaps_criar,
+            roadmaps::roadmaps_ler,
+            roadmaps::roadmaps_gravar,
+            roadmaps::roadmaps_anexar_conversa,
+            roadmaps::roadmaps_ordenar,
+            roadmaps::roadmaps_backup_antes_de_migrar,
+            roadmaps::roadmaps_ler_geral,
+            roadmaps::roadmaps_gravar_geral,
+            roadmaps::ia::roadmaps_ia,
+            roadmaps::ia::roadmaps_ia_cancelar,
             fluxos::fluxos_criar_com_ia,
             fluxos::fluxos_listar,
             fluxos::fluxos_salvar,

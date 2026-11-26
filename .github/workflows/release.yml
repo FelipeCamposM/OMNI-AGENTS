@@ -46,8 +46,12 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
+      # ponytail: Rust fixo. O 1.100 mudou o layout de `target/*/build/` e o tauri-build 2.6.3 (que acha a
+      # pasta de destino subindo 3 níveis do OUT_DIR) passou a copiar os sidecars para dentro de `build/`,
+      # onde `omni-rag` é pasta: Mac/Linux falharam na v0.7.17. Volte a `stable` quando o tauri-build tratar.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.99.1
           targets: ${{ matrix.target == 'universal-apple-darwin' && 'aarch64-apple-darwin,x86_64-apple-darwin' || matrix.target }}
 
       - uses: Swatinem/rust-cache@v2

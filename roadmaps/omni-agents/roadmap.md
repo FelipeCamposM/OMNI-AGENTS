@@ -38,7 +38,78 @@ arquivos tocados e o próximo passo. Quando a pendência for resolvida, risque d
 
 ## Entregas
 
-### Subagente que já terminou ficava "Rodando" na conversa (2026-11-16, sem release)
+### Estudos: visual no padrão das páginas, sem emojis (2026-11-25, sem release)
+
+- Topo único `CabecalhoDosEstudos.tsx` (selo com sombra dura, título pixel, descrição, fechar) + abas com ícone
+  (`AbasDosEstudos`, também no celular). Estilo em `estudos.css` (`es-*`): cantos retos, painéis com borda 2px,
+  números em mono com filete de acento (como Conhecimento/Panorama), botões `es-botao`.
+- Pomodoro (palco com grade de pontos, fases, dígitos mono, anel tracejado), Análises (barras retas, linha de
+  meta), Mentor (conversa com avatar, cartão "Próximo passo" com selo alvo) e lista de Roadmaps refeitos.
+- Emojis trocados por ícones pixel: novos `FireIcon`, `PauseIcon`, `TrophyIcon`, `MapIcon`, `CompassIcon`,
+  `HourglassIcon`, `TargetIcon`, `ChartBarIcon`. `gen-pixel-icons.mjs` agora preserva os desenhados à mão
+  (`StarFilledIcon`, `MicIcon`), que o gerador apagava.
+- Ajustes: abas sem rolagem (`overflow-x` fazia o filete da aba ativa gerar scroll; agora quebram linha).
+  Campo afundado (sombra interna) × botão saltado (sombra dura), inclusive `.field`/Select dentro de `.es`;
+  form de novo/editar roadmap com `es-campo`/`es-botao`. Paleta `CORES` viva (as antigas pálidas viram a da
+  mesma posição em `normalizarMeta`). Pomodoro: durações em `RodaDeNumeros.tsx` (roda tipo alarme do iPhone,
+  scroll-snap, 1 linha por clique da roda, setas); matéria e tipo do Mentor no `Select` próprio. Meta do dia
+  também aceita digitar (prop `digitavel`; valor fora do passo entra na roda).
+
+### Estudos: Mentor de estudo com IA (2026-11-25, sem release)
+
+- Aba **🧭 Mentor** (PC e celular, `#/estudos/mentor`): a pessoa guarda o contexto (o que estuda, plataformas de
+  questões/videoaulas/música…) e conta o que está fazendo; a IA (CLI `claude -p`/`codex exec` sem tela) registra
+  as atividades (aula, questões, acertos, minutos) e devolve o **próximo passo** (o quê, minutos, quantidade,
+  plataforma) com botão que começa o Pomodoro com esse tempo (`acoesDoPomodoro.comecarCom`). Registro à mão também.
+- `src/features/roadmaps/mentor.ts` (domínio, prompt, merge PC/celular por id) e `TelaDoMentor.tsx`.
+- Arquivos gerais da raiz de estudos viraram lista fechada: `omni_core::roadmaps::{ler,gravar}_geral`
+  (`pomodoros.json`, `mentor.json`); comandos `roadmaps_{ler,gravar}_geral`; rota `/roadmaps/geral?nome=`.
+- Núcleo da IA dos estudos movido para `omni_core::roadmaps_ia` (app e engine usam o mesmo); rota nova
+  `/roadmaps/ia` no engine: a IA do Mentor responde pelo celular (conta pedida, senão a padrão); cancelar pelo
+  celular via `/roadmaps/ia/cancelar` (chave `celular:<chave>`). Cancelado não vira aviso de erro.
+- Análises: atividades somam questões/acertos (% acerto) por dia, semana e matéria; minutos delas não entram no foco.
+- Pendente: a IA dos Roadmaps (entrevista/plano) no celular ainda não tem tela.
+
+### Estudos: Roadmaps do Enzo + Pomodoro + análises (2026-11-25, sem release)
+
+- Copiados de `EnzoViniski/niski` (MIT, crédito no `LICENSE`): entrevista → plano de etapas diárias com fontes
+  reais → aula da etapa → tarefas → cards FSRS (`ts-fsrs` 5.4.2) → caderno revisado pela IA → quiz → XP/estrelas.
+  Front em `src/features/roadmaps/`, gravação em `crates/omni-core/src/roadmaps.rs` (`<dados>/roadmaps/`),
+  comandos e IA sem tela (`claude -p --no-session-persistence` / `codex exec --ephemeral`) em `src-tauri/src/roadmaps/`.
+- Adaptado: sem o navegador embutido do niski (fontes e links abrem no navegador do sistema; `opener:allow-open-url`
+  ganhou `http(s)://*`), sem modo foco/pausa de energia, sem o Caderno-estante separado e sem a versão do celular.
+- Novo: Pomodoro (`pomodoro.ts`, `TelaDoPomodoro.tsx`) — tempo pelo relógio, pausa automática, pausa longa por ciclo,
+  matéria = roadmap ou nome livre, botão no topo da trilha e do estudo, histórico em `<dados>/roadmaps/pomodoros.json`
+  (foco interrompido com 1 min+ entra como interrompido), notificação + bipe ao fim.
+- Novo: Análises (`analises.ts`, `TelaDeAnalises.tsx`) — dia (meta, foco por hora, x ontem), semana seg–dom
+  (barras por dia, linha da meta, x semana anterior) e matérias (tabela: foco total/7 dias, pomodoros, etapas, revisões).
+- Lateral: item "Estudos" (abas Roadmaps | Pomodoro | Análises). Testes: `Roadmaps`, `roadmapsDominio`,
+  `roadmapsFluidez`, `roadmapsJogo`, `pomodoro` (40 ok) + Rust `omni-core roadmaps` (7) e `src-tauri roadmaps` (4).
+- Celular: aba "Estudos" na barra de baixo (`#/estudos`, `/pomodoro`, `/analises`, `/r/<id>`), tela em
+  `src/mobile/Estudos.tsx` (carregada sob demanda). Roadmaps do niski (estudar etapa, concluir, cards, revisão,
+  caderno; IA só no PC), Pomodoro e Análises iguais aos do PC. Rotas no engine em `mobile_roadmaps.rs`
+  (`/roadmaps`, `/roadmaps/{id}/arquivo|conversa`, `/roadmaps/pomodoros`), mesma pasta do app.
+- Pomodoro com PC e celular no mesmo arquivo: toda gravação relê e junta as sessões por id (`juntarHistoricos`);
+  apagada aqui não volta; ajuste só vence se mudou neste aparelho. Aviso no celular só se as notificações já
+  estiverem liberadas. Testes: `EstudosNoCelular` (3), `pomodoro` (9), teste do engine `celular_le_e_grava_...`.
+- Pendente: Estudos na web do PC (`src/web/WebApp.tsx`); IA dos roadmaps pelo celular; conferir visual (`npm run dev`).
+
+### Pergunta do Claude 2.1.330 com título errado + build Mac/Linux da v0.7.17 (2026-11-21, sem release)
+
+- Card de pergunta mostrou "New file not yet staged." como título: é o visualizador de diff da própria CLI
+  (texto no claude.exe) desenhado junto da pergunta. `mobile.rs::resumo` agora troca título/detalhe pelo
+  `AskUserQuestion` do fim do transcript quando todas as opções do agente estão na tela (`corrigir_pela_pergunta`).
+- Clique na opção não respondia: a versão da tela (`Interaction::revision`) era o hash da tela toda; painel que
+  redesenha em volta recusava todo clique. Com menu na tela, a versão é a identidade do menu (opções, marcações,
+  abas respondidas). Testes: `pergunta_usa_o_texto_do_transcript`, `escolha_sobrevive_a_redesenho_em_volta_do_menu`.
+- Sonda real (2.1.330): número ainda escolhe direto; rodapé novo "Tab/Arrow keys to navigate"; tela de confiança
+  da pasta agora abre em "No, exit" (a sonda ganhou `OMNI_SONDA_TECLAS`). Não reproduzi o painel de diff na sonda.
+- v0.7.17: Mac/Linux falharam no CI (Windows ok e liberado). Causa: Rust 1.100 mudou o layout de
+  `target/*/build/<pkg>/<hash>/out`; o tauri-build 2.6.3 sobe 3 níveis do OUT_DIR e copia sidecar para
+  `build/omni-rag`, que é pasta. `release.yml` fixado em Rust 1.99.1. Mac/Linux só recebem na próxima versão.
+  Pendente: `ci.yml` segue em `stable` (só testa, não empacota); voltar o release para `stable` quando o tauri-build tratar.
+
+### Subagente que já terminou ficava "Rodando" na conversa (2026-11-16, publicada na v0.7.17 — só Windows)
 
 - Caso real: web-fetch em EMBUSCADACASAAUTOMATICA. Subagente entrega o relatório por `SubagentHandback`
   (último `stop_reason` = `tool_use`, nunca `end_turn`), então `omni-core/src/subagentes.rs` o achava vivo.
@@ -538,3 +609,57 @@ do Histórico dele (a nossa reusa a conversa existente).
 
 - Trocar de aba na lateral e voltar remontava `AvatarDoProjeto`/`AvatarDoWorkspace` com o `pedido` antigo (contador guardado
   no Sidebar) e o efeito reabria o seletor. `useAbrirAoPedir` ignora o valor da montagem; teste em `iconesDoProjeto.test.tsx`.
+
+### Conversa do Codex vazia com o terminal cheio (2026-11-26, sem release)
+
+- [x] Retomada pelo Recentes (notebook): o terminal mostrava a conversa e a aba Conversa ficava vazia. O índice
+  guarda `x.jsonl`; o Codex compacta rollout velho para `x.jsonl.zst`. `resolve_transcript` já aceitava o `.zst`,
+  mas `itens_cached`/`fontes` (e a limpeza em `armazenamento.rs`) checavam `Path::exists()` no `.jsonl` antes e
+  pulavam o trecho como "ainda sem arquivo". Agora `omni_core::transcript_existe` aceita os dois. Teste
+  `codex_com_rollout_compactado_ainda_mostra_a_conversa` (falha sem a correção). Neste PC, 6 conversas Codex
+  do índice estavam nesse estado.
+- [ ] Confirmar no notebook depois da release (não deu para ver os arquivos de lá).
+
+### Login de 1 ano do Claude: fim do "Login reached its time limit · Please run /login" (2026-11-26, sem release)
+
+- [x] Configurações → Contas: botão de relógio em cada conta Claude ("Login de 1 ano") abre `claude setup-token`
+  numa aba do projeto ativo com a conta. O engine lê a tela (`guardar_token_do_setup`, `main.rs`), acha o token
+  (`omni_core::token_na_tela`, aguenta a linha quebrada pela TUI) e grava `<pasta da conta>/.omni-token-longo`.
+  `omni_core::env_for` passa `CLAUDE_CODE_OAUTH_TOKEN` a todo Claude daquela conta (terminal, celular, fluxos,
+  voz, IA dos Estudos). A conta mostra "login de 1 ano"; `contas_com_login_longo` só devolve ids.
+- [x] Escrita do `.claude.json` (`garantir_verdadeiro`) virou atômica (temporário + rename).
+- [ ] Ver na prática: o texto exato da tela do `setup-token` (2.1.332) não foi capturado; o teste usa um modelo.
+  Sessões já abertas antes do token continuam com o login antigo até reabrir.
+
+
+### Pergunta do Claude em citação ("▎" em cada linha) (2026-11-26, sem release)
+
+- [x] Pergunta longa do AskUserQuestion (2.1.332) vem como citação: cada linha quebrada começa com `▎`. O cartão
+  mostrava a barra e partia o texto entre título e detalhe. `interaction::escolha` junta as linhas com barra num
+  parágrafo só, sem a barra (teste em `pergunta_do_agente_vira_escolha`). O título pelo transcript
+  (`corrigir_pela_pergunta`) continua valendo por cima quando as opções batem.
+- [ ] Capturar essa tela real no acervo (`tests-fixtures/telas/`).
+
+### Cor de destaque livre + seletor de cor próprio (2026-11-26, sem release)
+
+- [x] Aparência → Cor de destaque: além das 9 paletas, a amostra "Outra cor" (degradê) abre o `SeletorDeCor`
+  (`src/components/ui/SeletorDeCor.tsx`): quadrado saturação×brilho, barra de matiz, hex digitável (só hex),
+  atalhos, popover animado, setas no teclado. `settings.accent` aceita `#RRGGBB`; `getPaleta` deriva sombra e
+  versão do tema claro (`ehCorLivre`). Vale para logo, fundos animados e o celular (o tema publicado leva o hex).
+- [x] `ColorPicker` também abre o seletor próprio no lugar do diálogo do sistema.
+
+### Visualizador de HTML (2026-11-26, sem release)
+
+- [x] Arquivo `.html`/`.htm` abre em `HtmlPane` (`src/features/files/HtmlPane.tsx`): Código | Página | Lado a lado
+  (padrão). A página é um iframe pelo protocolo de arquivos do Tauri (CSS/JS/imagens relativos carregam da pasta),
+  `sandbox` sem `allow-same-origin` (script da página não alcança app/IPC), recarrega quando o arquivo muda.
+- [ ] Ver na prática se página com `fetch` para arquivo relativo funciona (origem opaca do sandbox pode barrar).
+
+### Markdown estilo PDF: páginas A4 e Baixar PDF (2026-11-26, sem release)
+
+- [x] Modo documento do `MarkdownPane` agora é `DocumentoPaginado`: os blocos renderizados são medidos numa folha
+  escondida e repartidos em folhas A4 (794×1123 px, margem 72), numeradas. Bloco maior que uma folha fica sozinho.
+- [x] "Baixar PDF": diálogo de salvar → copia as folhas para `#md-impressao` no body, liga `html.imprimindo-md`
+  (CSS de impressão só mostra as folhas, `@page` A4 sem margem) e o comando `salvar_pdf_da_pagina`
+  (`src-tauri/src/pdf.rs`) usa o `PrintToPdf` do WebView2 (texto selecionável). Fora do Windows: `window.print()`.
+- [ ] Testar o PDF gerado de verdade (só compilou; quebra de página e fundo branco precisam ser vistos).
