@@ -663,3 +663,9 @@ do Histórico dele (a nossa reusa a conversa existente).
   (CSS de impressão só mostra as folhas, `@page` A4 sem margem) e o comando `salvar_pdf_da_pagina`
   (`src-tauri/src/pdf.rs`) usa o `PrintToPdf` do WebView2 (texto selecionável). Fora do Windows: `window.print()`.
 - [ ] Testar o PDF gerado de verdade (só compilou; quebra de página e fundo branco precisam ser vistos).
+
+### Release v0.7.18 (2026-11-26)
+
+- [x] Publicada e liberada como latest (Windows, Mac e Linux): Estudos (Roadmaps, Mentor, Pomodoro, Análises),
+  login de 1 ano do Claude, cor de destaque livre, visualizador de HTML, Markdown em páginas A4 + Baixar PDF e
+  as correções de Codex compactado e perguntas do Claude. Rust 1.99.1 fixo no release.yml resolveu o build Mac/Linux.
